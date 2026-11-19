@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+staged=$(mktemp -d "${TMPDIR:-/tmp}/homecore-staged.XXXXXXXX")
+trap 'find "$staged" -depth -delete' EXIT HUP INT TERM
+cd "$root"
+git checkout-index --all --prefix="$staged/"
+
+if ! docker run --rm --network none --read-only --cap-drop ALL \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,src=$staged,dst=/scan,readonly" \
+    trufflesecurity/trufflehog@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a \
+    filesystem --no-update --no-verification --no-ignore-tag --fail --fail-on-scan-errors /scan \
+    >/dev/null 2>&1; then
+    printf '%s\n' 'TruffleHog found a possible secret or could not complete the staged scan; commit blocked.' >&2
+    exit 1
+fi
