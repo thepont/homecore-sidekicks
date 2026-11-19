@@ -341,3 +341,35 @@ async fn given_older_totals_replayed_after_newer_event_then_homecore_keeps_newer
     assert_eq!(value, 12500.0);
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_wall_connector_totals_then_homecore_receives_charged_energy_without_identifiers() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let event = format!(
+        "event: wall_connector_totals\ndata: {}\n\n",
+        json!({"id":"42","date":now.format("%Y-%m-%d").to_string(),"createdAt":now.to_rfc3339(),"totals":{"private-fixture-din":5400}})
+    );
+    let app = Router::new().route("/sse", get(move || { let event=event.clone(); async move { ([("content-type", "text/event-stream")], event) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "charger-totals-fixture", Some("1"));
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                let value = serde_json::from_slice::<Value>(&message.payload).unwrap();
+                if value["wall_connectors_energy_wh"].is_number() {
+                    return value;
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("wall connector total must arrive");
+    assert_eq!(state["wall_connectors_energy_wh"], 5400.0);
+    assert!(!state.to_string().contains("private-fixture-din"));
+    server.abort();
+}

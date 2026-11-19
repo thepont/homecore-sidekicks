@@ -55,6 +55,38 @@ pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
     Some(fields)
 }
 
+pub fn parse_connector_totals(data: &str, site: u64) -> Option<Map<String, Value>> {
+    let data: Value = serde_json::from_str(data).ok()?;
+    let id = data.get("id")?;
+    let id = id.as_u64().or_else(|| id.as_str()?.parse().ok())?;
+    if id != site {
+        return None;
+    }
+    let date = chrono::NaiveDate::parse_from_str(data.get("date")?.as_str()?, "%Y-%m-%d").ok()?;
+    let today = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).date_naive();
+    if (date - today).num_days().unsigned_abs() > 1 {
+        return None;
+    }
+    let totals = data.get("totals")?.as_object()?;
+    if totals.len() > 16 {
+        return None;
+    }
+    let mut sum = 0.0;
+    for value in totals.values() {
+        sum += value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+        if !sum.is_finite() {
+            return None;
+        }
+    }
+    let mut fields = Map::new();
+    fields.insert("wall_connectors_energy_wh".into(), sum.into());
+    fields.insert(
+        "wall_connectors_energy_date".into(),
+        date.to_string().into(),
+    );
+    Some(fields)
+}
+
 pub async fn listen(
     base: String,
     site: u64,
@@ -84,8 +116,12 @@ pub async fn listen(
         Err(_) => return,
     };
     let mut latest = None;
+    let mut latest_connector = None;
     loop {
-        let url = format!("{}/sse?topics=energy_totals", base.trim_end_matches('/'));
+        let url = format!(
+            "{}/sse?topics=energy_totals,wall_connector_totals",
+            base.trim_end_matches('/')
+        );
         if let Ok(response) = client.get(url).bearer_auth(&token).send().await {
             if let Ok(mut response) = response.error_for_status() {
                 if !response
@@ -112,8 +148,13 @@ pub async fn listen(
                         };
                         let line = line.strip_suffix('\r').unwrap_or(line);
                         if line.is_empty() {
-                            if event == "energy_totals" {
-                                if let Some(fields) = parse_event(&data, site) {
+                            if event == "energy_totals" || event == "wall_connector_totals" {
+                                let (fields, newest) = if event == "energy_totals" {
+                                    (parse_event(&data, site), &mut latest)
+                                } else {
+                                    (parse_connector_totals(&data, site), &mut latest_connector)
+                                };
+                                if let Some(fields) = fields {
                                     let created = serde_json::from_str::<Value>(&data)
                                         .ok()
                                         .and_then(|v| {
@@ -126,10 +167,10 @@ pub async fn listen(
                                         let now: chrono::DateTime<chrono::Utc> =
                                             std::time::SystemTime::now().into();
                                         if created <= now + chrono::Duration::minutes(2)
-                                            && latest.is_none_or(|previous| created > previous)
+                                            && newest.is_none_or(|previous| created > previous)
                                         {
-                                            latest = Some(created);
-                                            let _ = sender.send(fields);
+                                            *newest = Some(created);
+                                            sender.send_modify(|state| state.extend(fields));
                                         }
                                     }
                                 }
