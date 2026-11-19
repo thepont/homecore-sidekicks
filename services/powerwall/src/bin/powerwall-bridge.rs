@@ -122,7 +122,7 @@ async fn poll_powerwall(
                     if name.ends_with("_wh") {
                         attribute["unit"] = json!("Wh");
                     }
-                    if name == "charge_pct" {
+                    if name.ends_with("_pct") {
                         attribute["unit"] = json!("%");
                         attribute["min"] = json!(0);
                         attribute["max"] = json!(100);

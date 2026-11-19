@@ -87,6 +87,83 @@ pub fn parse_connector_totals(data: &str, site: u64) -> Option<Map<String, Value
     Some(fields)
 }
 
+pub fn parse_site_info(data: &str, site: u64) -> Option<Map<String, Value>> {
+    let data: Value = serde_json::from_str(data).ok()?;
+    let id = data.get("site_id")?;
+    if id.as_u64().or_else(|| id.as_str()?.parse().ok())? != site {
+        return None;
+    }
+    let info = data.get("site_info")?.as_object()?;
+    let mut fields = Map::new();
+    for (source, target) in [
+        ("backup_reserve_percent", "site_backup_reserve_pct"),
+        ("vpp_backup_reserve_percent", "site_vpp_reserve_pct"),
+        ("nameplate_energy", "site_nameplate_energy_wh"),
+        ("nameplate_power", "site_nameplate_power_w"),
+    ] {
+        if let Some(value) = info.get(source).filter(|v| !v.is_null()) {
+            let value = value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+            if target.ends_with("_pct") && value > 100.0 {
+                return None;
+            }
+            fields.insert(target.into(), value.into());
+        }
+    }
+    if let Some(value) = info.get("battery_count").filter(|v| !v.is_null()) {
+        fields.insert("site_battery_count".into(), value.as_u64()?.into());
+    }
+    for (source, target) in [
+        ("default_real_mode", "site_operation_mode"),
+        ("version", "site_version"),
+    ] {
+        if let Some(value) = info.get(source).filter(|v| !v.is_null()) {
+            let value = value.as_str().filter(|v| {
+                !v.is_empty() && v.len() <= 128 && v.chars().all(|c| !c.is_control())
+            })?;
+            fields.insert(target.into(), value.into());
+        }
+    }
+    for (section, source, target) in [
+        (
+            "user_settings",
+            "storm_mode_enabled",
+            "site_storm_watch_enabled",
+        ),
+        (
+            "user_settings",
+            "off_grid_vehicle_charging_enabled",
+            "site_off_grid_vehicle_charging_enabled",
+        ),
+        (
+            "components",
+            "grid_services_enabled",
+            "site_grid_services_enabled",
+        ),
+        ("components", "solar", "site_has_solar"),
+        ("components", "battery", "site_has_battery"),
+        ("components", "grid", "site_has_grid"),
+        ("components", "backup", "site_backup_capable"),
+        (
+            "components",
+            "storm_mode_capable",
+            "site_storm_watch_capable",
+        ),
+    ] {
+        if let Some(value) = info
+            .get(section)
+            .and_then(|v| v.get(source))
+            .filter(|v| !v.is_null())
+        {
+            fields.insert(target.into(), value.as_bool()?.into());
+        }
+    }
+    if fields.is_empty() {
+        None
+    } else {
+        Some(fields)
+    }
+}
+
 pub async fn listen(
     base: String,
     site: u64,
@@ -117,9 +194,10 @@ pub async fn listen(
     };
     let mut latest = None;
     let mut latest_connector = None;
+    let mut latest_site = None;
     loop {
         let url = format!(
-            "{}/sse?topics=energy_totals,wall_connector_totals",
+            "{}/sse?topics=energy_totals,wall_connector_totals,site_info",
             base.trim_end_matches('/')
         );
         if let Ok(response) = client.get(url).bearer_auth(&token).send().await {
@@ -148,11 +226,16 @@ pub async fn listen(
                         };
                         let line = line.strip_suffix('\r').unwrap_or(line);
                         if line.is_empty() {
-                            if event == "energy_totals" || event == "wall_connector_totals" {
+                            if event == "energy_totals"
+                                || event == "wall_connector_totals"
+                                || event == "site_info"
+                            {
                                 let (fields, newest) = if event == "energy_totals" {
                                     (parse_event(&data, site), &mut latest)
-                                } else {
+                                } else if event == "wall_connector_totals" {
                                     (parse_connector_totals(&data, site), &mut latest_connector)
+                                } else {
+                                    (parse_site_info(&data, site), &mut latest_site)
                                 };
                                 if let Some(fields) = fields {
                                     let created = serde_json::from_str::<Value>(&data)

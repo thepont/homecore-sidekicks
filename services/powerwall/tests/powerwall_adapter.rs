@@ -373,3 +373,40 @@ async fn given_wall_connector_totals_then_homecore_receives_charged_energy_witho
     assert!(!state.to_string().contains("private-fixture-din"));
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_site_configuration_stream_then_homecore_receives_read_only_site_sensors() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let event = format!(
+        "event: site_info\ndata: {}\n\n",
+        json!({"site_id":"42","createdAt":now.to_rfc3339(),"site_info":{"backup_reserve_percent":20.0,"default_real_mode":"self_consumption","nameplate_energy":13500.0,"nameplate_power":5000.0,"battery_count":1,"vpp_backup_reserve_percent":35.0,"version":"fixture-version","user_settings":{"storm_mode_enabled":true},"components":{"solar":true,"battery":true,"grid_services_enabled":false}}})
+    );
+    let app = Router::new().route("/sse", get(move || {let event=event.clone(); async move { ([("content-type", "text/event-stream")],event) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "site-config-fixture", Some("1"));
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                let value = serde_json::from_slice::<Value>(&message.payload).unwrap();
+                if value["site_backup_reserve_pct"].is_number() {
+                    return value;
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("site config must arrive");
+    assert_eq!(state["site_backup_reserve_pct"], 20.0);
+    assert_eq!(state["site_operation_mode"], "self_consumption");
+    assert_eq!(state["site_nameplate_energy_wh"], 13500.0);
+    assert_eq!(state["site_nameplate_power_w"], 5000.0);
+    assert_eq!(state["site_storm_watch_enabled"], true);
+    assert_eq!(state["site_battery_count"], 1);
+    assert_eq!(state["site_grid_services_enabled"], false);
+    server.abort();
+}
