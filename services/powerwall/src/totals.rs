@@ -83,6 +83,7 @@ pub async fn listen(
         Ok(client) => client,
         Err(_) => return,
     };
+    let mut latest = None;
     loop {
         let url = format!("{}/sse?topics=energy_totals", base.trim_end_matches('/'));
         if let Ok(response) = client.get(url).bearer_auth(&token).send().await {
@@ -113,7 +114,24 @@ pub async fn listen(
                         if line.is_empty() {
                             if event == "energy_totals" {
                                 if let Some(fields) = parse_event(&data, site) {
-                                    let _ = sender.send(fields);
+                                    let created = serde_json::from_str::<Value>(&data)
+                                        .ok()
+                                        .and_then(|v| {
+                                            v.get("createdAt")?.as_str().map(str::to_owned)
+                                        })
+                                        .and_then(|v| {
+                                            chrono::DateTime::parse_from_rfc3339(&v).ok()
+                                        });
+                                    if let Some(created) = created {
+                                        let now: chrono::DateTime<chrono::Utc> =
+                                            std::time::SystemTime::now().into();
+                                        if created <= now + chrono::Duration::minutes(2)
+                                            && latest.is_none_or(|previous| created > previous)
+                                        {
+                                            latest = Some(created);
+                                            let _ = sender.send(fields);
+                                        }
+                                    }
                                 }
                             }
                             event.clear();
