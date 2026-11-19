@@ -266,3 +266,40 @@ async fn given_energy_site_when_polled_then_homecore_gets_read_only_sensor_schem
     }
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_energy_totals_stream_when_polled_then_homecore_gets_dated_energy_sensors() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let event = format!(
+        "event: energy_totals\ndata: {}\n\n",
+        json!({"id":"42","date":now.format("%Y-%m-%d").to_string(),"createdAt":now.to_rfc3339(),"isCache":true,"totals":{"total_solar_generation":12500,"total_home_usage":6800,"total_battery_charge":2100,"total_battery_discharge":400,"grid_energy_imported":120,"total_grid_energy_exported":450}})
+    );
+    let app = Router::new()
+        .route("/sse", get(move || { let event=event.clone(); async move { ([(("content-type"), "text/event-stream")], event) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async {
+            Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}}))
+        }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "energy-totals-fixture", Some("1"));
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                let state = serde_json::from_slice::<Value>(&message.payload).unwrap();
+                if state["total_solar_generation_wh"].is_number() {
+                    return state;
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("dated energy totals must arrive");
+    assert_eq!(state["total_solar_generation_wh"], 12500.0);
+    assert_eq!(state["total_home_usage_wh"], 6800.0);
+    assert_eq!(state["grid_energy_imported_wh"], 120.0);
+    assert!(state["energy_totals_date"].is_string());
+    server.abort();
+}

@@ -71,7 +71,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     register(&mqtt).await?;
-    poll_powerwall(mqtt, base, site, token, interval).await
+    let (totals_tx, totals_rx) = tokio::sync::watch::channel(serde_json::Map::new());
+    tokio::spawn(homecore_powerwall::totals::listen(
+        base.clone(),
+        site,
+        token.clone(),
+        totals_tx,
+    ));
+    poll_powerwall(mqtt, base, site, token, interval, totals_rx).await
 }
 
 async fn poll_powerwall(
@@ -80,6 +87,7 @@ async fn poll_powerwall(
     site: u64,
     token: String,
     interval: u64,
+    totals: tokio::sync::watch::Receiver<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let endpoint = base.clone();
@@ -92,6 +100,7 @@ async fn poll_powerwall(
         .await?;
         match reading {
             Ok((value, mut readings)) => {
+                readings.extend(totals.borrow().clone());
                 readings.insert("charge_pct".into(), value.charge_pct.into());
                 readings.insert("battery_power_w".into(), value.power_w.into());
                 let mut attributes = serde_json::Map::new();
@@ -109,6 +118,9 @@ async fn poll_powerwall(
                         json!({"kind":kind,"writable":false,"display_name":name.replace('_', " ")});
                     if name.ends_with("_w") {
                         attribute["unit"] = json!("W");
+                    }
+                    if name.ends_with("_wh") {
+                        attribute["unit"] = json!("Wh");
                     }
                     if name == "charge_pct" {
                         attribute["unit"] = json!("%");
