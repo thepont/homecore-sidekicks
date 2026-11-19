@@ -132,3 +132,45 @@ fn stale_powerwall_reading_is_unavailable() {
     let status = json!({"response": {"timestamp":"2000-01-01T00:00:00Z", "percentage_charged":35.5, "battery_power":-1190}});
     assert!(homecore_powerwall::teslemetry::powerwall(&status).is_err());
 }
+
+#[test]
+fn energy_readings_keep_signed_power_and_charger_status() {
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let status = json!({"response":{"timestamp":now.to_rfc3339(),"percentage_charged":47.5,"battery_power":-650,
+        "solar_power":1234,"grid_power":-210,"load_power":854,"generator_power":0,
+        "grid_status":"Active","island_status":"on_grid","storm_mode_active":false,
+        "wall_connectors":[{"din":"fixture-din","vin":"fixture-vin","wall_connector_power":1020,"wall_connector_state":2}]}});
+    let (battery, fields) = homecore_powerwall::teslemetry::energy(&status).unwrap();
+    assert_eq!(battery.charge_pct, 47.5);
+    assert_eq!(fields["solar_power_w"], 1234.0);
+    assert_eq!(fields["grid_power_w"], -210.0);
+    assert_eq!(fields["home_power_w"], 854.0);
+    assert_eq!(fields["wall_connector_1_power_w"], 1020.0);
+    assert_eq!(fields["wall_connector_1_state"], 2);
+    assert!(!fields
+        .values()
+        .any(|v| v == "fixture-din" || v == "fixture-vin"));
+}
+
+#[test]
+fn energy_readings_reject_malformed_optional_values() {
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let base = json!({"response":{"timestamp":now.to_rfc3339(),"percentage_charged":47.5,"battery_power":-650}});
+    for (key, value) in [
+        ("solar_power", json!("incorrect")),
+        ("storm_mode_active", json!("false")),
+        ("wall_connectors", json!({})),
+        ("grid_status", json!("bad\nstatus")),
+    ] {
+        let mut status = base.clone();
+        status["response"][key] = value;
+        assert!(
+            homecore_powerwall::teslemetry::energy(&status).is_err(),
+            "must reject malformed {key}"
+        );
+    }
+    assert!(
+        homecore_powerwall::teslemetry::energy(&base).is_ok(),
+        "missing optional sensors are allowed"
+    );
+}
