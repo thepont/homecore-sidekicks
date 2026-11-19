@@ -105,7 +105,11 @@ pub fn fetch_energy(
     token: &str,
 ) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
     let status = fetch_status(client, base, site, token)?;
-    let battery = powerwall(&status)?;
+    energy(&status)
+}
+
+pub fn energy(status: &Value) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
+    let battery = powerwall(status)?;
     let response = &status["response"];
     let mut readings = serde_json::Map::new();
     for (source, target) in [
