@@ -97,3 +97,77 @@ pub fn fetch_powerwall(
 ) -> Result<Powerwall, &'static str> {
     powerwall(&fetch_status(client, base, site, token)?)
 }
+
+pub fn fetch_energy(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    site: u64,
+    token: &str,
+) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
+    let status = fetch_status(client, base, site, token)?;
+    let battery = powerwall(&status)?;
+    let response = &status["response"];
+    let mut readings = serde_json::Map::new();
+    for (source, target) in [
+        ("solar_power", "solar_power_w"),
+        ("grid_power", "grid_power_w"),
+        ("load_power", "home_power_w"),
+        ("generator_power", "generator_power_w"),
+    ] {
+        if let Some(value) = response.get(source).filter(|v| !v.is_null()) {
+            let value = value
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .ok_or("Invalid energy reading")?;
+            readings.insert(target.into(), value.into());
+        }
+    }
+    for name in ["grid_status", "island_status"] {
+        if let Some(value) = response.get(name).filter(|v| !v.is_null()) {
+            let value = value
+                .as_str()
+                .filter(|v| !v.is_empty() && v.len() <= 128 && v.chars().all(|c| !c.is_control()))
+                .ok_or("Invalid energy status")?;
+            readings.insert(name.into(), value.into());
+        }
+    }
+    if let Some(value) = response.get("storm_mode_active").filter(|v| !v.is_null()) {
+        readings.insert(
+            "storm_mode_active".into(),
+            value.as_bool().ok_or("Invalid storm status")?.into(),
+        );
+    }
+    if let Some(value) = response.get("wall_connectors").filter(|v| !v.is_null()) {
+        let connectors = value
+            .as_array()
+            .filter(|v| v.len() <= 16)
+            .ok_or("Invalid wall connectors")?;
+        for (index, connector) in connectors.iter().enumerate() {
+            if !connector.is_object() {
+                return Err("Invalid wall connector");
+            }
+            for (source, suffix) in [
+                ("wall_connector_power", "power_w"),
+                ("wall_connector_state", "state"),
+                ("wall_connector_fault_state", "fault_state"),
+                ("ocpp_status", "ocpp_status"),
+                ("powershare_session_state", "powershare_state"),
+            ] {
+                if let Some(value) = connector.get(source).filter(|v| !v.is_null()) {
+                    let value = if suffix == "power_w" {
+                        Value::from(
+                            value
+                                .as_f64()
+                                .filter(|v| v.is_finite())
+                                .ok_or("Invalid wall connector reading")?,
+                        )
+                    } else {
+                        Value::from(value.as_i64().ok_or("Invalid wall connector status")?)
+                    };
+                    readings.insert(format!("wall_connector_{}_{suffix}", index + 1), value);
+                }
+            }
+        }
+    }
+    Ok((battery, readings))
+}

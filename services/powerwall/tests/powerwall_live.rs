@@ -38,4 +38,24 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         (actual.power_w - source_power).abs() < 500.0,
         "power readings differ by at least 500 W between samples"
     );
+    let (_, energy) = homecore_powerwall::teslemetry::fetch_energy(
+        &client,
+        "https://api.teslemetry.com",
+        site,
+        token.trim(),
+    )
+    .unwrap();
+    for (source, target) in [
+        ("solar_power", "solar_power_w"),
+        ("grid_power", "grid_power_w"),
+        ("load_power", "home_power_w"),
+        ("generator_power", "generator_power_w"),
+    ] {
+        let expected = direct["response"][source].as_f64().unwrap();
+        let actual = energy[target].as_f64().unwrap();
+        assert!(
+            (actual - expected).abs() < 1000.0,
+            "{target} differs between samples"
+        );
+    }
 }

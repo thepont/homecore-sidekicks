@@ -87,17 +87,49 @@ async fn poll_powerwall(
         let reading = tokio::task::spawn_blocking(move || {
             let client =
                 homecore_powerwall::http::blocking_client().map_err(|_| "HTTP client failed")?;
-            homecore_powerwall::teslemetry::fetch_powerwall(&client, &endpoint, site, &bearer)
+            homecore_powerwall::teslemetry::fetch_energy(&client, &endpoint, site, &bearer)
         })
         .await?;
         match reading {
-            Ok(value) => {
+            Ok((value, mut readings)) => {
+                readings.insert("charge_pct".into(), value.charge_pct.into());
+                readings.insert("battery_power_w".into(), value.power_w.into());
+                let mut attributes = serde_json::Map::new();
+                for (name, value) in &readings {
+                    let kind = if value.is_boolean() {
+                        "bool"
+                    } else if value.is_string() {
+                        "string"
+                    } else if value.is_i64() {
+                        "integer"
+                    } else {
+                        "float"
+                    };
+                    let mut attribute =
+                        json!({"kind":kind,"writable":false,"display_name":name.replace('_', " ")});
+                    if name.ends_with("_w") {
+                        attribute["unit"] = json!("W");
+                    }
+                    if name == "charge_pct" {
+                        attribute["unit"] = json!("%");
+                        attribute["min"] = json!(0);
+                        attribute["max"] = json!(100);
+                    }
+                    attributes.insert(name.clone(), attribute);
+                }
+                mqtt.publish(
+                    "homecore/devices/teslemetry_powerwall/schema",
+                    QoS::AtLeastOnce,
+                    true,
+                    json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
+                        .to_string(),
+                )
+                .await?;
                 mqtt.publish(
                     "homecore/devices/teslemetry_powerwall/state",
                     QoS::AtLeastOnce,
                     true,
-                    json!({"charge_pct":value.charge_pct,"battery_power_w":value.power_w})
-                        .to_string(),
+                    serde_json::Value::Object(readings).to_string(),
                 )
                 .await?;
                 mqtt.publish(AVAILABILITY_TOPIC, QoS::AtLeastOnce, true, "online")

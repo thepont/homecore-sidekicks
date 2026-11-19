@@ -180,3 +180,89 @@ async fn oversized_unfinished_credential_is_rejected_without_waiting_for_eof() {
         "invalid credential must fail closed"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_energy_site_when_polled_then_homecore_receives_energy_and_charger_readings() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let app = Router::new().route(
+        "/api/1/energy_sites/42/live_status",
+        get(|| async {
+            Json(json!({"response": {
+                "timestamp": chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),
+                "percentage_charged": 65.2, "battery_power": -1190,
+                "solar_power": 2412, "grid_power": -340, "load_power": 882,
+                "generator_power": 0, "grid_status": "Active", "island_status": "OnGrid",
+                "storm_mode_active": false,
+                "wall_connectors": [{"din":"fixture-charger", "wall_connector_power": 3120,
+                    "wall_connector_state": 2, "wall_connector_fault_state": 0,
+                    "ocpp_status": 1, "powershare_session_state": 0}]
+            }}))
+        }),
+    );
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "energy-site-fixture", None);
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                return serde_json::from_slice::<Value>(&message.payload).unwrap();
+            }
+        }
+        panic!("energy state stream closed");
+    })
+    .await
+    .expect("energy state must arrive");
+    assert_eq!(state["solar_power_w"], 2412.0);
+    assert_eq!(state["grid_power_w"], -340.0);
+    assert_eq!(state["home_power_w"], 882.0);
+    assert_eq!(state["generator_power_w"], 0.0);
+    assert_eq!(state["grid_status"], "Active");
+    assert_eq!(state["island_status"], "OnGrid");
+    assert_eq!(state["storm_mode_active"], false);
+    assert_eq!(state["wall_connector_1_power_w"], 3120.0);
+    assert_eq!(state["wall_connector_1_state"], 2);
+    assert_eq!(state["wall_connector_1_fault_state"], 0);
+    assert_eq!(state["wall_connector_1_ocpp_status"], 1);
+    assert_eq!(state["wall_connector_1_powershare_state"], 0);
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_energy_site_when_polled_then_homecore_gets_read_only_sensor_schema() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let app = Router::new().route("/api/1/energy_sites/42/live_status", get(|| async {
+        Json(json!({"response": {"timestamp": chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),
+            "percentage_charged": 65.2, "battery_power": -1190, "solar_power": 2412,
+            "grid_power": -340, "load_power": 882, "generator_power": 0,
+            "grid_status": "Active", "island_status": "OnGrid", "storm_mode_active": false,
+            "wall_connectors": [{"wall_connector_power": 3120, "wall_connector_state": 2}]}}))
+    }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "energy-schema-fixture", None);
+    let schema = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/schema" {
+                let value = serde_json::from_slice::<Value>(&message.payload).unwrap();
+                if value["attributes"]["solar_power_w"].is_object() {
+                    return value;
+                }
+            }
+        }
+        panic!("schema stream closed");
+    })
+    .await
+    .expect("energy sensor schema must arrive");
+    for field in [
+        "solar_power_w",
+        "grid_power_w",
+        "home_power_w",
+        "wall_connector_1_power_w",
+    ] {
+        assert_eq!(schema["attributes"][field]["unit"], "W");
+        assert_eq!(schema["attributes"][field]["writable"], false);
+    }
+    server.abort();
+}
