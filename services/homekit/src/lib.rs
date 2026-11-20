@@ -90,18 +90,15 @@ pub async fn publish_sensors(
                 return Err("Invalid sensor state");
             }
             outlets.push((*aid, state));
-        } else if object.contains_key("smoke_detected") {
-            if object
-                .get("smoke_detected")
-                .and_then(Value::as_bool)
-                .is_none()
+        } else if object.contains_key("smoke") {
+            if object.get("smoke").and_then(Value::as_bool).is_none()
                 || object.get("fault").is_some_and(|v| v.as_bool().is_none())
                 || object
                     .get("battery_pct")
                     .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
                 || object
                     .keys()
-                    .any(|k| !matches!(k.as_str(), "smoke_detected" | "fault" | "battery_pct"))
+                    .any(|k| !matches!(k.as_str(), "smoke" | "fault" | "battery_pct"))
             {
                 return Err("Invalid sensor state");
             }
@@ -222,7 +219,7 @@ pub async fn publish_sensors(
     for (aid, state) in smoke {
         let device = format!("homekit_{bridge}_{aid}");
         let mut attributes = Map::new();
-        for (name, label) in [("smoke_detected", "Smoke detected"), ("fault", "Fault")] {
+        for (name, label) in [("smoke", "Smoke detected"), ("fault", "Fault")] {
             if state.get(name).is_some() {
                 attributes.insert(
                     name.into(),
@@ -236,7 +233,7 @@ pub async fn publish_sensors(
                 json!({"kind":"integer","writable":false,"display_name":"Battery","unit":"%"}),
             );
         }
-        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit smoke detector {aid}"),"device_type":"smoke_detector"});
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit smoke detector {aid}"),"device_type":"smoke_sensor"});
         for (topic, retained, payload) in [
             (
                 format!("homecore/plugins/{plugin}/register"),
@@ -246,7 +243,7 @@ pub async fn publish_sensors(
             (
                 format!("homecore/devices/{device}/schema"),
                 true,
-                json!({"attributes":attributes,"primary":["smoke_detected"]}),
+                json!({"attributes":attributes,"primary":["smoke"]}),
             ),
             (
                 format!("homecore/devices/{device}/state"),
@@ -999,7 +996,7 @@ async fn read_sensors(
                 state.insert(name.into(), json!(value));
             }
         }
-        for (name, iid) in [("smoke_detected", smoke), ("fault", fault)] {
+        for (name, iid) in [("smoke", smoke), ("fault", fault)] {
             if let Some(iid) = iid {
                 let value = match handle.read(accessory.aid, iid).await {
                     Ok(value) => value.to_json(),

@@ -82,10 +82,7 @@ async fn smoke_detector_reports_alarm_fault_and_battery_as_a_smoke_detector() {
         &probe.client,
         "plugin.homekit",
         "02:11:22:33:44:55",
-        &[(
-            9,
-            json!({"smoke_detected":true,"fault":false,"battery_pct":74}),
-        )],
+        &[(9, json!({"smoke":true,"fault":false,"battery_pct":74}))],
     )
     .await
     .unwrap();
@@ -101,14 +98,14 @@ async fn smoke_detector_reports_alarm_fault_and_battery_as_a_smoke_detector() {
     .unwrap();
     assert_eq!(
         messages["homecore/plugins/plugin.homekit/register"]["device_type"],
-        "smoke_detector"
+        "smoke_sensor"
     );
     assert_eq!(
         messages["homecore/devices/homekit_021122334455_9/state"],
-        json!({"smoke_detected":true,"fault":false,"battery_pct":74})
+        json!({"smoke":true,"fault":false,"battery_pct":74})
     );
     let attributes = &messages["homecore/devices/homekit_021122334455_9/schema"]["attributes"];
-    assert_eq!(attributes["smoke_detected"]["kind"], "bool");
+    assert_eq!(attributes["smoke"]["kind"], "bool");
     assert_eq!(attributes["fault"]["kind"], "bool");
 }
 

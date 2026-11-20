@@ -207,8 +207,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
     assert!(
         sensors
             .iter()
-            .any(|(_, state)| *state
-                == json!({"smoke_detected":true,"fault":false,"battery_pct":74})),
+            .any(|(_, state)| *state == json!({"smoke":true,"fault":false,"battery_pct":74})),
         "smoke detector missing: {sensors:?}"
     );
     assert!(
@@ -356,7 +355,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
     .unwrap();
     let smoke_id = sensors
         .iter()
-        .find(|(_, state)| state.get("smoke_detected").is_some())
+        .find(|(_, state)| state.get("smoke").is_some())
         .unwrap()
         .0;
     let smoke_availability =
