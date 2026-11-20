@@ -130,3 +130,17 @@ test('battery rounds a high precision charge reading for display', async () => {
   });
   assert.equal(await page.getByText('54.3%', {exact:true}).count(), 1);
 });
+
+test('battery offers the same detail and history interaction as the other energy cards', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async (_id, field) => field === 'charge_pct'
+      ? {ok:true,data:[{at:'2026-11-20T01:00:00Z',value:51},{at:'2026-11-20T02:00:00Z',value:54}]}
+      : {ok:false};
+    const c = document.createElement('hc-teslemetry-battery'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Battery details'}).click();
+  await page.getByRole('img',{name:'Battery charge history'}).waitFor();
+  assert.equal(await page.getByText('51–54%',{exact:true}).count(), 1);
+  await page.getByRole('button',{name:'Back to battery'}).click();
+  assert.equal(await page.getByRole('button',{name:'Battery details'}).count(), 1);
+});

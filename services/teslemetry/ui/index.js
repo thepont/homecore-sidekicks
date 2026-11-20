@@ -456,18 +456,59 @@ class TeslemetryGrid extends HTMLElement {
 customElements.define('hc-teslemetry-grid', TeslemetryGrid);
 
 class TeslemetryBattery extends HTMLElement {
-  #host; #stop;
-  constructor() { super(); this.attachShadow({mode:'open'}); }
+  #host; #stop; #details = false; #history; #generation = 0;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
   set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
   connectedCallback() { this.#listen(); }
-  disconnectedCallback() { this.#stop?.(); this.#stop = undefined; }
-  #listen() { this.#stop?.(); this.#stop = this.#host?.devices.subscribe(() => this.#render()); this.#render(); }
+  disconnectedCallback() { this.#generation++; this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  async #showHistory() {
+    this.#details = true;
+    this.#history = undefined;
+    const generation = ++this.#generation;
+    this.#render();
+    let result;
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: 1000 }); }
+    catch { result = undefined; }
+    if (generation !== this.#generation || !this.isConnected) return;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#render();
+  }
   #render() {
-    const d = this.#host?.devices.get('teslemetry_powerwall');
-    const charge = d?.available === true ? d.attributes?.charge_pct : undefined;
-    const value = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${Number(charge.toFixed(1))}%` : 'Unavailable';
-    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin-top:8px}</style><div class="card"><span>Battery</span><strong></strong></div>';
-    this.shadowRoot.querySelector('strong').textContent = value;
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const charge = device?.available === true ? device.attributes?.charge_pct : undefined;
+    const reading = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${Number(charge.toFixed(1))}%` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Battery</span><strong></strong><div class="history"></div><button type="button"></button></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+    const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
+    button.textContent = this.#details ? 'Back to battery' : 'Battery details';
+    button.addEventListener('click', () => {
+      if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
+      else void this.#showHistory();
+    });
+    if (!this.#details) return;
+    const target = this.shadowRoot.querySelector('.history');
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Battery charge history');
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
   }
 }
 customElements.define('hc-teslemetry-battery', TeslemetryBattery);
