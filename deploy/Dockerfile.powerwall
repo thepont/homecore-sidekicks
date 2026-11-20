@@ -1,5 +1,0 @@
-FROM scratch
-COPY runtime/ /
-COPY powerwall-bridge /powerwall-bridge
-USER 65532:65532
-ENTRYPOINT ["/powerwall-bridge"]

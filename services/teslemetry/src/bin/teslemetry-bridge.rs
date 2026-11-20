@@ -74,16 +74,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     register(&mqtt).await?;
     let (totals_tx, totals_rx) = tokio::sync::watch::channel(serde_json::Map::new());
-    tokio::spawn(homecore_powerwall::totals::listen(
+    tokio::spawn(homecore_teslemetry::totals::listen(
         base.clone(),
         site,
         token.clone(),
         totals_tx,
     ));
-    tokio::spawn(homecore_powerwall::vehicle::supervise(
+    tokio::spawn(homecore_teslemetry::vehicle::supervise(
         base.clone(),
         token.clone(),
-        homecore_powerwall::vehicle::Broker {
+        homecore_teslemetry::vehicle::Broker {
             host: mqtt_host,
             port: mqtt_port,
             username,
@@ -136,8 +136,8 @@ async fn poll_powerwall(
         let bearer = token.clone();
         let reading = tokio::task::spawn_blocking(move || {
             let client =
-                homecore_powerwall::http::blocking_client().map_err(|_| "HTTP client failed")?;
-            homecore_powerwall::teslemetry::fetch_energy(&client, &endpoint, site, &bearer)
+                homecore_teslemetry::http::blocking_client().map_err(|_| "HTTP client failed")?;
+            homecore_teslemetry::teslemetry::fetch_energy(&client, &endpoint, site, &bearer)
         })
         .await?;
         match reading {

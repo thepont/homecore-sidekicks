@@ -3,7 +3,7 @@ use serde_json::json;
 #[test]
 fn load_power_is_converted_from_watts_to_kilowatts() {
     let status = json!({"response": {"load_power": 1250.0}});
-    assert_eq!(homecore_powerwall::teslemetry::load_kw(&status), Ok(1.25));
+    assert_eq!(homecore_teslemetry::teslemetry::load_kw(&status), Ok(1.25));
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn load_power_is_fetched_from_the_configured_energy_site() {
         .build()
         .unwrap();
     assert_eq!(
-        homecore_powerwall::teslemetry::fetch_load_kw(&client, &base, 42, "fixture-token"),
+        homecore_teslemetry::teslemetry::fetch_load_kw(&client, &base, 42, "fixture-token"),
         Ok(1.25)
     );
     server.join().unwrap();
@@ -72,7 +72,8 @@ fn oversized_upstream_response_is_rejected() {
         .build()
         .unwrap();
     assert!(
-        homecore_powerwall::teslemetry::fetch_load_kw(&client, &base, 42, "fixture-token").is_err()
+        homecore_teslemetry::teslemetry::fetch_load_kw(&client, &base, 42, "fixture-token")
+            .is_err()
     );
     server.join().unwrap();
 }
@@ -81,7 +82,7 @@ fn oversized_upstream_response_is_rejected() {
 fn powerwall_reading_preserves_charge_percentage_and_signed_power() {
     let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
     let status = json!({"response": {"timestamp":now.to_rfc3339(),"percentage_charged": 35.5, "battery_power": -1190.0}});
-    let reading = homecore_powerwall::teslemetry::powerwall(&status).unwrap();
+    let reading = homecore_teslemetry::teslemetry::powerwall(&status).unwrap();
     assert_eq!(reading.charge_pct, 35.5);
     assert_eq!(reading.power_w, -1190.0);
 }
@@ -118,8 +119,8 @@ fn powerwall_is_read_from_the_energy_site() {
         .build()
         .unwrap();
     assert_eq!(
-        homecore_powerwall::teslemetry::fetch_powerwall(&client, &base, 42, "fixture-token"),
-        Ok(homecore_powerwall::teslemetry::Powerwall {
+        homecore_teslemetry::teslemetry::fetch_powerwall(&client, &base, 42, "fixture-token"),
+        Ok(homecore_teslemetry::teslemetry::Powerwall {
             charge_pct: 65.2,
             power_w: -1190.0
         })
@@ -130,7 +131,7 @@ fn powerwall_is_read_from_the_energy_site() {
 #[test]
 fn stale_powerwall_reading_is_unavailable() {
     let status = json!({"response": {"timestamp":"2000-01-01T00:00:00Z", "percentage_charged":35.5, "battery_power":-1190}});
-    assert!(homecore_powerwall::teslemetry::powerwall(&status).is_err());
+    assert!(homecore_teslemetry::teslemetry::powerwall(&status).is_err());
 }
 
 #[test]
@@ -140,7 +141,7 @@ fn energy_readings_keep_signed_power_and_charger_status() {
         "solar_power":1234,"grid_power":-210,"load_power":854,"generator_power":0,
         "grid_status":"Active","island_status":"on_grid","storm_mode_active":false,
         "wall_connectors":[{"din":"fixture-din","vin":"fixture-vin","wall_connector_power":1020,"wall_connector_state":2}]}});
-    let (battery, fields) = homecore_powerwall::teslemetry::energy(&status).unwrap();
+    let (battery, fields) = homecore_teslemetry::teslemetry::energy(&status).unwrap();
     assert_eq!(battery.charge_pct, 47.5);
     assert_eq!(fields["solar_power_w"], 1234.0);
     assert_eq!(fields["grid_power_w"], -210.0);
@@ -165,12 +166,12 @@ fn energy_readings_reject_malformed_optional_values() {
         let mut status = base.clone();
         status["response"][key] = value;
         assert!(
-            homecore_powerwall::teslemetry::energy(&status).is_err(),
+            homecore_teslemetry::teslemetry::energy(&status).is_err(),
             "must reject malformed {key}"
         );
     }
     assert!(
-        homecore_powerwall::teslemetry::energy(&base).is_ok(),
+        homecore_teslemetry::teslemetry::energy(&base).is_ok(),
         "missing optional sensors are allowed"
     );
 }

@@ -30,7 +30,7 @@ fn start_adapter(url: &str, port: u16, name: &str, interval: Option<&str>) -> Ow
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("token"), "fixture-token").unwrap();
     std::fs::write(root.join("mqtt-password"), "fixture-password").unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_powerwall-bridge"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_teslemetry-bridge"));
     cmd.env("TESLEMETRY_URL", url)
         .env("TESLEMETRY_SITE_ID", "42")
         .env("TESLEMETRY_TOKEN_FILE", root.join("token"))
@@ -145,7 +145,7 @@ async fn oversized_unfinished_credential_is_rejected_without_waiting_for_eof() {
         .status()
         .unwrap()
         .success());
-    let child = Command::new(env!("CARGO_BIN_EXE_powerwall-bridge"))
+    let child = Command::new(env!("CARGO_BIN_EXE_teslemetry-bridge"))
         .env("TESLEMETRY_URL", "https://api.teslemetry.com")
         .env("TESLEMETRY_SITE_ID", "42")
         .env("TESLEMETRY_TOKEN_FILE", root.join("token"))

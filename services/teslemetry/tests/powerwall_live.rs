@@ -9,7 +9,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         .trim()
         .parse()
         .unwrap();
-    let client = homecore_powerwall::http::blocking_client().unwrap();
+    let client = homecore_teslemetry::http::blocking_client().unwrap();
     let direct: serde_json::Value = client
         .get(format!(
             "https://api.teslemetry.com/api/1/energy_sites/{site}/live_status"
@@ -23,7 +23,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         .unwrap();
     let expected = direct["response"]["percentage_charged"].as_f64().unwrap();
     let source_power = direct["response"]["battery_power"].as_f64().unwrap();
-    let actual = homecore_powerwall::teslemetry::fetch_powerwall(
+    let actual = homecore_teslemetry::teslemetry::fetch_powerwall(
         &client,
         "https://api.teslemetry.com",
         site,
@@ -38,7 +38,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         (actual.power_w - source_power).abs() < 500.0,
         "power readings differ by at least 500 W between samples"
     );
-    let (_, energy) = homecore_powerwall::teslemetry::fetch_energy(
+    let (_, energy) = homecore_teslemetry::teslemetry::fetch_energy(
         &client,
         "https://api.teslemetry.com",
         site,
