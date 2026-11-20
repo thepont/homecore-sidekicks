@@ -238,21 +238,42 @@ function normalizeSchema(input) {
   }));
 }
 
+function readTemperatureTargets(attributes, mode) {
+  const { heat_setpoint: heatSetpoint, cool_setpoint: coolSetpoint } = attributes;
+  const single = temperature(attributes.setpoint);
+  const targetsByKey = {
+    setpoint: single,
+    heat_setpoint: temperature(heatSetpoint),
+    cool_setpoint: temperature(coolSetpoint)
+  };
+  const heat = heatSetpoint == null ? temperature(attributes.heating_setpoint) : targetsByKey.heat_setpoint;
+  const cool = coolSetpoint == null ? temperature(attributes.cooling_setpoint) : targetsByKey.cool_setpoint;
+
+  if (mode === 'auto' && heat !== undefined && cool !== undefined && heat <= cool) {
+    return { targetsByKey, targets: {
+      heat: { key: 'heat_setpoint', value: heat },
+      cool: { key: 'cool_setpoint', value: cool }
+    } };
+  }
+
+  if (mode !== 'heat' && mode !== 'cool' && mode !== 'auto') {
+    return { targetsByKey, targets: {} };
+  }
+
+  if (single !== undefined || mode === 'auto') {
+    return { targetsByKey, targets: { single: { key: 'setpoint', value: single } } };
+  }
+
+  const target = mode === 'heat'
+    ? { key: 'heat_setpoint', value: heat }
+    : { key: 'cool_setpoint', value: cool };
+  return { targetsByKey, targets: { single: target } };
+}
+
 function climateOf(device) {
   const a = record(device?.attributes);
   const mode = lookup(modes, a.hvac_mode) ? a.hvac_mode : undefined;
-  const heat = temperature(a.heat_setpoint ?? a.heating_setpoint);
-  const cool = temperature(a.cool_setpoint ?? a.cooling_setpoint);
-  const single = temperature(a.setpoint);
-  const dual = mode === 'auto' && heat !== undefined && cool !== undefined && heat <= cool;
-  const controlsTemperature = mode === 'heat' || mode === 'cool' || mode === 'auto';
-  const singleKey = single !== undefined ? 'setpoint' : mode === 'heat' ? 'heat_setpoint' :
-    mode === 'cool' ? 'cool_setpoint' : 'setpoint';
-  const targetsByKey = { setpoint: single, heat_setpoint: temperature(a.heat_setpoint),
-    cool_setpoint: temperature(a.cool_setpoint) };
-  const targets = dual ? { heat: { key: 'heat_setpoint', value: heat },
-    cool: { key: 'cool_setpoint', value: cool } } : controlsTemperature ?
-    { single: { key: singleKey, value: single ?? (mode === 'heat' ? heat : mode === 'cool' ? cool : undefined) } } : {};
+  const { targets, targetsByKey } = readTemperatureTargets(a, mode);
   let activity = mode === 'off' ? 'Off' : lookup(activities, a.hvac_action);
   if (mode === 'heat' || mode === 'auto') {
     activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, a.sub_mode) ?? activity;
