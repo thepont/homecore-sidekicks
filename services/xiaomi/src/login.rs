@@ -206,3 +206,174 @@ impl Provider {
         })
     }
 }
+
+pub struct Gateway {
+    pub name: String,
+    pub model: String,
+    pub address: String,
+    token: String,
+}
+impl Gateway {
+    pub fn save_token(&self, store: &crate::store::Store) -> Result<(), &'static str> {
+        store.save(&self.token)
+    }
+}
+
+impl Provider {
+    async fn cloud_call(
+        &self,
+        auth: &Authentication,
+        region: &str,
+        path: &str,
+        data: Value,
+    ) -> Result<Value, &'static str> {
+        use ring::{
+            digest::{digest, SHA256},
+            rand::{SecureRandom, SystemRandom},
+        };
+        if !matches!(region, "cn" | "de" | "i2" | "ru" | "sg" | "us")
+            || auth
+                .service_token
+                .bytes()
+                .any(|b| !b.is_ascii_graphic() || b == b';' || b == b',' || b == b'\\')
+        {
+            return Err("Invalid cloud session");
+        }
+        let origin = if self.base.scheme() == "http" {
+            self.base.clone()
+        } else {
+            let host = if region == "cn" {
+                "api.io.mi.com".to_owned()
+            } else {
+                format!("{region}.api.io.mi.com")
+            };
+            Url::parse(&format!("https://{host}/")).map_err(|_| "Invalid cloud region")?
+        };
+        let url = origin
+            .join(&format!("/app{path}"))
+            .map_err(|_| "Invalid cloud request")?;
+        let mut nonce = [0u8; 12];
+        SystemRandom::new()
+            .fill(&mut nonce[..8])
+            .map_err(|_| "Cannot start discovery")?;
+        let minutes = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "Invalid clock")?
+            .as_secs()
+            / 60;
+        let minutes = u32::try_from(minutes).map_err(|_| "Invalid clock")?;
+        nonce[8..].copy_from_slice(&minutes.to_be_bytes());
+        let payload = data.to_string();
+        let signed = crate::cloud::sign_request(path, &payload, &auth.security, &nonce)?;
+        let nonce_encoded = STANDARD.encode(nonce);
+        let cookie = format!(
+            "userId={}; serviceToken={}; yetAnotherServiceToken={}",
+            auth.user_id, auth.service_token, auth.service_token
+        );
+        let response = self
+            .client
+            .post(url)
+            .header("cookie", cookie)
+            .header("accept-encoding", "identity")
+            .header("x-xiaomi-protocal-flag-cli", "PROTOCAL-HTTP2")
+            .header("miot-encrypt-algorithm", "ENCRYPT-RC4")
+            .query(&[
+                ("data", signed.data.as_str()),
+                ("rc4_hash__", signed.hash.as_str()),
+                ("signature", signed.signature.as_str()),
+                ("ssecurity", auth.security.as_str()),
+                ("_nonce", nonce_encoded.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|_| "Xiaomi discovery unavailable")?
+            .error_for_status()
+            .map_err(|_| "Xiaomi discovery unavailable")?;
+        let encrypted = bounded(response, 1024 * 1024).await?;
+        let encrypted = STANDARD
+            .decode(encrypted)
+            .map_err(|_| "Invalid discovery response")?;
+        let mut material = STANDARD
+            .decode(&auth.security)
+            .map_err(|_| "Invalid cloud session")?;
+        material.extend_from_slice(&nonce);
+        let digest = digest(&SHA256, &material);
+        let key: [u8; 32] = digest
+            .as_ref()
+            .try_into()
+            .map_err(|_| "Invalid cloud session")?;
+        let data = crate::cloud::legacy_encrypt(&key, &encrypted);
+        serde_json::from_slice(&data).map_err(|_| "Invalid discovery response")
+    }
+    pub async fn discover(
+        &self,
+        auth: &Authentication,
+        region: &str,
+    ) -> Result<Vec<Gateway>, &'static str> {
+        let homes=self.cloud_call(auth,region,"/v2/homeroom/gethome",serde_json::json!({"fg":true,"fetch_share":true,"fetch_share_dev":true,"limit":300,"app_ver":7})).await?;
+        let homes = homes
+            .pointer("/result/homelist")
+            .and_then(Value::as_array)
+            .ok_or("Invalid discovery response")?;
+        if homes.len() > 300 {
+            return Err("Invalid discovery response");
+        }
+        let owner = auth
+            .user_id
+            .parse::<u64>()
+            .map_err(|_| "Invalid cloud session")?;
+        let mut gateways = Vec::new();
+        for home in homes {
+            let id = home
+                .get("id")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
+                .ok_or("Invalid discovery response")?;
+            let devices=self.cloud_call(auth,region,"/v2/home/home_device_list",serde_json::json!({"home_owner":owner,"home_id":id,"limit":200,"get_split_device":true,"support_smart_home":true})).await?;
+            let devices = devices
+                .pointer("/result/device_info")
+                .and_then(Value::as_array)
+                .ok_or("Invalid discovery response")?;
+            if devices.len() > 200 {
+                return Err("Invalid discovery response");
+            }
+            for item in devices {
+                let Some(model) = item.get("model").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !model.starts_with("lumi.gateway.") || model.len() > 64 {
+                    continue;
+                }
+                let Some(address) = item
+                    .get("localip")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse::<std::net::Ipv4Addr>().ok())
+                    .filter(|ip| ip.is_private())
+                else {
+                    continue;
+                };
+                let Some(token) = item
+                    .get("token")
+                    .and_then(Value::as_str)
+                    .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                else {
+                    continue;
+                };
+                let Some(name) = item.get("name").and_then(Value::as_str).filter(|s| {
+                    !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)
+                }) else {
+                    continue;
+                };
+                gateways.push(Gateway {
+                    name: name.to_owned(),
+                    model: model.to_owned(),
+                    address: address.to_string(),
+                    token: token.to_owned(),
+                });
+                if gateways.len() > 64 {
+                    return Err("Too many gateways");
+                }
+            }
+        }
+        Ok(gateways)
+    }
+}
