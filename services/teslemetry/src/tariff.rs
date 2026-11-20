@@ -206,6 +206,16 @@ impl Schedule {
                 .get("ALL")
                 .map(|price| (*price, "ALL"));
         }
+        let (season, period) = self.active_period(date, minute)?;
+        let rates = self
+            .charges
+            .get(season)
+            .or_else(|| self.charges.get("ALL"))?;
+        let price = rates.get(period).or_else(|| rates.get("ALL"))?;
+        Some((*price, period))
+    }
+
+    fn active_period(&self, date: NaiveDate, minute: u32) -> Option<(&str, &str)> {
         let mut active = None;
         // An overnight window belongs to the date and season when it started.
         for (start_date, carry) in [(date, false), (date.pred_opt()?, true)] {
@@ -236,13 +246,7 @@ impl Schedule {
                 }
             }
         }
-        let (season, period) = active?;
-        let rates = self
-            .charges
-            .get(season)
-            .or_else(|| self.charges.get("ALL"))?;
-        let price = rates.get(period).or_else(|| rates.get("ALL"))?;
-        Some((*price, period))
+        active
     }
 }
 
