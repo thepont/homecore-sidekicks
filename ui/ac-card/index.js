@@ -98,15 +98,14 @@ const style = `
   .name:disabled{opacity:1}
   .room{padding:8px 8px 10px;margin:8px 0 10px;border-radius:12px;background:var(--ac-wash)}
   .room-label,small,dt,.mode-note{color:var(--ac-muted);font-size:12px}
-  .dial{position:relative;width:min(198px,100%);aspect-ratio:220 / 155;margin:1px auto 0}
+  .dial{width:min(124px,100%);aspect-ratio:220 / 155;margin:0 auto 3px}
   .dial svg{display:block;width:100%;height:100%;overflow:visible}
   .dial path{fill:none;stroke-width:7;stroke-linecap:round}
   .track{stroke:color-mix(in srgb,var(--ac-accent) 24%,var(--ac-surface))}
   .range{stroke:var(--ac-accent)}
   .room-dot{fill:var(--ac-ink);stroke:var(--ac-surface);stroke-width:2}
   .target-dot{fill:var(--ac-surface);stroke:var(--ac-accent);stroke-width:3}
-  .reading-wrap{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
-  .reading{font-size:clamp(26px,10cqi,34px);font-weight:650;letter-spacing:-.04em;white-space:nowrap}
+  .reading{display:block;font-size:clamp(17px,8cqi,22px);font-weight:650;line-height:1.2}
   .reading,output,dd{font-variant-numeric:tabular-nums}
   .activity{display:block;color:var(--ac-accent);font-size:13px;font-weight:620}
   .offline .activity{color:var(--ac-muted)}
@@ -153,15 +152,15 @@ const template = `
   <section class="card">
     <button class="name" type="button"></button>
     <div class="room">
-      <div class="room-label">Room temperature</div>
       <div class="dial">
         <svg viewBox="0 0 220 155" aria-hidden="true">
           <path class="track"></path><path class="range"></path>
           <circle class="target-dot low" r="5"></circle><circle class="target-dot high" r="5"></circle>
           <circle class="room-dot" r="5"></circle>
         </svg>
-        <div class="reading-wrap"><strong class="reading"></strong></div>
       </div>
+      <div class="room-label">Room temperature</div>
+      <strong class="reading"></strong>
       <span class="activity"></span>
     </div>
     ${targetRow('single', 'Target', 'Target')}
@@ -396,6 +395,15 @@ class AcCard extends HTMLElement {
     }
   }
 
+  #roomReading(value) {
+    if (value === undefined) return '—';
+    const shown = this.#host?.units?.show(value, '°C');
+    if (number(shown?.value) !== undefined && (shown.unit === '°C' || shown.unit === '°F')) {
+      return `${Math.round(shown.value)}${shown.unit}`;
+    }
+    return `${Math.round(value)}°C`;
+  }
+
   #format(value, unit = '°C') {
     if (value === undefined) return '—';
     const shown = this.#host?.units?.show(value, unit)?.text;
@@ -423,7 +431,7 @@ class AcCard extends HTMLElement {
     const name = device && this.#host.devices.label(device);
     view.name.textContent = typeof name === 'string' && name ? name.slice(0, 256) : 'Air conditioner';
     view.name.disabled = !device || typeof this.#host.ui?.openDevice !== 'function';
-    view.reading.textContent = this.#format(available ? room : undefined);
+    view.reading.textContent = this.#roomReading(available ? room : undefined);
     view.activity.textContent = !device ? 'Waiting for device' : !available ? 'Unavailable' :
       activity ?? (room === undefined ? 'Waiting for readings' : '');
     const low = available ? targets.heat?.value ?? targets.single?.value : undefined;

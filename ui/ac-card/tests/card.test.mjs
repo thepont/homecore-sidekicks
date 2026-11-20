@@ -20,7 +20,7 @@ beforeEach(async () => {
   await page.setContent('<main style="max-width:420px;margin:auto"></main>');
   await page.addScriptTag({ type: 'module', content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
-    window.mountAc = ({ writable = false, allowed = writable } = {}) => {
+    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F' } = {}) => {
       const listeners = new Set();
       const units = new Set();
       const opened = [];
@@ -56,7 +56,11 @@ beforeEach(async () => {
         },
         theme: { sheet: new CSSStyleSheet() },
         units: {
-          show: (value, unit) => unit === '°C' ? { text: ((value * 9 / 5 + 32).toFixed(1)) + ' °F' } : { text: value + ' ' + unit },
+          show: (value, unit) => {
+            if (unit !== '°C' || temperatureUnit === '°C') return { value, unit, text: value + ' ' + unit };
+            const text = (value * 9 / 5 + 32).toFixed(1);
+            return { value: Number(text), unit: '°F', text: text + ' °F' };
+          },
           subscribe: listener => {
             units.add(listener);
             listener();
@@ -99,7 +103,7 @@ test('the reusable slot displays live readings, optional airflow, and diagnostic
   assert.equal(manifest.entry, 'index.js');
   assert.deepEqual(manifest.slots[0], { slot: 'device.card', element: 'hc-ac-card', forms: ['standard', 'large'] });
   await mount({});
-  await byText('76.1 °F').waitFor();
+  assert.equal(await page.locator('hc-ac-card .reading').textContent(), '76°F');
   await byText('72.5 °F').waitFor();
   await byText('77.0 °F').waitFor();
   await byText('Quiet').waitFor();
@@ -165,18 +169,30 @@ test('permission gates all controls and failed commands preserve reported values
 test('targets and airflow fit a phone card and keep their labels aligned', async () => {
   await mount({ writable: true });
   await selected('Horizontal vane').waitFor();
-  const layout = await page.evaluate(() => {
-    const root = card.shadowRoot;
-    const box = selector => root.querySelector(selector).getBoundingClientRect();
-    const center = rect => rect.left + rect.width / 2;
-    const dial = box('.dial');
-    const centered = ['.name', '.room-label', '.reading', '.activity', '[data-target=heat] .target-value']
-      .every(selector => Math.abs(center(box(selector)) - center(dial)) <= 1);
-    return centered && box('.room-label').bottom <= dial.top && dial.bottom <= box('.activity').top &&
-      box('.modes').bottom <= box('.airflow').top &&
-      document.documentElement.scrollWidth <= innerWidth;
-  });
-  assert(layout);
+  for (const width of [174, 304]) {
+    await page.locator('main').evaluate((main, width) => { main.style.width = width + 'px'; }, width);
+    const layout = await page.evaluate(() => {
+      const root = card.shadowRoot;
+      const get = selector => root.querySelector(selector);
+      const box = selector => get(selector).getBoundingClientRect();
+      const center = rect => rect.left + rect.width / 2;
+      const dial = box('.dial');
+      const centered = ['.name', '.room-label', '.reading', '.activity', '[data-target=heat] .target-value']
+        .every(selector => Math.abs(center(box(selector)) - center(dial)) <= 1);
+      return centered && dial.bottom <= box('.room-label').top &&
+        box('.room-label').bottom <= box('.reading').top && box('.reading').bottom <= box('.activity').top &&
+        parseFloat(getComputedStyle(get('.reading')).fontSize) <= 24 &&
+        box('.modes').bottom <= box('.airflow').top &&
+        document.documentElement.scrollWidth <= innerWidth;
+    });
+    assert(layout, width + 'px tile');
+  }
+});
+
+test('rounds the current temperature in Celsius and keeps the Auto targets precise', async () => {
+  await mount({ temperatureUnit: '°C' });
+  assert.equal(await page.locator('hc-ac-card .reading').textContent(), '25°C');
+  await byText('22.5 °C').waitFor();
 });
 
 test('an accepted command without a matching report expires and leaves the old target visible', async () => {

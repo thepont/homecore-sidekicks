@@ -25,6 +25,9 @@ include a `device_types` filter in its own manifest.
 | `has_vertical_vane`, `has_horizontal_vane` | Optional capability flags. An explicit false hides that vane even if a setting is reported. |
 | `outside_temperature`, `compressor_frequency`, `runtime` | Optional diagnostics in °C, Hz, and hours. |
 
+The current room temperature appears below the dial in whole degrees, using
+the person’s display units. Targets retain the adapter’s precision.
+
 The card suppresses retained readings when HomeCore reports a device offline.
 Off can still show a current room reading. Off, Dry and Fan only omit
 temperature targets. The Airflow row goes below the mode controls and adapts to
