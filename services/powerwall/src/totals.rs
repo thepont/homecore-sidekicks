@@ -27,8 +27,7 @@ const FIELDS: &[&str] = &[
     "total_grid_energy_exported",
 ];
 
-pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
-    let data: Value = serde_json::from_str(data).ok()?;
+fn site_date(data: &Value, site: u64) -> Option<chrono::NaiveDate> {
     let id = data.get("id")?;
     let id = id.as_u64().or_else(|| id.as_str()?.parse().ok())?;
     if id != site {
@@ -40,6 +39,12 @@ pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
     if (date - today).num_days().unsigned_abs() > 1 {
         return None;
     }
+    Some(date)
+}
+
+pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
+    let data: Value = serde_json::from_str(data).ok()?;
+    let date = site_date(&data, site)?;
     let totals = data.get("totals")?.as_object()?;
     let mut fields = Map::new();
     for name in FIELDS {
