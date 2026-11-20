@@ -1,9 +1,9 @@
 class XiaomiSetup extends HTMLElement {
-  #host; #generation=0;
+  #host; #generation=0; #timer;
   constructor() { super(); this.attachShadow({mode:'open'}); }
-  set host(host) { this.#generation++; this.#host=host; if(this.isConnected)this.#render(); }
+  set host(host) { clearTimeout(this.#timer); this.#generation++; this.#host=host; if(this.isConnected)this.#render(); }
   connectedCallback() { this.#render(); }
-  disconnectedCallback() { this.#generation++; }
+  disconnectedCallback() { clearTimeout(this.#timer); this.#generation++; }
   #render() {
     this.shadowRoot.innerHTML='<style>:host{display:block;color:var(--ink,#20242b);font:inherit}.setup{padding:20px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}h2{margin:0 0 8px;font-size:20px}p{line-height:1.5}button{font:inherit;padding:10px 16px;cursor:pointer;border-radius:8px}button:focus-visible{outline:2px solid var(--accent,#9a4a07);outline-offset:3px}img{display:block;width:min(260px,100%);height:auto;background:white;padding:8px}</style><section class="setup"><h2>Connect Xiaomi</h2><p>Sign in with Mi Home to find your gateway.</p><button type="button">Sign in with Mi Home</button><p class="status" aria-live="polite"></p><div class="qr"></div></section>';
     const button=this.shadowRoot.querySelector('button');
@@ -23,6 +23,20 @@ class XiaomiSetup extends HTMLElement {
     const image=document.createElement('img');image.alt='Mi Home sign-in QR code';image.src=`data:image/png;base64,${data}`;
     this.shadowRoot.querySelector('.qr').replaceChildren(image);
     status.textContent='Scan this code with Mi Home.';
+    this.#timer=setTimeout(()=>void this.#check(generation),1500);
+  }
+  async #check(generation) {
+    let result;try{result=await this.#host.action('sign_in_status');}catch{result=undefined;}
+    if(generation!==this.#generation || !this.isConnected)return;
+    const status=this.shadowRoot.querySelector('.status'), button=this.shadowRoot.querySelector('button');
+    if(result?.ok && result.data?.status==='connected') {
+      this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
+    }
+    if(result?.ok && result.data?.status==='waiting') {
+      this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
+    }
+    this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;
+    status.textContent='Sign-in could not be completed. Try again.';
   }
 }
 customElements.define('hc-xiaomi-setup',XiaomiSetup);
