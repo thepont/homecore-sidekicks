@@ -61,6 +61,15 @@ async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
     .expect("registered TV device");
     assert_eq!(device["device_type"], "media_player");
     assert_eq!(device["attributes"]["muted"], false);
+    let schema = core
+        .get("/devices/hisense_living_room/schema")
+        .send()
+        .await
+        .unwrap();
+    assert!(schema.status().is_success(), "TV schema must be registered");
+    let schema: serde_json::Value = schema.json().await.unwrap();
+    assert_eq!(schema["attributes"]["volume"]["writable"], false);
+    assert_eq!(schema["attributes"]["muted"]["writable"], false);
     task.abort();
     server.abort();
 }

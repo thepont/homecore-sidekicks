@@ -195,7 +195,7 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 if *ready_rx.borrow_and_update() {
                     send(&mqtt, &format!("homecore/plugins/{PLUGIN}/register"), json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room TV","device_type":"media_player"}).to_string(), true).await?;
                     send(&mqtt, &format!("homecore/plugins/{PLUGIN}/capabilities"), json!({"spec":"1","plugin_id":PLUGIN,"actions":[]}).to_string(), true).await?;
-                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), json!({"attributes":{"volume":{"type":"integer","access":"r","minimum":0,"maximum":100,"unit":"%"},"muted":{"type":"boolean","access":"r"}},"primary":["volume","muted"]}).to_string(), true).await?;
+                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), json!({"attributes":{"volume":{"kind":"integer","writable":false,"min":0,"max":100,"unit":"%"},"muted":{"kind":"bool","writable":false}},"primary":["volume","muted"]}).to_string(), true).await?;
                     previous = None;
                     available = false;
                     send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "offline".into(), true).await?;
