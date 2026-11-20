@@ -198,6 +198,64 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
     read_contact(&mut handle).await
 }
 
+/// Read each bridged contact independently, keyed by its accessory ID.
+pub async fn read_contacts_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    let (_lock, mut handle) = connect_saved(id, state_dir).await?;
+    let accessories = handle
+        .accessories()
+        .await
+        .map_err(|_| "Cannot read HomeKit accessories")?
+        .to_vec();
+    let mut readings = Vec::new();
+    for accessory in accessories {
+        let mut contact = None;
+        let mut battery = None;
+        for service in &accessory.services {
+            for characteristic in &service.characteristics {
+                if service.service_type == ServiceType::ContactSensor
+                    && characteristic.char_type == CharacteristicType::ContactSensorState
+                {
+                    if contact.replace(characteristic.iid).is_some() {
+                        return Err("Ambiguous contact sensor");
+                    }
+                }
+                if service.service_type == ServiceType::Battery
+                    && characteristic.char_type == CharacteristicType::BatteryLevel
+                {
+                    if battery.replace(characteristic.iid).is_some() {
+                        return Err("Ambiguous battery sensor");
+                    }
+                }
+            }
+        }
+        if let Some(iid) = contact {
+            let value = handle
+                .read(accessory.aid, iid)
+                .await
+                .map_err(|_| "Cannot read contact")?
+                .to_json();
+            let mut services =
+                vec![json!({"type":"80","characteristics":[{"type":"6A","value":value}]})];
+            if let Some(iid) = battery {
+                let value = handle
+                    .read(accessory.aid, iid)
+                    .await
+                    .map_err(|_| "Cannot read battery")?
+                    .to_json();
+                services.push(json!({"type":"96","characteristics":[{"type":"68","value":value}]}));
+            }
+            let state =
+                contact_state(&json!({"services":services})).ok_or("Invalid contact reading")?;
+            readings.push((accessory.aid, state));
+        }
+    }
+    Ok(readings)
+}
+
 async fn connect_saved(
     id: &str,
     state_dir: &std::path::Path,
