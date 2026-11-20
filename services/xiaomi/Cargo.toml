@@ -10,6 +10,8 @@ codegen-units = 1
 
 [dependencies]
 base64 = "=0.23.1"
+ring = "=0.17.14"
+libc = "=0.2.191"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls", "cookies"] }
 serde_json = "=1.0.145"
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
