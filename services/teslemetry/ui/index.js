@@ -235,12 +235,14 @@ class TeslemetrySolar extends HTMLElement {
     this.#render();
   }
   #render() {
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
     const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
     button.textContent = this.#details ? 'Back to solar' : 'Solar details';
     button.addEventListener('click', () => {
       if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
@@ -293,6 +295,7 @@ class TeslemetryGrid extends HTMLElement {
     this.#render();
   }
   #render() {
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const a = device?.available === true ? device.attributes : undefined;
     const watts = a?.grid_power_w;
@@ -300,6 +303,7 @@ class TeslemetryGrid extends HTMLElement {
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
     button.textContent = this.#details ? 'Back to grid' : 'Grid details';
     button.addEventListener('click', () => {
       if (this.#details) { this.#generation++; this.#details = false; this.#render(); }

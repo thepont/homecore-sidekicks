@@ -89,3 +89,14 @@ test('history errors are distinct from an empty history', async () => {
   await page.getByRole('button', {name:'Solar details'}).click();
   await page.getByText('History unavailable', {exact:true}).waitFor();
 });
+
+test('a live update keeps keyboard focus on the solar detail control', async () => {
+  await page.evaluate(() => {
+    host.devices.subscribe = fn => { window.notify = () => fn([device]); fn([device]); return () => {}; };
+    const c = document.createElement('hc-teslemetry-solar'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  const button = page.getByRole('button',{name:'Solar details'});
+  await button.focus();
+  await page.evaluate(() => notify());
+  assert.equal(await button.evaluate(e => e.getRootNode().activeElement === e), true);
+});
