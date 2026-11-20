@@ -259,12 +259,25 @@ async fn reads_each_contact_from_a_bridge_independently() {
         readings[0].0
     );
     tokio::time::timeout(Duration::from_secs(10), async {
+        let mut contact_seen = false;
+        let mut climate_seen = false;
         loop {
             let msg = probe.messages.recv().await.unwrap();
             if msg.topic == topic
                 && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
                     == true
             {
+                contact_seen = true;
+            }
+            if msg.topic.ends_with("/state")
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload)
+                    .unwrap()
+                    .get("temperature")
+                    == Some(&json!(21.5))
+            {
+                climate_seen = true;
+            }
+            if contact_seen && climate_seen {
                 break;
             }
         }

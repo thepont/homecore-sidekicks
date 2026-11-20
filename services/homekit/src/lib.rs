@@ -233,10 +233,10 @@ pub async fn run_contact_publisher_with_interval(
         return Err("Invalid refresh interval");
     }
     let mut watch = watch_contacts_with_interval(&bridge_id, &state_dir, refresh).await?;
-    publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
     contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
     while watch.next().await.is_some() {
-        publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+        publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
     }
     contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
@@ -1042,7 +1042,7 @@ async fn watch_contacts_with_interval(
             .await
             .map_err(|_| "Cannot subscribe to contact")?;
     }
-    let current = read_contacts(&mut handle).await?;
+    let current = read_sensors(&mut handle).await?;
     let (send, updates) = tokio::sync::mpsc::channel(32);
     let mut state = current.clone();
     let task = tokio::spawn(async move {
@@ -1053,7 +1053,7 @@ async fn watch_contacts_with_interval(
             let event = tokio::select! {
                 event = events.next() => match event { Some(event) => event, None => break },
                 _ = timer.tick() => {
-                    let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_contacts(&mut handle)).await {
+                    let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_sensors(&mut handle)).await {
                         Ok(Ok(refreshed)) => refreshed,
                         _ => break,
                     };
