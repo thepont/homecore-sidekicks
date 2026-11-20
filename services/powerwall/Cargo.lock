@@ -272,7 +272,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "futures-util",
  "reqwest",
+ "ring",
  "rumqttc",
  "serde_json",
  "tokio",

@@ -32,9 +32,9 @@ async fn register(mqtt: &AsyncClient) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-fn mqtt_options(host: String, port: u16) -> Result<MqttOptions, Box<dyn std::error::Error>> {
+fn mqtt_options(host: String, port: u16, username: &str, password: &str) -> MqttOptions {
     let mut options = MqttOptions::new("plugin.teslemetry-powerwall", host, port);
-    options.set_credentials(required("MQTT_USERNAME")?, secret("MQTT_PASSWORD_FILE")?);
+    options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(30));
     options.set_last_will(LastWill::new(
         AVAILABILITY_TOPIC,
@@ -42,7 +42,7 @@ fn mqtt_options(host: String, port: u16) -> Result<MqttOptions, Box<dyn std::err
         QoS::AtLeastOnce,
         true,
     ));
-    Ok(options)
+    options
 }
 
 #[tokio::main]
@@ -61,7 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if mqtt_host != "127.0.0.1" || mqtt_port == 0 || site == 0 {
         return Err("Invalid Powerwall configuration".into());
     }
-    let options = mqtt_options(mqtt_host, mqtt_port)?;
+    let username = required("MQTT_USERNAME")?;
+    let password = secret("MQTT_PASSWORD_FILE")?;
+    let options = mqtt_options(mqtt_host.clone(), mqtt_port, &username, &password);
     let (mqtt, mut eventloop) = AsyncClient::new(options, 16);
     tokio::spawn(async move {
         loop {
@@ -77,6 +79,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         site,
         token.clone(),
         totals_tx,
+    ));
+    tokio::spawn(homecore_powerwall::vehicle::supervise(
+        base.clone(),
+        token.clone(),
+        homecore_powerwall::vehicle::Broker {
+            host: mqtt_host,
+            port: mqtt_port,
+            username,
+            password,
+        },
     ));
     poll_powerwall(mqtt, base, site, token, interval, totals_rx).await
 }

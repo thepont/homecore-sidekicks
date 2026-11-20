@@ -413,6 +413,93 @@ async fn given_site_configuration_stream_then_homecore_receives_read_only_site_s
 
 #[tokio::test]
 #[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_discovered_vehicle_when_telemetry_arrives_then_homecore_receives_read_only_sensors()
+{
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let vin = "5YJ3E1EA7KF000001";
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let wake_count = wakes.clone();
+    let event = format!(
+        "event: data\ndata: {}\n\n",
+        json!({"vin":vin,"createdAt":now.to_rfc3339(),"data":{"BatteryLevel":62,"Locked":true,"HvacPower":false,"InsideTemp":21.5,"Location":{"latitude":-37.8,"longitude":144.9}}})
+    );
+    let app = Router::new()
+        .route("/api/1/vehicles", get(move || async move { Json(json!({"response":[{"vin":vin,"display_name":"Test vehicle","state":"online"}]})) }))
+        .route("/api/1/vehicles/{vin}/wake_up", axum::routing::post(move || {let count=wake_count.clone(); async move {count.fetch_add(1, Ordering::SeqCst); StatusCode::OK}}))
+        .route("/sse/{vin}", get(move || {let event=event.clone(); async move { ([("content-type", "text/event-stream")], event) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "vehicle-fixture", Some("1"));
+    let state = tokio::time::timeout(Duration::from_secs(6), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/state")
+            {
+                return serde_json::from_slice::<Value>(&message.payload).unwrap();
+            }
+        }
+        panic!("vehicle state stream closed")
+    })
+    .await
+    .expect("vehicle readings must be published");
+    assert_eq!(state["battery_level"], 62);
+    assert_eq!(state["locked"], true);
+    assert_eq!(state["hvac_power"], false);
+    assert_eq!(state["inside_temp"], 21.5);
+    assert_eq!(state["location_latitude"], -37.8);
+    assert_eq!(state["location_longitude"], 144.9);
+    assert!(!state.to_string().contains(vin));
+    assert_eq!(wakes.load(Ordering::SeqCst), 0, "vehicle must not be woken");
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_no_vehicle_in_account_then_no_vehicle_device_is_registered() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let discovered = std::sync::Arc::new(tokio::sync::Notify::new());
+    let signal = discovered.clone();
+    let app = Router::new().route("/api/1/vehicles", get(move || {let signal=signal.clone(); async move {signal.notify_one(); Json(json!({"response":[]}))}}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "no-vehicle-fixture", Some("1"));
+    tokio::time::timeout(Duration::from_secs(5), discovered.notified())
+        .await
+        .expect("vehicle list must be checked");
+    let unexpected = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/plugins/plugin.teslemetry-powerwall/register" {
+                let item: Value = serde_json::from_slice(&message.payload).unwrap();
+                if item["device_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("teslemetry_vehicle_"))
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        !unexpected,
+        "an account without vehicles must not create a vehicle card"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
 async fn given_no_wall_connector_then_charger_total_is_not_shown() {
     let broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;
@@ -442,6 +529,149 @@ async fn given_no_wall_connector_then_charger_total_is_not_shown() {
     assert!(
         result.get("wall_connectors_energy_wh").is_none(),
         "no charger must not produce a charger sensor"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_newer_vehicle_status_then_older_snapshot_fills_missing_sensors() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let vin = "5YJ3E1EA7KF000001";
+    let stream = format!(
+        "event: state\ndata: {}\n\nevent: data\ndata: {}\n\n",
+        json!({"vin":vin,"createdAt":now.to_rfc3339(),"state":"asleep"}),
+        json!({"vin":vin,"createdAt":(now-chrono::Duration::hours(1)).to_rfc3339(),"data":{"BatteryLevel":62}})
+    );
+    let app = Router::new().route("/api/1/vehicles", get(move || async move { Json(json!({"response":[{"vin":vin}]})) }))
+        .route("/sse/{vin}", get(move || {let stream=stream.clone(); async move { ([("content-type", "text/event-stream")], stream) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "vehicle-cache-fixture", Some("1"));
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/state")
+            {
+                let state: Value = serde_json::from_slice(&message.payload).unwrap();
+                if state["battery_level"].is_number() {
+                    return state;
+                }
+            }
+        }
+        panic!("vehicle state stream closed")
+    })
+    .await
+    .expect("cached battery should fill an unknown value");
+    assert_eq!(state["battery_level"], 62);
+    assert_eq!(state["vehicle_state"], "asleep");
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_vehicle_online_when_adapter_dies_then_vehicle_becomes_unavailable() {
+    use futures_util::StreamExt;
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let vin = "5YJ3E1EA7KF000001";
+    let event = format!(
+        "event: data\ndata: {}\n\n",
+        json!({"vin":vin,"createdAt":now.to_rfc3339(),"data":{"BatteryLevel":62}})
+    );
+    let app = Router::new().route("/api/1/vehicles", get(move || async move { Json(json!({"response":[{"vin":vin}]})) }))
+        .route("/sse/{vin}", get(move || {let event=event.clone(); async move {
+            let stream = futures_util::stream::once(async move { Ok::<_,std::convert::Infallible>(event) }).chain(futures_util::stream::pending());
+            ([("content-type", "text/event-stream")], axum::body::Body::from_stream(stream))
+        }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let mut owned = start_adapter(&url, broker.port, "vehicle-will-fixture", Some("1"));
+    let online = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/availability")
+                && message.payload.as_ref() == b"online"
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await;
+    assert_eq!(online, Ok(true), "vehicle must first be online");
+    owned.0.kill().unwrap();
+    owned.0.wait().unwrap();
+    let offline = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/availability")
+                && message.payload.as_ref() == b"offline"
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await;
+    assert_eq!(
+        offline,
+        Ok(true),
+        "vehicle must become offline after an unexpected exit"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_vehicle_reading_is_withdrawn_then_old_sensor_value_disappears() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let vin = "5YJ3E1EA7KF000001";
+    let stream = format!(
+        "event: data\ndata: {}\n\nevent: data\ndata: {}\n\n",
+        json!({"vin":vin,"createdAt":now.to_rfc3339(),"data":{"BatteryLevel":62,"Locked":true}}),
+        json!({"vin":vin,"createdAt":(now+chrono::Duration::seconds(1)).to_rfc3339(),"data":{"BatteryLevel":null}})
+    );
+    let app = Router::new().route("/api/1/vehicles", get(move || async move { Json(json!({"response":[{"vin":vin}]})) }))
+        .route("/sse/{vin}", get(move || {let stream=stream.clone(); async move { ([("content-type", "text/event-stream")], stream) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "vehicle-withdraw-fixture", Some("1"));
+    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut saw_battery = false;
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/state")
+            {
+                let state: Value = serde_json::from_slice(&message.payload).unwrap();
+                if state["battery_level"] == 62 {
+                    saw_battery = true;
+                }
+                if saw_battery && state.get("battery_level").is_none() && state["locked"] == true {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await;
+    assert_eq!(
+        outcome,
+        Ok(true),
+        "withdrawn vehicle value should be removed"
     );
     server.abort();
 }
