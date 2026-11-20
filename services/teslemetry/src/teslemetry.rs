@@ -9,12 +9,7 @@ pub fn load_kw(status: &Value) -> Result<f64, &'static str> {
     Ok(watts / 1000.0)
 }
 
-fn fetch_status(
-    client: &reqwest::blocking::Client,
-    base: &str,
-    site: u64,
-    token: &str,
-) -> Result<Value, &'static str> {
+fn validate_status_request(base: &str, site: u64, token: &str) -> Result<(), &'static str> {
     let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
     if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
         || !url.username().is_empty()
@@ -29,6 +24,16 @@ fn fetch_status(
     {
         return Err("Invalid Teslemetry configuration");
     }
+    Ok(())
+}
+
+fn fetch_status(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    site: u64,
+    token: &str,
+) -> Result<Value, &'static str> {
+    validate_status_request(base, site, token)?;
     let response = client
         .get(format!(
             "{}/api/1/energy_sites/{site}/live_status",
