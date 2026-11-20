@@ -8,6 +8,7 @@ let browser, page;
 before(async () => {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_BIN });
   page = await browser.newPage({ viewport: { width: 390, height: 700 } });
+  page.setDefaultTimeout(1200);
   await page.setContent('<main style="width:320px"></main>');
   await page.addScriptTag({ content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
@@ -31,4 +32,17 @@ test('solar dashboard card is offered and shows live production', async () => {
   assert.ok(manifest.slots.some(s => s.slot === 'dashboard.card' && s.element === 'hc-teslemetry-solar'));
   await page.evaluate(() => { const card = document.createElement('hc-teslemetry-solar'); card.host = host; document.querySelector('main').append(card); });
   assert.equal(await page.getByText('2.4 kW', { exact: true }).count(), 1);
+});
+
+test('solar card opens a history graph and returns to live reading', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async () => ({ok: true, data: [
+      {at: '2026-11-20T01:00:00Z', value: 1000},
+      {at: '2026-11-20T02:00:00Z', value: 2400}
+    ]});
+  });
+  await page.getByRole('button', {name: 'Solar details'}).click();
+  assert.equal(await page.getByRole('img', {name: /solar power history/i}).count(), 1);
+  await page.getByRole('button', {name: 'Back to solar'}).click();
+  assert.equal(await page.getByText('2.4 kW', {exact:true}).count(), 1);
 });
