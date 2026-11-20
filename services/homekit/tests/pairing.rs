@@ -15,6 +15,13 @@ struct Fixture {
     child: Child,
     root: PathBuf,
 }
+struct Process(Child);
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -267,6 +274,48 @@ async fn reads_each_contact_from_a_bridge_independently() {
     .await
     .unwrap();
     publisher.abort();
+    let _ = publisher.await;
+    while probe.messages.try_recv().is_ok() {}
+    let password_file = fixture.root.join("mqtt-password");
+    fs::write(&password_file, "fixture-password").unwrap();
+    let _process = Process(
+        Command::new(env!("CARGO_BIN_EXE_homecore-homekit"))
+            .env("MQTT_HOST", "127.0.0.1")
+            .env("MQTT_PORT", broker.port.to_string())
+            .env("MQTT_USERNAME", "fixture-user")
+            .env("MQTT_PASSWORD_FILE", password_file)
+            .env("HOMEKIT_PLUGIN_ID", "plugin.homekit")
+            .env("HOMEKIT_BRIDGE_ID", "02:11:22:33:44:55")
+            .env("HOMEKIT_STATE_DIR", &state_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == "homecore/plugins/plugin.homekit/register" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "open").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == topic
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
+                    == true
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
