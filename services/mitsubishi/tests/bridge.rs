@@ -1032,3 +1032,40 @@ async fn paired_sensor_is_registered_with_real_homecore() {
     .await
     .expect("stale sensor must be unavailable without an old temperature");
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn every_ble_slot_retains_its_device_identity_and_name() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut data = snapshot(22.0, 23.0, "heat");
+    data["bleEnabled"] = json!(true);
+    data["bleSensors"] = json!([
+        {"i":0,"active":true,"stale":false,"temp":20.0},
+        {"i":1,"active":true,"stale":false,"temp":21.0},
+        {"i":2,"active":true,"stale":false,"temp":22.0},
+        {"i":3,"active":true,"stale":false,"temp":23.0}
+    ]);
+    let mut first = Source::start(data).await;
+    let second = Source::start(snapshot(18.0, 21.0, "heat")).await;
+    let _adapter = start_adapter(broker.port, &first, &second);
+    let _first_session = first.connected().await;
+    for slot in 0..4 {
+        let plugin = format!("plugin.mitsubishi.room_a.ble_{slot}");
+        let id = format!("mitsubishi_room_a_ble_{slot}");
+        let registration: Value = serde_json::from_slice(
+            &retained_specific(broker.port, &format!("homecore/plugins/{plugin}/register"))
+                .await
+                .payload,
+        )
+        .unwrap();
+        assert_eq!(registration["device_id"], id);
+        assert_eq!(registration["name"], format!("Room A sensor {}", slot + 1));
+        let state: Value = serde_json::from_slice(
+            &retained_specific(broker.port, &format!("homecore/devices/{id}/state"))
+                .await
+                .payload,
+        )
+        .unwrap();
+        assert_eq!(state["temperature"], 20.0 + slot as f64);
+    }
+}
