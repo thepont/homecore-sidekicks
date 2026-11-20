@@ -83,3 +83,23 @@ test('setup asks for a region before starting sign-in',async()=>{
     assert.equal(await page.evaluate(()=>window.begun),false);
   } finally {await browser.close();}
 });
+
+test('region and sign-in controls have usable spacing without overflowing',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    for(const width of [320,390,1024]) {
+      const page=await browser.newPage({viewport:{width,height:700}});
+      await page.setContent('<main style="padding:16px"></main>');
+      await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+      await page.evaluate(()=>{const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async()=>({ok:true,data:{status:'ok',setup_status:'unconfigured'}})};document.querySelector('main').append(el)});
+      const label=await page.getByText('Mi Home region',{exact:true}).boundingBox();
+      const select=await page.getByLabel('Mi Home region').boundingBox();
+      const button=await page.getByRole('button',{name:'Sign in with Mi Home'}).boundingBox();
+      assert.ok(select.y >= label.y+label.height+4,`region label needs space before the selector at ${width}px`);
+      assert.ok(button.y >= select.y+select.height+8,`sign-in needs space below the selector at ${width}px`);
+      assert.ok(select.height >= 40 && button.height >= 40,`controls need comfortable touch targets at ${width}px`);
+      assert.ok(select.x >= 0 && select.x+select.width <= width && button.x+button.width <= width,`controls must fit at ${width}px`);
+      await page.close();
+    }
+  } finally {await browser.close();}
+});
