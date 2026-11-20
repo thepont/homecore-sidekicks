@@ -347,3 +347,97 @@ async fn homecore_controls_follow_reported_device_state() {
     }
     worker.join().unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires the pinned local Mosquitto image and Docker"]
+async fn broker_restart_restores_device_registration_and_status() {
+    let mut broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    let address = server.local_addr().unwrap();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = done.clone();
+    let worker = thread::spawn(move || {
+        let mut buf = [0; 8192];
+        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+            let Ok((n, peer)) = server.recv_from(&mut buf) else {
+                continue;
+            };
+            let count = u16::from_le_bytes([buf[40], buf[41]]);
+            let (payload, key) = if buf[38] == 0x65 {
+                let mut auth = vec![1, 2, 3, 4];
+                auth.extend_from_slice(&KEY);
+                (auth, INITIAL)
+            } else {
+                let request = CommandMessage::unpack_with_payload(buf[..n].to_vec(), &KEY).unwrap();
+                assert_eq!(request[0], 0x0e);
+                let data =
+                    br#"{"envtemp":22,"temp":24,"ac_pwr":1,"ac_mode":0,"ac_mark":3,"ac_vdir":1}"#;
+                let mut frame = vec![0; 14];
+                frame[10..12].copy_from_slice(&(data.len() as u16).to_le_bytes());
+                frame.extend_from_slice(data);
+                let checksum = frame[8..]
+                    .iter()
+                    .fold(0xc0adu16, |s, b| s.wrapping_add(u16::from(*b)));
+                frame[6..8].copy_from_slice(&checksum.to_le_bytes());
+                (frame, KEY)
+            };
+            server
+                .send_to(
+                    &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                        .pack_with_payload(&payload, &key)
+                        .unwrap(),
+                    peer,
+                )
+                .unwrap();
+        }
+    });
+    let path =
+        std::env::temp_dir().join(format!("electrolux-reconnect-pass-{}", std::process::id()));
+    std::fs::write(&path, "fixture-password").unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_electrolux-bridge"))
+        .env("ELECTROLUX_ADDRESS", address.to_string())
+        .env("ELECTROLUX_MAC", "020304050607")
+        .env("MQTT_HOST", "127.0.0.1")
+        .env("MQTT_PORT", broker.port.to_string())
+        .env("MQTT_USERNAME", "fixture-user")
+        .env("MQTT_PASSWORD_FILE", &path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _owned = Owned(child, path);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(m) = probe.messages.recv().await {
+            if m.topic == "homecore/devices/electrolux_living_room/state" {
+                return;
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("initial state");
+    broker.restart().await;
+    drop(probe);
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let (registration, state) = tokio::time::timeout(Duration::from_secs(12), async {
+        let mut registration = false;
+        let mut state = false;
+        while let Some(m) = probe.messages.recv().await {
+            registration |= m.topic == "homecore/plugins/plugin.electrolux.living_room/register";
+            state |= m.topic == "homecore/devices/electrolux_living_room/state";
+            if registration && state {
+                return (registration, state);
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("registration and state after broker restart");
+    assert!(registration && state);
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    worker.join().unwrap();
+}
