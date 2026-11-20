@@ -48,3 +48,11 @@ fn power_command_uses_electrolux_power_frame() {
     let off = homecore_electrolux::protocol::power_request(false).unwrap();
     assert_eq!(&off[14..], br#"{"ac_pwr":0}"#);
 }
+
+#[test]
+fn target_temperature_encodes_a_validated_device_command() {
+    let frame = homecore_electrolux::protocol::temperature_request(24).unwrap();
+    assert_eq!(&frame[..2], &[0x17, 0]);
+    assert_eq!(&frame[14..], br#"{"temp":24}"#);
+    assert!(homecore_electrolux::protocol::temperature_request(41).is_err());
+}

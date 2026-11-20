@@ -56,3 +56,30 @@ pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
     frame[6..8].copy_from_slice(&sum.to_le_bytes());
     Ok(frame)
 }
+
+pub fn temperature_request(temperature: u8) -> Result<Vec<u8>, &'static str> {
+    if temperature > 40 {
+        return Err("Invalid temperature");
+    }
+    let data = format!("{{\"temp\":{temperature}}}");
+    let mut frame = vec![
+        0x17,
+        0,
+        0xa5,
+        0xa5,
+        0x5a,
+        0x5a,
+        0,
+        0,
+        2,
+        0x0b,
+        data.len() as u8,
+        0,
+        0,
+        0,
+    ];
+    frame.extend_from_slice(data.as_bytes());
+    let sum = checksum(&frame[8..]);
+    frame[6..8].copy_from_slice(&sum.to_le_bytes());
+    Ok(frame)
+}
