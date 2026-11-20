@@ -31,6 +31,15 @@
         "standard",
         "large"
       ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-battery",
+      "label": "Battery",
+      "forms": [
+        "compact",
+        "standard"
+      ]
     }
   ]
 }

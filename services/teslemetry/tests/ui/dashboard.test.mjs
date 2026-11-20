@@ -57,3 +57,10 @@ test('grid card shows estimated import cost when a tariff exists and works witho
   assert.equal(await page.getByText('Import cost unavailable', {exact:true}).count(), 1);
   assert.equal(await page.getByText('1 kW', {exact:true}).count(), 1);
 });
+
+test('battery card shows charge without needing graph or tariff data', async () => {
+  const manifest = JSON.parse(await readFile(new URL('manifest.json', ui), 'utf8'));
+  assert.ok(manifest.slots.some(s => s.slot === 'dashboard.card' && s.element === 'hc-teslemetry-battery'));
+  await page.evaluate(() => { const c = document.createElement('hc-teslemetry-battery'); c.host = host; document.querySelector('main').replaceChildren(c); });
+  assert.equal(await page.getByText('70%', {exact:true}).count(), 1);
+});

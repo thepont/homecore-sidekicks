@@ -320,3 +320,20 @@ class TeslemetryGrid extends HTMLElement {
   }
 }
 customElements.define('hc-teslemetry-grid', TeslemetryGrid);
+
+class TeslemetryBattery extends HTMLElement {
+  #host; #stop;
+  constructor() { super(); this.attachShadow({mode:'open'}); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#stop?.(); this.#stop = undefined; }
+  #listen() { this.#stop?.(); this.#stop = this.#host?.devices.subscribe(() => this.#render()); this.#render(); }
+  #render() {
+    const d = this.#host?.devices.get('teslemetry_powerwall');
+    const charge = d?.available === true ? d.attributes?.charge_pct : undefined;
+    const value = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${charge}%` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin-top:8px}</style><div class="card"><span>Battery</span><strong></strong></div>';
+    this.shadowRoot.querySelector('strong').textContent = value;
+  }
+}
+customElements.define('hc-teslemetry-battery', TeslemetryBattery);
