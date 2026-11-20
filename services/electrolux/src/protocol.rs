@@ -149,3 +149,31 @@ pub fn fan_request(fan: &str) -> Result<Vec<u8>, &'static str> {
     frame[6..8].copy_from_slice(&sum.to_le_bytes());
     Ok(frame)
 }
+
+pub fn swing_request(enabled: bool) -> Result<Vec<u8>, &'static str> {
+    let data: &[u8] = if enabled {
+        br#"{"ac_vdir":1}"#
+    } else {
+        br#"{"ac_vdir":0}"#
+    };
+    let mut frame = vec![
+        0x19,
+        0,
+        0xa5,
+        0xa5,
+        0x5a,
+        0x5a,
+        0,
+        0,
+        2,
+        0x0b,
+        data.len() as u8,
+        0,
+        0,
+        0,
+    ];
+    frame.extend_from_slice(data);
+    let sum = checksum(&frame[8..]);
+    frame[6..8].copy_from_slice(&sum.to_le_bytes());
+    Ok(frame)
+}

@@ -96,3 +96,15 @@ fn fan_modes_map_to_electrolux_commands() {
     }
     assert!(homecore_electrolux::protocol::fan_request("unsupported").is_err());
 }
+
+#[test]
+fn swing_command_maps_boolean_to_vertical_direction() {
+    for (enabled, payload) in [
+        (true, br#"{"ac_vdir":1}"#.as_slice()),
+        (false, br#"{"ac_vdir":0}"#.as_slice()),
+    ] {
+        let frame = homecore_electrolux::protocol::swing_request(enabled).unwrap();
+        assert_eq!(&frame[..2], &[0x19, 0]);
+        assert_eq!(&frame[14..], payload);
+    }
+}
