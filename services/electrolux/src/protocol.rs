@@ -7,7 +7,7 @@ fn checksum(data: &[u8]) -> u16 {
 }
 
 pub fn status_request() -> Vec<u8> {
-    let mut frame = vec![0x0e, 0, 0xa5, 0xa5, 0x5a, 0x5a, 0, 0, 1, 0x0b, 2, 0, 0];
+    let mut frame = vec![0x0e, 0, 0xa5, 0xa5, 0x5a, 0x5a, 0, 0, 1, 0x0b, 2, 0, 0, 0];
     frame.extend_from_slice(b"{}");
     let sum = checksum(&frame[8..]);
     frame[6..8].copy_from_slice(&sum.to_le_bytes());
