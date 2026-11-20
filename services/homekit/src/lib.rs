@@ -1,5 +1,91 @@
 use serde_json::{json, Map, Value};
 
+/// Publish a validated contact snapshot using homeCore's device protocol.
+pub async fn publish_contacts(
+    mqtt: &rumqttc::AsyncClient,
+    plugin: &str,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+) -> Result<(), &'static str> {
+    if plugin.is_empty()
+        || plugin.len() > 128
+        || !plugin
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || bridge_id.len() != 17
+        || !bridge_id.bytes().enumerate().all(|(i, b)| {
+            if i % 3 == 2 {
+                b == b':'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+        || readings.len() > 1024
+    {
+        return Err("Invalid contact publication");
+    }
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    for (aid, value) in readings {
+        let object = value.as_object().ok_or("Invalid contact state")?;
+        if *aid == 0
+            || !seen.insert(*aid)
+            || object.len() > 2
+            || object.get("open").and_then(Value::as_bool).is_none()
+            || object
+                .keys()
+                .any(|key| key != "open" && key != "battery_pct")
+            || object
+                .get("battery_pct")
+                .is_some_and(|battery| !battery.as_u64().is_some_and(|n| n <= 100))
+        {
+            return Err("Invalid contact state");
+        }
+    }
+    for (aid, state) in readings {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        attributes.insert(
+            "open".into(),
+            json!({"kind":"bool", "writable":false, "display_name":"Open"}),
+        );
+        if state.get("battery_pct").is_some() {
+            attributes.insert(
+                "battery_pct".into(),
+                json!({"kind":"integer", "writable":false, "display_name":"Battery", "unit":"%"}),
+            );
+        }
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit contact {aid}"),"device_type":"contact_sensor"});
+        for (topic, retained, payload) in [
+            (
+                format!("homecore/plugins/{plugin}/register"),
+                false,
+                register,
+            ),
+            (
+                format!("homecore/devices/{device}/schema"),
+                true,
+                json!({"attributes":attributes,"primary":["open"]}),
+            ),
+            (
+                format!("homecore/devices/{device}/state"),
+                true,
+                state.clone(),
+            ),
+        ] {
+            mqtt.publish(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+                retained,
+                payload.to_string(),
+            )
+            .await
+            .map_err(|_| "Cannot publish contact")?;
+        }
+    }
+    Ok(())
+}
+
 struct PairingTemp(std::path::PathBuf);
 impl Drop for PairingTemp {
     fn drop(&mut self) {
