@@ -88,12 +88,19 @@ async fn run() -> Result<(), &'static str> {
                     return Err("Broker worker stopped");
                 }
             }
-            let Some(bridge_id) = bridge_id.as_ref() else {
+            let configured_id = match &bridge_id {
+                Some(id) => Some(id.clone()),
+                None => homecore_homekit::stored_bridge_id(&state_dir)
+                    .await
+                    .ok()
+                    .flatten(),
+            };
+            let Some(bridge_id) = configured_id else {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             };
             tokio::select! {
-                _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id.clone(), state_dir.clone(), Duration::from_secs(refresh)) => {
+            _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh)) => {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 _ = connection.changed() => {}

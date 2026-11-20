@@ -286,7 +286,6 @@ async fn reads_each_contact_from_a_bridge_independently() {
             .env("MQTT_USERNAME", "fixture-user")
             .env("MQTT_PASSWORD_FILE", password_file)
             .env("HOMEKIT_PLUGIN_ID", "plugin.homekit")
-            .env("HOMEKIT_BRIDGE_ID", "02:11:22:33:44:55")
             .env("HOMEKIT_REFRESH_SECS", "1")
             .env("HOMEKIT_STATE_DIR", &state_root)
             .stdout(Stdio::null())

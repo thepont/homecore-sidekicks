@@ -343,6 +343,53 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
     read_contact(&mut handle).await
 }
 
+/// Return the one stored bridge identifier, if setup has completed.
+pub async fn stored_bridge_id(state_dir: &std::path::Path) -> Result<Option<String>, &'static str> {
+    use hap_controller::{JsonFileStore, PairingStore};
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err("Invalid pairing directory");
+    }
+    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
+    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let path = state_dir.join("pairing.json");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("Invalid pairing store"),
+    };
+    if !metadata.is_file()
+        || metadata.permissions().mode() & 0o077 != 0
+        || metadata.len() > 1024 * 1024
+    {
+        return Err("Invalid pairing store");
+    }
+    let pairings = JsonFileStore::new(path)
+        .load_pairings()
+        .await
+        .map_err(|_| "Cannot read pairing")?;
+    match pairings.as_slice() {
+        [] => Ok(None),
+        [one] => {
+            let id = &one.pairing.pairing_id;
+            if id.len() != 17
+                || !id.bytes().enumerate().all(|(i, b)| {
+                    if i % 3 == 2 {
+                        b == b':'
+                    } else {
+                        b.is_ascii_hexdigit()
+                    }
+                })
+            {
+                return Err("Invalid pairing identity");
+            }
+            Ok(Some(id.clone()))
+        }
+        _ => Err("Ambiguous pairing store"),
+    }
+}
+
 /// Invite a separate, non-admin controller using an existing administrator pairing.
 pub async fn invite_controller(
     id: &str,
