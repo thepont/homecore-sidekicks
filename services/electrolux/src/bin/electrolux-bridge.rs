@@ -123,8 +123,37 @@ async fn main() -> Result<(), &'static str> {
     let mut opts = MqttOptions::new(PLUGIN, host, port);
     opts.set_credentials(username, password);
     opts.set_keep_alive(Duration::from_secs(15));
+    // UI file replies may carry a 128 KiB chunk encoded as base64.
+    opts.set_max_packet_size(8 * 1024, 256 * 1024);
+    opts.set_inflight(2);
     opts.set_last_will(LastWill::new(AVAIL, "offline", QoS::AtLeastOnce, true));
     let (mqtt, mut events) = AsyncClient::new(opts, 16);
+    let assets = std::sync::Arc::new(homecore_electrolux::ui::assets());
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+    let ui_mqtt = mqtt.clone();
+    let ui_assets = assets.clone();
+    tokio::spawn(async move {
+        while let Some(request) = ui_rx.recv().await {
+            let assets = ui_assets.clone();
+            let reply = tokio::task::spawn_blocking(move || match assets.as_ref() {
+                Some(assets) => assets.respond(&request),
+                None => homecore_plugin_ui::respond_unavailable(&request),
+            })
+            .await;
+            if let Ok(Some(reply)) = reply {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    ui_mqtt.publish(
+                        format!("homecore/plugins/{PLUGIN}/manage/response"),
+                        QoS::AtLeastOnce,
+                        false,
+                        reply.to_string(),
+                    ),
+                )
+                .await;
+            }
+        }
+    });
     let (tx, mut rx) = watch::channel(None);
     let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<Command>(8);
     tokio::task::spawn_blocking(move || loop {
@@ -173,6 +202,8 @@ async fn main() -> Result<(), &'static str> {
             event=events.poll() => match event {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                     mqtt.subscribe(format!("homecore/devices/{DEVICE}/cmd"),QoS::AtLeastOnce).await.map_err(|_| "MQTT subscribe failed")?;
+                    mqtt.subscribe(format!("homecore/plugins/{PLUGIN}/manage/cmd"),QoS::AtLeastOnce).await.map_err(|_| "MQTT subscribe failed")?;
+                    mqtt.publish(format!("homecore/plugins/{PLUGIN}/capabilities"),QoS::AtLeastOnce,true,json!({"spec":"1","plugin_id":PLUGIN,"actions":[],"ui":assets.as_ref().as_ref().map(|a|a.descriptor())}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     mqtt.publish(format!("homecore/plugins/{PLUGIN}/register"),QoS::AtLeastOnce,true,json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room AC","device_type":"thermostat"}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30},"on":{"kind":"bool","writable":true},"hvac_mode":{"kind":"string","writable":true},"fan_mode":{"kind":"string","writable":true},"swing":{"kind":"bool","writable":true}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     publish(&mqtt,rx.borrow_and_update().as_ref()).await?;
@@ -180,6 +211,7 @@ async fn main() -> Result<(), &'static str> {
                 Ok(Event::Incoming(Incoming::Publish(message))) if !message.retain && rx.borrow().is_some() && message.topic == format!("homecore/devices/{DEVICE}/cmd") && message.payload.len() <= 1024 => {
                     if let Some(command) = command(&message.payload) { let _ = command_tx.try_send(command); }
                 }
+                Ok(Event::Incoming(Incoming::Publish(message))) if !message.retain && message.topic == format!("homecore/plugins/{PLUGIN}/manage/cmd") && message.payload.len() <= homecore_plugin_ui::MAX_REQUEST_BYTES => { let _ = ui_tx.try_send(message.payload.to_vec()); }
                 Ok(_) => {},
                 Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
             },

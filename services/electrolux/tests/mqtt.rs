@@ -441,3 +441,70 @@ async fn broker_restart_restores_device_registration_and_status() {
     done.store(true, std::sync::atomic::Ordering::SeqCst);
     worker.join().unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires the pinned local Mosquitto image and Docker"]
+async fn electrolux_advertises_and_serves_the_shared_ac_card() {
+    use base64::Engine;
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let path = std::env::temp_dir().join(format!("electrolux-ui-pass-{}", std::process::id()));
+    std::fs::write(&path, "fixture-password").unwrap();
+    let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/ac-card");
+    let child = Command::new(env!("CARGO_BIN_EXE_electrolux-bridge"))
+        .env("ELECTROLUX_ADDRESS", "127.0.0.1:9")
+        .env("ELECTROLUX_MAC", "020304050607")
+        .env("MQTT_HOST", "127.0.0.1")
+        .env("MQTT_PORT", broker.port.to_string())
+        .env("MQTT_USERNAME", "fixture-user")
+        .env("MQTT_PASSWORD_FILE", &path)
+        .env("HC_PLUGIN_UI_DIR", &ui)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _owned = Owned(child, path);
+    let caps = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(m) = probe.messages.recv().await {
+            if m.topic == "homecore/plugins/plugin.electrolux.living_room/capabilities" {
+                return serde_json::from_slice::<serde_json::Value>(&m.payload).unwrap();
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("shared card capabilities");
+    assert_eq!(caps["ui"]["entry"], "index.js");
+    assert!(caps["ui"]["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x["element"] == "hc-ac-card"));
+    let request = serde_json::json!({"action":"ui_file","request_id":"12345678-1234-4234-8234-123456789abc","file":"index.js","offset":0,"max":131072});
+    probe
+        .client
+        .publish(
+            "homecore/plugins/plugin.electrolux.living_room/manage/cmd",
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            request.to_string(),
+        )
+        .await
+        .unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(m) = probe.messages.recv().await {
+            if m.topic == "homecore/plugins/plugin.electrolux.living_room/manage/response" {
+                return serde_json::from_slice::<serde_json::Value>(&m.payload).unwrap();
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("shared card response");
+    assert_eq!(reply["status"], "ok");
+    assert_eq!(reply["done"], true);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(reply["data"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(bytes, std::fs::read(ui.join("index.js")).unwrap());
+}
