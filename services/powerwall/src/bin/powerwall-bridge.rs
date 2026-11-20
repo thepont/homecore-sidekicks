@@ -93,6 +93,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     poll_powerwall(mqtt, base, site, token, interval, totals_rx).await
 }
 
+fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let mut attributes = serde_json::Map::new();
+    for (name, value) in readings {
+        let kind = if value.is_boolean() {
+            "bool"
+        } else if value.is_string() {
+            "string"
+        } else if value.is_i64() {
+            "integer"
+        } else {
+            "float"
+        };
+        let mut attribute =
+            json!({"kind":kind,"writable":false,"display_name":name.replace('_', " ")});
+        if name.ends_with("_w") {
+            attribute["unit"] = json!("W");
+        }
+        if name.ends_with("_wh") {
+            attribute["unit"] = json!("Wh");
+        }
+        if name.ends_with("_pct") {
+            attribute["unit"] = json!("%");
+            attribute["min"] = json!(0);
+            attribute["max"] = json!(100);
+        }
+        attributes.insert(name.clone(), attribute);
+    }
+    json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
+}
+
 async fn poll_powerwall(
     mqtt: AsyncClient,
     base: String,
@@ -122,38 +152,11 @@ async fn poll_powerwall(
                 }
                 readings.insert("charge_pct".into(), value.charge_pct.into());
                 readings.insert("battery_power_w".into(), value.power_w.into());
-                let mut attributes = serde_json::Map::new();
-                for (name, value) in &readings {
-                    let kind = if value.is_boolean() {
-                        "bool"
-                    } else if value.is_string() {
-                        "string"
-                    } else if value.is_i64() {
-                        "integer"
-                    } else {
-                        "float"
-                    };
-                    let mut attribute =
-                        json!({"kind":kind,"writable":false,"display_name":name.replace('_', " ")});
-                    if name.ends_with("_w") {
-                        attribute["unit"] = json!("W");
-                    }
-                    if name.ends_with("_wh") {
-                        attribute["unit"] = json!("Wh");
-                    }
-                    if name.ends_with("_pct") {
-                        attribute["unit"] = json!("%");
-                        attribute["min"] = json!(0);
-                        attribute["max"] = json!(100);
-                    }
-                    attributes.insert(name.clone(), attribute);
-                }
                 mqtt.publish(
                     "homecore/devices/teslemetry_powerwall/schema",
                     QoS::AtLeastOnce,
                     true,
-                    json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
-                        .to_string(),
+                    powerwall_schema(&readings).to_string(),
                 )
                 .await?;
                 mqtt.publish(
