@@ -113,9 +113,7 @@ impl Client {
 
 impl Client {
     pub fn set_mode(&mut self, mode: &str) -> Result<(), &'static str> {
-        let response = self.exchange::<Query>(&protocol::mode_request(mode)?)?;
-        protocol::parse_status_response(&response)?;
-        Ok(())
+        self.send_control(protocol::mode_request(mode)?)
     }
     pub fn set_fan(&mut self, fan: &str) -> Result<(), &'static str> {
         let response = self.exchange::<Query>(&protocol::fan_request(fan)?)?;
