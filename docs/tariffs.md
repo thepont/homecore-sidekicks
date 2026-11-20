@@ -14,13 +14,12 @@ Amounts come through in currency units per kWh. If a tariff supplies `AUD`, a
 value of `0.25` means 25 Australian cents per kWh and its schema unit is
 `AUD/kWh`. A supplied currency code always wins.
 
-The checked tariff leaves the code out. [IANA and Unicode CLDR data](../services/teslemetry/data/currency/README.md) let us look
-up `Australia/Melbourne → AU → AUD`. The adapter does this automatically from
-Tesla's installation timezone, not the phone or server locale. Cards should
-label it **Currency inferred from site timezone**: the provider has not
-confirmed the code. No amount is converted. For an unmapped zone such as `UTC`,
-or a region with several active currencies, the code remains `unspecified`
-and the unit is `currency/kWh`.
+The checked tariff leaves the code out. The adapter uses Tesla's installation
+timezone and [IANA and Unicode CLDR data](../services/teslemetry/data/currency/README.md)
+to look up `Australia/Melbourne → AU → AUD`. The Powerwall card shows `AUD/kWh`
+and keeps the original amount. The device attributes record how the adapter
+determined the code. For an unmapped zone such as `UTC` or a region with several
+active currencies, the code remains `unspecified` and the unit is `currency/kWh`.
 
 ## Fields available to cards
 

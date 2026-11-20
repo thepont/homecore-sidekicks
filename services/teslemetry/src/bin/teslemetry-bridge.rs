@@ -1,8 +1,15 @@
 use rumqttc::{AsyncClient, LastWill, MqttOptions, QoS};
 use serde_json::json;
 use std::{env, fs::File, io::Read, time::Duration};
+use tokio::{sync::watch, time::Instant};
 
 const AVAILABILITY_TOPIC: &str = "homecore/devices/teslemetry_powerwall/availability";
+const SCHEMA_TOPIC: &str = "homecore/devices/teslemetry_powerwall/schema";
+
+struct PowerwallMqtt {
+    client: AsyncClient,
+    connections: watch::Receiver<()>,
+}
 
 fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(env::var(name).map_err(|_| format!("Missing {name}"))?)
@@ -24,18 +31,20 @@ fn secret(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(value.to_string())
 }
 
-async fn register(mqtt: &AsyncClient) -> Result<(), Box<dyn std::error::Error>> {
+async fn register(mqtt: &AsyncClient, schema: &str) -> Result<(), rumqttc::ClientError> {
     mqtt.publish("homecore/plugins/plugin.teslemetry-powerwall/register", QoS::AtLeastOnce, true,
         json!({"device_id":"teslemetry_powerwall","plugin_id":"plugin.teslemetry-powerwall","name":"Tesla Powerwall","device_type":"sensor"}).to_string()).await?;
-    mqtt.publish("homecore/devices/teslemetry_powerwall/schema", QoS::AtLeastOnce, true,
-        json!({"attributes":{"charge_pct":{"kind":"float","writable":false,"display_name":"Charge","unit":"%","min":0,"max":100},"battery_power_w":{"kind":"float","writable":false,"display_name":"Battery power","unit":"W"}},"primary":["charge_pct","battery_power_w"]}).to_string()).await?;
-    Ok(())
+    mqtt.publish(SCHEMA_TOPIC, QoS::AtLeastOnce, true, schema)
+        .await
 }
 
 fn mqtt_options(host: String, port: u16, username: &str, password: &str) -> MqttOptions {
     let mut options = MqttOptions::new("plugin.teslemetry-powerwall", host, port);
     options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(30));
+    // UI replies carry at most 128 KiB as base64; bound unacknowledged copies.
+    options.set_max_packet_size(8 * 1024, 256 * 1024);
+    options.set_inflight(2);
     options.set_last_will(LastWill::new(
         AVAILABILITY_TOPIC,
         "offline",
@@ -64,18 +73,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let username = required("MQTT_USERNAME")?;
     let password = secret("MQTT_PASSWORD_FILE")?;
     let options = mqtt_options(mqtt_host.clone(), mqtt_port, &username, &password);
-    let (mqtt, mut eventloop) = AsyncClient::new(options, 16);
-    tokio::spawn(async move {
-        loop {
-            if eventloop.poll().await.is_err() {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-    });
-    register(&mqtt).await?;
-    let (totals_tx, totals_rx) = tokio::sync::watch::channel(serde_json::Map::new());
+    let (mqtt, eventloop) = AsyncClient::new(options, 16);
+    let (connected, connections) = watch::channel(());
+    tokio::spawn(homecore_teslemetry::plugin::run(
+        mqtt.clone(),
+        eventloop,
+        connected,
+    ));
+    let (totals_tx, totals_rx) = watch::channel(serde_json::Map::new());
     let (tariff_tx, tariff_rx) =
-        tokio::sync::watch::channel(homecore_teslemetry::totals::TariffState::default());
+        watch::channel(homecore_teslemetry::totals::TariffState::default());
     tokio::spawn(homecore_teslemetry::totals::listen(
         base.clone(),
         site,
@@ -93,7 +100,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             password,
         },
     ));
-    poll_powerwall(mqtt, base, site, token, interval, totals_rx, tariff_rx).await
+    poll_powerwall(
+        PowerwallMqtt {
+            client: mqtt,
+            connections,
+        },
+        base,
+        site,
+        token,
+        interval,
+        totals_rx,
+        tariff_rx,
+    )
+    .await
 }
 
 fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
@@ -142,26 +161,71 @@ fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> se
     json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
 }
 
+async fn publish_powerwall_readings(
+    mqtt: &AsyncClient,
+    readings: serde_json::Map<String, serde_json::Value>,
+    schema: &mut String,
+) -> Result<(), rumqttc::ClientError> {
+    let next_schema = powerwall_schema(&readings).to_string();
+    if next_schema != *schema {
+        mqtt.publish(SCHEMA_TOPIC, QoS::AtLeastOnce, true, next_schema.as_str())
+            .await?;
+        *schema = next_schema;
+    }
+    mqtt.publish(
+        "homecore/devices/teslemetry_powerwall/state",
+        QoS::AtLeastOnce,
+        true,
+        serde_json::Value::Object(readings).to_string(),
+    )
+    .await?;
+    mqtt.publish(AVAILABILITY_TOPIC, QoS::AtLeastOnce, true, "online")
+        .await
+}
+
 async fn poll_powerwall(
-    mqtt: AsyncClient,
+    mqtt: PowerwallMqtt,
     base: String,
     site: u64,
     token: String,
     interval: u64,
-    totals: tokio::sync::watch::Receiver<serde_json::Map<String, serde_json::Value>>,
-    tariffs: tokio::sync::watch::Receiver<homecore_teslemetry::totals::TariffState>,
+    totals: watch::Receiver<serde_json::Map<String, serde_json::Value>>,
+    tariffs: watch::Receiver<homecore_teslemetry::totals::TariffState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let PowerwallMqtt {
+        client: mqtt,
+        mut connections,
+    } = mqtt;
+    let mut schema = json!({"attributes":{"charge_pct":{"kind":"float","writable":false,"display_name":"Charge","unit":"%","min":0,"max":100},"battery_power_w":{"kind":"float","writable":false,"display_name":"Battery power","unit":"W"}},"primary":["charge_pct","battery_power_w"]}).to_string();
+    connections.changed().await?;
+    register(&mqtt, &schema).await?;
     let mut client = None;
+    let mut next_poll = Instant::now();
     loop {
         if client.is_none() {
             client = homecore_teslemetry::http::client().ok();
         }
-        let reading = match client.as_ref() {
-            Some(client) => {
-                homecore_teslemetry::teslemetry::fetch_energy_async(client, &base, site, &token)
-                    .await
+        let pause = tokio::time::sleep_until(next_poll);
+        let request = async {
+            pause.await;
+            match client.as_ref() {
+                Some(client) => {
+                    homecore_teslemetry::teslemetry::fetch_energy_async(client, &base, site, &token)
+                        .await
+                }
+                None => Err("HTTP client failed"),
             }
-            None => Err("HTTP client failed"),
+        };
+        tokio::pin!(request);
+        let reading = loop {
+            tokio::select! {
+                biased;
+                changed = connections.changed() => {
+                    changed?;
+                    register(&mqtt, &schema).await?;
+                }
+                result = &mut request => break result,
+            }
         };
         match reading {
             Ok((value, mut readings)) => {
@@ -180,22 +244,7 @@ async fn poll_powerwall(
                 }
                 readings.insert("charge_pct".into(), value.charge_pct.into());
                 readings.insert("battery_power_w".into(), value.power_w.into());
-                mqtt.publish(
-                    "homecore/devices/teslemetry_powerwall/schema",
-                    QoS::AtLeastOnce,
-                    true,
-                    powerwall_schema(&readings).to_string(),
-                )
-                .await?;
-                mqtt.publish(
-                    "homecore/devices/teslemetry_powerwall/state",
-                    QoS::AtLeastOnce,
-                    true,
-                    serde_json::Value::Object(readings).to_string(),
-                )
-                .await?;
-                mqtt.publish(AVAILABILITY_TOPIC, QoS::AtLeastOnce, true, "online")
-                    .await?;
+                publish_powerwall_readings(&mqtt, readings, &mut schema).await?;
             }
             Err(_) => {
                 eprintln!("Powerwall reading unavailable");
@@ -203,6 +252,6 @@ async fn poll_powerwall(
                     .await?;
             }
         }
-        tokio::time::sleep(Duration::from_secs(interval)).await;
+        next_poll = Instant::now() + Duration::from_secs(interval);
     }
 }
