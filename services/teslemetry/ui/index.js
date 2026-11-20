@@ -270,7 +270,12 @@ class TeslemetryCard extends HTMLElement {
     const notes = [];
     if (missing.length === 2) notes.push('Tariff unavailable');
     else if (missing.length === 1) notes.push(`${missing[0]} rate unavailable`);
-    if (missing.length < 2 && !currency) notes.push('Currency not supplied');
+    if (missing.length < 2) {
+      if (!currency) notes.push('Currency not supplied');
+      else if (attributes?.tariff_currency_source === 'site_timezone') {
+        notes.push('Currency inferred from site timezone');
+      }
+    }
     this.#view.tariffNote.textContent = notes.join(' · ');
     this.#view.tariffNote.hidden = notes.length === 0;
     descriptions.push(...notes);
