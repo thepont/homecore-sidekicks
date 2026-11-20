@@ -8,6 +8,12 @@ use tokio::{
     time::{self, MissedTickBehavior},
 };
 
+struct Published {
+    schema: Value,
+    state: Value,
+    available: bool,
+}
+
 pub(crate) async fn run(
     unit: Unit,
     broker: Broker,
@@ -104,7 +110,7 @@ async fn publish(
     prefix: &str,
     observation: Option<&Observation>,
     stale: Duration,
-    previous: &mut Option<(Value, Value, bool)>,
+    previous: &mut Option<Published>,
 ) {
     let observation = observation.filter(|v| {
         v.received.elapsed() < stale
@@ -142,9 +148,9 @@ async fn publish(
     let base = format!("homecore/devices/{device}");
     let schema = json!({"attributes":attributes,"primary":primary});
     let state = Value::Object(values);
-    let needs_schema = previous.as_ref().is_none_or(|p| p.0 != schema);
-    let needs_state = previous.as_ref().is_none_or(|p| p.1 != state);
-    let needs_availability = previous.as_ref().is_none_or(|p| p.2 != available);
+    let needs_schema = previous.as_ref().is_none_or(|p| p.schema != schema);
+    let needs_state = previous.as_ref().is_none_or(|p| p.state != state);
+    let needs_availability = previous.as_ref().is_none_or(|p| p.available != available);
     if (needs_schema
         && send(mqtt, format!("{base}/schema"), schema.to_string())
             .await
@@ -164,6 +170,10 @@ async fn publish(
     {
         *previous = None;
     } else {
-        *previous = Some((schema, state, available));
+        *previous = Some(Published {
+            schema,
+            state,
+            available,
+        });
     }
 }
