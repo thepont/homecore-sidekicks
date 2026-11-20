@@ -34,6 +34,10 @@ impl Drop for Core {
 
 impl Core {
     pub async fn start() -> Self {
+        Self::start_for_plugin("plugin.teslemetry-powerwall").await
+    }
+
+    pub async fn start_for_plugin(plugin: &str) -> Self {
         let name = format!("homecore-card-contract-{}", random_id());
         let root = std::env::temp_dir().join(&name);
         fs::create_dir(&root).unwrap();
@@ -69,7 +73,7 @@ v5_port = 0
 id = "internal.core"
 password = "{password}"
 [[broker.clients]]
-id = "plugin.teslemetry-powerwall"
+id = "{plugin}"
 password = "{password}"
 [auth]
 token_expiry_hours = 1

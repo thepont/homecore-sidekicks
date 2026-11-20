@@ -753,9 +753,11 @@ dependencies = [
  "reqwest",
  "ring",
  "rumqttc",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
+ "toml",
  "uuid",
 ]
 

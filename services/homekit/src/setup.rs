@@ -66,6 +66,9 @@ pub async fn run_with_discovery(
         .enable_management(30, Some(env!("CARGO_PKG_VERSION").into()), None, None)
         .await?
         .with_capabilities(caps)
+        .with_config_schema(json!({"type":"object","properties":{
+            "refresh_secs":{"type":"integer","minimum":1,"maximum":3600,"default":30}
+        }}))
         .with_ui_dir(ui, env!("CARGO_PKG_VERSION"))
         .with_async_handler(move |command| {
             let action = command.get("action")?.as_str()?;

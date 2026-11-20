@@ -17,6 +17,84 @@ impl Drop for Service {
 
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
+async fn homecore_managed_config_starts_setup_with_private_persistent_state() {
+    let plugin = "plugin.homekit";
+    let core = homecore::Core::start_for_plugin(plugin).await;
+    let config = core.root.join("plugin.homekit.toml");
+    let password = std::fs::read_to_string(core.root.join("mqtt-password")).unwrap();
+    std::fs::write(
+        &config,
+        format!(
+            "[homecore]\nbroker_host = '127.0.0.1'\nbroker_port = {}\nplugin_id = '{plugin}'\npassword = {:?}\n[homekit]\nrefresh_secs = 45\n",
+            core.mqtt_port, password.trim()
+        ),
+    )
+    .unwrap();
+    let mut service = Service(
+        Command::new(env!("CARGO_BIN_EXE_homecore-homekit"))
+            .env_clear()
+            .env(
+                "HOMEKIT_UI_DIR",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui"),
+            )
+            .arg(&config)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let entry = tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            assert!(
+                service.0.try_wait().unwrap().is_none(),
+                "managed bridge exited during setup"
+            );
+            if let Some(entry) = find_ui(&core, plugin).await {
+                break entry;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("managed HomeKit setup is offered");
+    assert_eq!(entry["slots"][0]["element"], "hc-homekit-setup");
+    use std::os::unix::fs::PermissionsExt;
+    let state = std::fs::metadata(config.with_extension("state")).unwrap();
+    assert!(state.is_dir());
+    assert_eq!(state.permissions().mode() & 0o777, 0o700);
+    let schema: Value = core
+        .get("/plugins/plugin.homekit/config/schema")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        schema["schema"]["properties"]["refresh_secs"]["default"],
+        30
+    );
+}
+
+async fn find_ui(core: &homecore::Core, plugin: &str) -> Option<Value> {
+    let list: Value = core
+        .get("/plugins/ui")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    list.as_array()?
+        .iter()
+        .find(|x| x["plugin_id"] == plugin)
+        .map(|x| x["ui"].clone())
+}
+
+#[tokio::test]
+#[ignore = "requires Docker and the pinned homeCore image"]
 async fn authenticated_homecore_offers_the_unconfigured_setup_screen() {
     let core = homecore::Core::start().await;
     let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
