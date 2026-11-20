@@ -420,6 +420,7 @@ class AcCard extends HTMLElement {
     const root = this.shadowRoot;
     root.innerHTML = template(this.localName === 'hc-ac-panel');
     const get = selector => root.querySelector(selector);
+    const diagnosticsPanel = get('.diagnostics');
     this.#view = {
       card: get('.card'), name: get('.name'), readout: get('.readout'), openLabel: get('.open-label'),
       reading: get('.reading'), activity: get('.activity'),
@@ -433,7 +434,12 @@ class AcCard extends HTMLElement {
         const row = get(`[data-airflow="${field.key}"]`);
         return { ...field, row, select: row.querySelector('select'), reading: row.querySelector('.reported') };
       }),
-      diagnostics: get('.diagnostics'), feedback: get('.feedback')
+      diagnosticsPanel,
+      diagnosticFields: diagnostics.map(({ key, unit }) => {
+        const [label, output] = diagnosticsPanel.querySelectorAll(`[data-diagnostic="${key}"]`);
+        return { key, unit, label, output };
+      }),
+      feedback: get('.feedback')
     };
     this.#listenDial();
     if (this.#view.name) {
@@ -547,16 +553,20 @@ class AcCard extends HTMLElement {
 
     this.#renderModes(model, schema);
     this.#renderAirflow(model, schema);
-    const readings = diagnostics.filter(({ key }) => available && model.diagnostics[key] !== undefined);
-    view.diagnostics.hidden = readings.length === 0;
-    for (const { key, unit } of diagnostics) {
-      const value = available ? model.diagnostics[key] : undefined;
-      const [label, output] = view.diagnostics.querySelectorAll(`[data-diagnostic="${key}"]`);
-      show(label, value !== undefined);
-      show(output, value !== undefined);
+    this.#renderDiagnostics(model);
+    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
+  }
+
+  #renderDiagnostics({ available, diagnostics: readings }) {
+    const { diagnosticsPanel, diagnosticFields } = this.#view;
+    show(diagnosticsPanel, available && diagnosticFields.some(({ key }) => readings[key] !== undefined));
+    for (const { key, unit, label, output } of diagnosticFields) {
+      const value = available ? readings[key] : undefined;
+      const visible = value !== undefined;
+      show(label, visible);
+      show(output, visible);
       output.textContent = this.#format(value, unit);
     }
-    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
   }
 
   #renderModes({ available, mode, activity }, schema) {
