@@ -4,6 +4,7 @@ HAPStorage.setCustomStoragePath(process.env.HAP_STORE_DIR);
 const {HAPServer}=require('hap-nodejs/dist/lib/HAPServer');
 const finishPairing=HAPServer.prototype.handlePairSetupM5_3;
 HAPServer.prototype.handlePairSetupM5_3=function(connection,request,response,...rest){
+  if(process.env.HAP_DELAY_M6 === '1') {console.log('WAIT_M6');return;}
   if(process.env.HAP_LOSE_M6 === '1') {
     const writeHead=response.writeHead.bind(response),end=response.end.bind(response);
     response.writeHead=()=>writeHead(500,{'Content-Length':'0'});

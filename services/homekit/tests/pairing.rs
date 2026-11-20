@@ -479,3 +479,88 @@ async fn management_setup_pairs_the_discovered_fake_accessory() {
         task.abort();
     }).await;
 }
+
+#[tokio::test]
+async fn cancelled_pairing_requires_recovery_before_retry() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let root = std::env::temp_dir().join(format!("homekit-cancel-{}", std::process::id()));
+            fs::create_dir(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let accessory_root = root.join("accessory");
+            let state_root = root.join("controller");
+            fs::create_dir(&accessory_root).unwrap();
+            fs::create_dir(&state_root).unwrap();
+            fs::set_permissions(&state_root, fs::Permissions::from_mode(0o700)).unwrap();
+            let mut child =
+                Command::new(std::env::var("HAP_NODE_BIN").unwrap_or_else(|_| "node".into()))
+                    .arg(
+                        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/hap/accessory.cjs"),
+                    )
+                    .env("HAP_STORE_DIR", accessory_root)
+                    .env("HAP_DELAY_M6", "1")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap();
+            let output = child.stdout.take().unwrap();
+            let _fixture = Fixture { child, root };
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for line in BufReader::new(output).lines().map_while(Result::ok) {
+                    let _ = tx.send(line);
+                }
+            });
+            let port = rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .strip_prefix("PORT=")
+                .unwrap()
+                .parse::<u16>()
+                .unwrap();
+            let txt = std::collections::HashMap::from([
+                ("id".to_owned(), "02:11:22:33:44:55".to_owned()),
+                ("sf".to_owned(), "1".to_owned()),
+            ]);
+            let accessory = hap_transport::discovery_test_support::parse_txt(
+                "Fixture._hap._tcp.local.",
+                SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
+                &txt,
+            )
+            .unwrap();
+            let copy = accessory.clone();
+            let state = state_root.clone();
+            let task = tokio::task::spawn_local(async move {
+                homecore_homekit::pair_and_read(
+                    hap_controller::Discovered::Ip(copy),
+                    "123-45-678",
+                    &state,
+                )
+                .await
+            });
+            let signal =
+                tokio::task::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(10)))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(signal, "WAIT_M6");
+            task.abort();
+            let _ = task.await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                homecore_homekit::pair_and_read(
+                    hap_controller::Discovered::Ip(accessory),
+                    "123-45-678",
+                    &state_root,
+                ),
+            )
+            .await
+            .expect("retry must be rejected immediately");
+            assert_eq!(
+                result.unwrap_err(),
+                "Pairing requires recovery before retrying"
+            );
+        })
+        .await;
+}

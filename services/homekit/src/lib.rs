@@ -152,6 +152,25 @@ impl Drop for PairingTemp {
     }
 }
 
+struct PairingAttempt {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+impl PairingAttempt {
+    fn clear(mut self) -> Result<(), &'static str> {
+        use std::io::{Seek, Write};
+        if std::fs::remove_file(&self.path).is_ok() {
+            return Ok(());
+        }
+        self.file
+            .set_len(0)
+            .and_then(|_| self.file.rewind())
+            .and_then(|_| self.file.write_all(b"safe"))
+            .and_then(|_| self.file.sync_all())
+            .map_err(|_| "Cannot clear pairing recovery state")
+    }
+}
+
 fn hap_type(value: &Value, short: &str, full: &str) -> bool {
     value
         .as_str()
@@ -251,6 +270,14 @@ pub async fn pair_and_read(
     lock.try_lock().map_err(|_| "Pairing already in progress")?;
     let recovery_marker = state_dir.join("pairing-recovery-required");
     match std::fs::symlink_metadata(&recovery_marker) {
+        Ok(metadata)
+            if metadata.is_file()
+                && metadata.len() == 4
+                && std::fs::read(&recovery_marker).ok().as_deref() == Some(b"safe") =>
+        {
+            std::fs::remove_file(&recovery_marker)
+                .map_err(|_| "Cannot clear pairing recovery state")?;
+        }
         Ok(_) => return Err("Pairing requires recovery before retrying"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("Cannot check pairing recovery state"),
@@ -317,21 +344,35 @@ pub async fn pair_and_read(
         .await
         .map_err(|_| "Cannot read HomeKit identity")?
         .ok_or("HomeKit identity unavailable")?;
-    let mut connection = hap_transport::HapConnection::connect(address)
-        .await
-        .map_err(|_| "Cannot connect to HomeKit accessory")?;
+    let mut marker_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&recovery_marker)
+        .map_err(|_| "Cannot secure pairing recovery state")?;
+    use std::io::Write;
+    marker_file
+        .write_all(b"pending")
+        .and_then(|_| marker_file.sync_all())
+        .map_err(|_| "Cannot secure pairing recovery state")?;
+    let attempt = PairingAttempt {
+        path: recovery_marker,
+        file: marker_file,
+    };
+    let mut connection = match hap_transport::HapConnection::connect(address).await {
+        Ok(connection) => connection,
+        Err(_) => {
+            attempt.clear()?;
+            return Err("Cannot connect to HomeKit accessory");
+        }
+    };
     let pairing = match pair_setup(&mut connection, pin, &key).await {
         Ok(pairing) => pairing,
-        Err(error) if error.contains("confirmation was lost") => {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&recovery_marker)
-                .map_err(|_| "Pairing confirmation was lost; recovery marker could not be saved")?;
+        Err(error) if error.contains("confirmation was lost") => return Err(error),
+        Err(error) => {
+            attempt.clear()?;
             return Err(error);
         }
-        Err(error) => return Err(error),
     };
     drop(connection);
     let valid_id = pairing.pairing_id.eq_ignore_ascii_case(id);
@@ -349,10 +390,14 @@ pub async fn pair_and_read(
         })
         .await;
         return match rollback {
-            Ok(Ok(())) => Err("Pairing could not be saved; the temporary pairing was removed"),
+            Ok(Ok(())) => {
+                attempt.clear()?;
+                Err("Pairing could not be saved; the temporary pairing was removed")
+            }
             _ => Err("Pairing could not be saved or removed; manual recovery is needed"),
         };
     }
+    attempt.clear()?;
     let controller = HapController::new(store)
         .await
         .map_err(|_| "Cannot initialize HomeKit controller")?;
