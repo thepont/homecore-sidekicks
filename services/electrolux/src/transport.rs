@@ -92,3 +92,11 @@ impl Client {
         parse_status(&protocol::parse_status_response(&response)?)
     }
 }
+
+impl Client {
+    pub fn set_power(&mut self, on: bool) -> Result<(), &'static str> {
+        let response = self.exchange::<Query>(&protocol::power_request(on)?)?;
+        protocol::parse_status_response(&response)?;
+        Ok(())
+    }
+}
