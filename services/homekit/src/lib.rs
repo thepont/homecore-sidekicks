@@ -555,12 +555,19 @@ async fn pair_setup(
             _ => return Err("HomeKit pairing failed"),
         };
         if response.status != 200 {
-            return Err("HomeKit pairing failed");
+            return Err(if step == 2 {
+                "Pairing confirmation was lost; accessory recovery may be needed"
+            } else {
+                "HomeKit pairing failed"
+            });
         }
-        match client
-            .handle(&response.body)
-            .map_err(|_| "HomeKit pairing failed")?
-        {
+        match client.handle(&response.body).map_err(|_| {
+            if step == 2 {
+                "Pairing confirmation was lost; accessory recovery may be needed"
+            } else {
+                "HomeKit pairing failed"
+            }
+        })? {
             PairSetupStep::Send(next) => request = next,
             PairSetupStep::Done(pairing) => return Ok(pairing),
         }

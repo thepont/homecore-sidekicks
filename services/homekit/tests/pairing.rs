@@ -268,3 +268,54 @@ async fn reads_each_contact_from_a_bridge_independently() {
     .unwrap();
     publisher.abort();
 }
+
+#[tokio::test]
+async fn lost_final_pairing_response_warns_that_recovery_may_be_required() {
+    let root =
+        std::env::temp_dir().join(format!("homekit-lost-confirmation-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let fixture_root = root.join("accessory");
+    let state_root = root.join("controller");
+    fs::create_dir(&fixture_root).unwrap();
+    fs::create_dir(&state_root).unwrap();
+    fs::set_permissions(&state_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(std::env::var("HAP_NODE_BIN").unwrap_or_else(|_| "node".into()))
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
+        .env("HAP_STORE_DIR", fixture_root)
+        .env("HAP_LOSE_M6", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let output = child.stdout.take().unwrap();
+    let _fixture = Fixture { child, root };
+    let mut line = String::new();
+    BufReader::new(output).read_line(&mut line).unwrap();
+    let port = line
+        .trim()
+        .strip_prefix("PORT=")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let txt = std::collections::HashMap::from([
+        ("id".to_owned(), "02:11:22:33:44:55".to_owned()),
+        ("sf".to_owned(), "1".to_owned()),
+    ]);
+    let discovered = hap_transport::discovery_test_support::parse_txt(
+        "Fixture._hap._tcp.local.",
+        SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
+        &txt,
+    )
+    .unwrap();
+    let result = homecore_homekit::pair_and_read(
+        hap_controller::Discovered::Ip(discovered),
+        "123-45-678",
+        &state_root,
+    )
+    .await;
+    assert_eq!(
+        result.unwrap_err(),
+        "Pairing confirmation was lost; accessory recovery may be needed"
+    );
+}
