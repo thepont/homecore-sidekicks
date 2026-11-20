@@ -37,6 +37,7 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
         .arg(fixture)
         .env("HAP_STORE_DIR", fixture_root)
         .env("HAP_CONTROLLER_DIR", &state_root)
+        .env("HAP_DROP_VERIFY_NUMBER", "2")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -84,13 +85,16 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
     .await
     .is_err());
     fs::set_permissions(&state_root, fs::Permissions::from_mode(0o700)).unwrap();
-    let state = homecore_homekit::pair_and_read(
+    assert!(homecore_homekit::pair_and_read(
         hap_controller::Discovered::Ip(discovered),
         "123-45-678",
         &state_root,
     )
     .await
-    .unwrap();
+    .is_err());
+    let state = homecore_homekit::read_saved("02:11:22:33:44:55", &state_root)
+        .await
+        .unwrap();
     assert_eq!(state, json!({"open":true,"battery_pct":69}));
     assert_eq!(
         fs::metadata(state_root.join("pairing.json"))

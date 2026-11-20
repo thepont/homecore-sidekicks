@@ -3,6 +3,15 @@ const {Accessory, Service, Characteristic, Categories, HAPStorage, uuid} = requi
 HAPStorage.setCustomStoragePath(process.env.HAP_STORE_DIR);
 const {HAPServer}=require('hap-nodejs/dist/lib/HAPServer');
 let boundPort=0;
+let verifyCount=0;
+const verify=HAPServer.prototype.handlePairVerifyM1;
+HAPServer.prototype.handlePairVerifyM1=function(connection,request,response,...rest){
+  verifyCount++;
+  if(verifyCount===Number(process.env.HAP_DROP_VERIFY_NUMBER)){
+    response.writeHead(500, {'Content-Length':'0'});response.end();return;
+  }
+  return verify.call(this,connection,request,response,...rest);
+};
 const prior=HAPServer.prototype.handleRequestOnHAPConnection;
 HAPServer.prototype.handleRequestOnHAPConnection=function(connection,request,response){
   if(request.headers.host !== `127.0.0.1:${boundPort}`){response.writeHead(400, {'Content-Length':'0'});response.end();return;}

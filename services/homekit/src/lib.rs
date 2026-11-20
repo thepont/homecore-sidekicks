@@ -158,12 +158,11 @@ pub async fn pair_and_read(
         .await
         .map_err(|_| "Cannot read HomeKit identity")?
         .ok_or("HomeKit identity unavailable")?;
-    let connection = hap_transport::HapConnection::connect(address)
+    let mut connection = hap_transport::HapConnection::connect(address)
         .await
         .map_err(|_| "Cannot connect to HomeKit accessory")?;
-    let (pairing, mut session) = hap_pairing::pair(connection, pin, &key)
-        .await
-        .map_err(|_| "HomeKit pairing failed")?;
+    let pairing = pair_setup(&mut connection, pin, &key).await?;
+    drop(connection);
     let valid_id = pairing.pairing_id.eq_ignore_ascii_case(id);
     let paired_id = pairing.pairing_id.clone();
     let saved = StoredAccessory {
@@ -171,15 +170,18 @@ pub async fn pair_and_read(
         transport: StoredTransport::Ip { addr: address },
     };
     if !valid_id || store.save_pairing(&saved).await.is_err() {
-        return match hap_pairing::PairingsAdmin::new(&mut session)
-            .remove(&key.id)
-            .await
-        {
-            Ok(()) => Err("Pairing could not be saved; the temporary pairing was removed"),
-            Err(_) => Err("Pairing could not be saved or removed; manual recovery is needed"),
+        let rollback = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let mut session = hap_pairing::connect(&saved, &key).await?;
+            hap_pairing::PairingsAdmin::new(&mut session)
+                .remove(&key.id)
+                .await
+        })
+        .await;
+        return match rollback {
+            Ok(Ok(())) => Err("Pairing could not be saved; the temporary pairing was removed"),
+            _ => Err("Pairing could not be saved or removed; manual recovery is needed"),
         };
     }
-    drop(session);
     let controller = HapController::new(store)
         .await
         .map_err(|_| "Cannot initialize HomeKit controller")?;
@@ -269,4 +271,42 @@ async fn read_contact(handle: &mut hap_controller::AccessoryHandle) -> Result<Va
         }
     }
     contact_state(&json!({"services":services})).ok_or("Invalid contact reading")
+}
+
+// Drive the library's Pair Setup state machine separately from Pair Verify so
+// the verified accessory keys can be saved before opening another session.
+async fn pair_setup(
+    connection: &mut hap_transport::HapConnection,
+    pin: &str,
+    key: &hap_crypto::ControllerKeypair,
+) -> Result<hap_crypto::AccessoryPairing, &'static str> {
+    use hap_crypto::{PairSetupClient, PairSetupStep};
+    let mut client =
+        PairSetupClient::new(pin, key.clone()).map_err(|_| "HomeKit pairing failed")?;
+    let mut request = client.start();
+    for step in 0..3 {
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            connection.request("POST", "/pair-setup", "application/pairing+tlv8", &request),
+        )
+        .await;
+        let response = match response {
+            Ok(Ok(response)) => response,
+            _ if step == 2 => {
+                return Err("Pairing confirmation was lost; accessory recovery may be needed")
+            }
+            _ => return Err("HomeKit pairing failed"),
+        };
+        if response.status != 200 {
+            return Err("HomeKit pairing failed");
+        }
+        match client
+            .handle(&response.body)
+            .map_err(|_| "HomeKit pairing failed")?
+        {
+            PairSetupStep::Send(next) => request = next,
+            PairSetupStep::Done(pairing) => return Ok(pairing),
+        }
+    }
+    Err("HomeKit pairing failed")
 }
