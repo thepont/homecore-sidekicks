@@ -133,3 +133,50 @@ fn sends_power_command_to_authenticated_device() {
     assert!(client.set_power(true).is_ok());
     worker.join().unwrap();
 }
+
+#[test]
+fn sends_target_temperature_to_authenticated_device() {
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let addr = server.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let mut buf = [0; 8192];
+        let (_, peer) = server.recv_from(&mut buf).unwrap();
+        let count = u16::from_le_bytes([buf[40], buf[41]]);
+        let mut auth = vec![1, 2, 3, 4];
+        auth.extend_from_slice(&KEY);
+        server
+            .send_to(
+                &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                    .pack_with_payload(&auth, &INITIAL)
+                    .unwrap(),
+                peer,
+            )
+            .unwrap();
+        let (n, peer) = server.recv_from(&mut buf).unwrap();
+        let command = CommandMessage::unpack_with_payload(buf[..n].to_vec(), &KEY).unwrap();
+        assert_eq!(&command[..2], &[0x17, 0]);
+        assert_eq!(&command[14..], br#"{"temp":24}"#);
+        let count = u16::from_le_bytes([buf[40], buf[41]]);
+        let mut frame = vec![0; 14];
+        frame[10] = 2;
+        frame.extend_from_slice(b"{}");
+        let sum = frame[8..]
+            .iter()
+            .fold(0xc0adu16, |s, b| s.wrapping_add(u16::from(*b)));
+        frame[6..8].copy_from_slice(&sum.to_le_bytes());
+        server
+            .send_to(
+                &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                    .pack_with_payload(&frame, &KEY)
+                    .unwrap(),
+                peer,
+            )
+            .unwrap();
+    });
+    let mut client = Client::connect(addr, MAC, Duration::from_secs(1)).unwrap();
+    assert!(client.set_temperature(24).is_ok());
+    worker.join().unwrap();
+}
