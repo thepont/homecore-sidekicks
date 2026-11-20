@@ -194,6 +194,14 @@ pub async fn pair_and_read(
 
 /// Reconnect to a previously paired contact accessory.
 pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, &'static str> {
+    let (_lock, mut handle) = connect_saved(id, state_dir).await?;
+    read_contact(&mut handle).await
+}
+
+async fn connect_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<(std::fs::File, hap_controller::AccessoryHandle), &'static str> {
     use hap_controller::{HapController, JsonFileStore, PairingStore};
     use std::os::unix::fs::PermissionsExt;
     if id.len() != 17
@@ -233,11 +241,11 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
     let controller = HapController::new(store)
         .await
         .map_err(|_| "Cannot initialize HomeKit controller")?;
-    let mut handle = controller
+    let handle = controller
         .connect(id)
         .await
         .map_err(|_| "Cannot reconnect to HomeKit accessory")?;
-    read_contact(&mut handle).await
+    Ok((lock, handle))
 }
 
 async fn read_contact(handle: &mut hap_controller::AccessoryHandle) -> Result<Value, &'static str> {
