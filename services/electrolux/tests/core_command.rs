@@ -181,6 +181,23 @@ async fn homecore_discovers_and_fetches_the_electrolux_ac_card() {
         .unwrap()
         .iter()
         .any(|slot| slot["element"] == "hc-ac-card"));
+    let schema: Value = core
+        .get("/devices/electrolux_living_room/schema")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(schema["attributes"]["setpoint"]["step"], 1.0);
+    assert!(schema["attributes"]["hvac_mode"]["options"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("heat")));
+    assert!(schema["attributes"]["vertical_vane"]["options"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("swing")));
     let build = card["build"].as_str().unwrap();
     let response = core
         .get(&format!(
