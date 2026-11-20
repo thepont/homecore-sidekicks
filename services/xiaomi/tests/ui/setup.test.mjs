@@ -23,7 +23,7 @@ test('starting sign-in shows the QR returned by the integration',async()=>{
     await page.evaluate(()=>{window.calls=[];const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>{calls.push(name);return name==='begin_sign_in'?{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}:{ok:true,data:{status:'ok',setup_status:'waiting'}}}};document.querySelector('main').append(el)});
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),1);
-    assert.deepEqual(await page.evaluate(()=>calls),['begin_sign_in']);
+    assert.equal((await page.evaluate(()=>calls)).filter(x=>x==='begin_sign_in').length,1);
   } finally {await browser.close();}
 });
 
@@ -42,9 +42,19 @@ test('a saved gateway is shown as awaiting verification',async()=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
   try {
     const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
-    await page.evaluate(()=>{const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>name==='begin_sign_in'?{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}:{ok:true,data:{status:'ok',setup_status:'gateway_saved'}}};document.querySelector('main').append(el)});
+    await page.evaluate(()=>{let started=false;const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>name==='begin_sign_in'?(started=true,{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}):{ok:true,data:{status:'ok',setup_status:started?'gateway_saved':'unconfigured'}}};document.querySelector('main').append(el)});
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     await page.getByText('Gateway saved. Connection needs verification.',{exact:true}).waitFor({timeout:5000});
     assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),0);
+  } finally {await browser.close();}
+});
+
+test('reopening setup restores the saved gateway state',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async()=>({ok:true,data:{status:'ok',setup_status:'gateway_saved'}})};document.querySelector('main').append(el)});
+    await page.getByText('Gateway saved. Connection needs verification.',{exact:true}).waitFor({timeout:3000});
+    assert.equal(await page.getByRole('button',{name:'Sign in with Mi Home'}).count(),0);
   } finally {await browser.close();}
 });

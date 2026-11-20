@@ -9,6 +9,15 @@ class XiaomiSetup extends HTMLElement {
     const button=this.shadowRoot.querySelector('button');
     button.disabled=!this.#host?.me?.can('plugins:write');
     button.addEventListener('click',()=>void this.#begin());
+    if(!button.disabled)void this.#restore(this.#generation);
+  }
+  async #restore(generation) {
+    let result;try{result=await this.#host.action('sign_in_status');}catch{return;}
+    if(generation!==this.#generation || !this.isConnected || !result?.ok)return;
+    if(result.data?.setup_status==='gateway_saved') {
+      this.shadowRoot.querySelector('button').hidden=true;
+      this.shadowRoot.querySelector('.status').textContent='Gateway saved. Connection needs verification.';
+    }
   }
   async #begin() {
     if(!this.#host?.me?.can('plugins:write'))return;
