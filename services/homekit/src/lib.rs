@@ -203,8 +203,14 @@ pub async fn read_contacts_saved(
     id: &str,
     state_dir: &std::path::Path,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
-    use hap_controller::{CharacteristicType, ServiceType};
     let (_lock, mut handle) = connect_saved(id, state_dir).await?;
+    read_contacts(&mut handle).await
+}
+
+async fn read_contacts(
+    handle: &mut hap_controller::AccessoryHandle,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
     let accessories = handle
         .accessories()
         .await
