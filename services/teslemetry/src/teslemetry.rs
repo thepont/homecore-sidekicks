@@ -9,12 +9,7 @@ pub fn load_kw(status: &Value) -> Result<f64, &'static str> {
     Ok(watts / 1000.0)
 }
 
-fn fetch_status(
-    client: &reqwest::blocking::Client,
-    base: &str,
-    site: u64,
-    token: &str,
-) -> Result<Value, &'static str> {
+fn validate_status_request(base: &str, site: u64, token: &str) -> Result<(), &'static str> {
     let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
     if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
         || !url.username().is_empty()
@@ -29,6 +24,16 @@ fn fetch_status(
     {
         return Err("Invalid Teslemetry configuration");
     }
+    Ok(())
+}
+
+fn fetch_status(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    site: u64,
+    token: &str,
+) -> Result<Value, &'static str> {
+    validate_status_request(base, site, token)?;
     let response = client
         .get(format!(
             "{}/api/1/energy_sites/{site}/live_status",
@@ -105,6 +110,38 @@ pub fn fetch_energy(
     token: &str,
 ) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
     let status = fetch_status(client, base, site, token)?;
+    energy(&status)
+}
+
+pub async fn fetch_energy_async(
+    client: &reqwest::Client,
+    base: &str,
+    site: u64,
+    token: &str,
+) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
+    validate_status_request(base, site, token)?;
+    let mut response = client
+        .get(format!(
+            "{}/api/1/energy_sites/{site}/live_status",
+            base.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|_| "Teslemetry request failed")?;
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Teslemetry request failed")?
+    {
+        if body.len() + chunk.len() > 65_536 {
+            return Err("Invalid Teslemetry response");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let status = serde_json::from_slice(&body).map_err(|_| "Invalid Teslemetry response")?;
     energy(&status)
 }
 

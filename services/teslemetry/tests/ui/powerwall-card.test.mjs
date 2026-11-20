@@ -11,6 +11,7 @@ let page;
 before(async () => {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_BIN });
   page = await browser.newPage({ viewport: { width: 390, height: 600 } });
+  page.setDefaultTimeout(3000);
 });
 after(async () => { await browser?.close(); });
 
@@ -200,4 +201,206 @@ test('renders labels as text and remains within phone width in every card form',
       return button.scrollWidth <= button.clientWidth;
     }), true, `${form} must not overflow`);
   }
+});
+
+test('shows source buy and sell rates with currency and their independent periods', async () => {
+  await page.evaluate(() => host.update({ attributes: {
+    charge_pct: 65.2, battery_power_w: -1190,
+    tariff_available: true, tariff_buy_price_per_kwh: 0.4906, tariff_sell_price_per_kwh: 0.07125,
+    tariff_buy_period: 'PEAK', tariff_sell_period: 'ALL_DAY', tariff_currency: 'AUD',
+    tariff_updated_at: '2025-06-12T04:30:00Z'
+  } }));
+  const tariff = page.locator('.tariffs');
+  assert.equal(await tariff.isVisible(), true);
+  const content = await tariff.textContent();
+  for (const expected of ['Buy', 'Sell', '0.4906 AUD/kWh', '0.07125 AUD/kWh', 'PEAK', 'ALL DAY']) {
+    assert.ok(content.includes(expected), `${expected} must be shown`);
+  }
+  assert.doesNotMatch(content, /2025-06-12|just updated|fresh/i);
+  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
+  assert.match(accessible.description, /0.4906 AUD\/kWh/);
+  assert.match(accessible.description, /0.07125 AUD\/kWh/);
+});
+
+test('preserves zero and negative rates without inventing missing currency or sell rates', async () => {
+  await page.evaluate(() => host.update({ attributes: {
+    tariff_available: true, tariff_buy_price_per_kwh: 0, tariff_sell_price_per_kwh: -0.0254,
+    tariff_currency: 'unspecified'
+  } }));
+  const tariff = page.locator('.tariffs');
+  assert.match(await tariff.textContent(), /0 \/kWh/);
+  assert.match(await tariff.textContent(), /-0.0254 \/kWh/);
+  assert.match(await tariff.textContent(), /Currency not supplied/);
+  assert.doesNotMatch(await tariff.textContent(), /\$|AUD|USD|c\/kWh/);
+  await page.evaluate(() => host.update({ attributes: {
+    tariff_available: true, tariff_buy_price_per_kwh: -0.12, tariff_currency: 'AUD'
+  } }));
+  assert.match(await tariff.textContent(), /-0.12 AUD\/kWh/);
+  assert.equal(await page.locator('.tariff-sell .rate').textContent(), '—');
+  assert.match(await tariff.textContent(), /Sell rate unavailable/);
+});
+
+test('requires explicit tariff and device availability and never shows malformed rates', async () => {
+  for (const availability of [undefined, false, 'true', 1]) {
+    await page.evaluate(availability => host.update({ attributes: {
+      tariff_available: availability, tariff_buy_price_per_kwh: 0.3789,
+      tariff_sell_price_per_kwh: 0.0612, tariff_currency: 'AUD'
+    } }), availability);
+    assert.match(await page.locator('.tariffs').textContent(), /Tariff unavailable/);
+    assert.doesNotMatch(await page.locator('.tariffs').textContent(), /0.3789|0.0612/);
+  }
+  for (const price of ['0.3789', null, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await page.evaluate(price => host.update({ attributes: {
+      tariff_available: true, tariff_buy_price_per_kwh: price, tariff_currency: 'AUD'
+    } }), price);
+    assert.equal(await page.locator('.tariff-buy .rate').textContent(), '—');
+  }
+  await page.evaluate(() => host.update({ available: false, attributes: {
+    tariff_available: true, tariff_buy_price_per_kwh: 0.3789, tariff_currency: 'AUD'
+  } }));
+  assert.match(await page.locator('.tariffs').textContent(), /Tariff unavailable/);
+  assert.doesNotMatch(await page.locator('.tariffs').textContent(), /0.3789/);
+  await page.evaluate(() => host.update({ available: true }));
+  assert.match(await page.locator('.tariffs').textContent(), /0.3789 AUD\/kWh/);
+});
+
+test('shows bounded charger details without changing the reported Home total', async () => {
+  assert.equal(await page.locator('.chargers').isVisible(), false);
+  await page.evaluate(() => host.update({ attributes: {
+    home_power_w: 4102, wall_connector_1_power_w: 3120, wall_connector_1_state: 2,
+    wall_connector_2_power_w: 0, wall_connector_16_fault_state: 43,
+    wall_connector_17_power_w: 1234, wall_connector_99999_power_w: 5678
+  } }));
+  const chargers = page.locator('.chargers');
+  assert.equal(await chargers.isVisible(), true);
+  assert.match(await page.locator('[data-charger="1"]').textContent(), /Charger 1.*3.12 kW.*Drawing/);
+  assert.match(await page.locator('[data-charger="2"]').textContent(), /Charger 2.*0 kW.*Idle/);
+  assert.match(await page.locator('[data-charger="16"]').textContent(), /Charger 16.*No reading/);
+  assert.equal(await page.locator('[data-charger]').count(), 3);
+  assert.equal(await page.locator('[data-node="home"] .value').textContent(), '4.1 kW');
+  assert.doesNotMatch(await chargers.textContent(), /43|Connected|Unplugged|Charger 17|Charger 99999/);
+  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
+  assert.match(accessible.description, /Charger 1.*3.12 kW.*Drawing/);
+});
+
+test('keeps unknown, reverse and unavailable charger readings distinct and removes withdrawn chargers', async () => {
+  await page.evaluate(() => host.update({ attributes: {
+    wall_connector_1_state: 2, wall_connector_2_power_w: -1200,
+    wall_connector_3_power_w: '3120', wall_connector_4_power_w: Number.NaN
+  } }));
+  assert.match(await page.locator('[data-charger="1"]').textContent(), /No reading/);
+  assert.match(await page.locator('[data-charger="2"]').textContent(), /-1.2 kW.*Reverse flow/);
+  assert.match(await page.locator('[data-charger="3"]').textContent(), /No reading/);
+  assert.match(await page.locator('[data-charger="4"]').textContent(), /No reading/);
+  await page.evaluate(() => host.update({ available: false }));
+  assert.match(await page.locator('.chargers').textContent(), /Unavailable/);
+  assert.doesNotMatch(await page.locator('.chargers').textContent(), /1.2|3.12|Reverse flow|Drawing/);
+  await page.evaluate(() => host.update({ available: true, attributes: {} }));
+  assert.equal(await page.locator('.chargers').isVisible(), false);
+  assert.equal(await page.locator('[data-charger]').count(), 0);
+});
+
+test('rates and charger details stay visible at phone width and render source labels as text', async () => {
+  await page.evaluate(() => host.update({ attributes: {
+    wall_connector_1_power_w: 7200, tariff_available: true,
+    tariff_buy_price_per_kwh: 0.4906, tariff_sell_price_per_kwh: 0.07003,
+    tariff_currency: 'AUD', tariff_buy_period: '<img src=x onerror="window.injected=true">'
+  } }));
+  assert.match(await page.locator('.tariffs').textContent(), /<img src=x/);
+  assert.equal(await page.locator('hc-teslemetry-card img').count(), 0);
+  for (const form of ['compact', 'standard', 'large']) {
+    await page.evaluate(form => { card.form = form; }, form);
+    assert.equal(await page.locator('.tariffs').isVisible(), true);
+    assert.equal(await page.locator('.chargers').isVisible(), true);
+    assert.equal(await page.evaluate(() => {
+      const button = card.shadowRoot.querySelector('button');
+      return button.scrollWidth <= button.clientWidth;
+    }), true, `${form} tariff and charger footer must fit`);
+  }
+});
+
+test('narrow dashboard columns replace the diagram with legible readings and a wider card restores it', async () => {
+  await page.evaluate(() => host.update({ attributes: {
+    charge_pct: 65.2, battery_power_w: -1190, solar_power_w: 5530,
+    home_power_w: 4000, grid_power_w: -340, wall_connector_1_power_w: 3120,
+    tariff_available: true, tariff_buy_price_per_kwh: 0.4906,
+    tariff_sell_price_per_kwh: 0.05, tariff_currency: 'AUD', tariff_buy_period: 'PEAK'
+  } }));
+  for (const width of [190, 240]) {
+    await page.evaluate(width => { document.querySelector('main').style.width = `${width}px`; }, width);
+    assert.equal(await page.locator('.diagram').isVisible(), false);
+    assert.equal(await page.locator('.compact-reading').isVisible(), true);
+    assert.equal(await page.locator('.mini-readings').isVisible(), true);
+    assert.match(await page.locator('.mini-readings').textContent(), /5.53 kW/);
+    assert.match(await page.locator('.mini-readings').textContent(), /4 kW/);
+    assert.match(await page.locator('.mini-readings').textContent(), /Exporting/);
+    const measurements = await page.evaluate(() => {
+      const root = card.shadowRoot;
+      const button = root.querySelector('button');
+      return { fits: button.scrollWidth <= button.clientWidth,
+        reading: parseFloat(getComputedStyle(root.querySelector('.mini-reading')).fontSize),
+        rate: parseFloat(getComputedStyle(root.querySelector('.rate')).fontSize) };
+    });
+    assert.equal(measurements.fits, true, `${width}px column must fit`);
+    assert.ok(measurements.reading >= 12, 'narrow values must keep readable text size');
+    assert.ok(measurements.rate >= 12, 'narrow rates must keep readable text size');
+  }
+  await page.evaluate(() => { document.querySelector('main').style.width = '360px'; card.form = 'large'; });
+  assert.equal(await page.locator('.diagram').isVisible(), true);
+  assert.equal(await page.locator('.mini-readings').isVisible(), false);
+});
+
+for (const withCharger of [false, true]) {
+  for (const withTariff of [false, true]) {
+    test(`optional data: ${withCharger ? 'with' : 'without'} charger, ${withTariff ? 'with' : 'without'} tariff`, async () => {
+      await page.evaluate(({ withCharger, withTariff }) => {
+        host.update({ attributes: {
+          charge_pct: 65.2, battery_power_w: -1190, solar_power_w: 5530,
+          home_power_w: 4000, grid_power_w: -340,
+          ...(withCharger ? { wall_connector_1_power_w: 3120 } : {}),
+          ...(withTariff ? { tariff_available: true, tariff_buy_price_per_kwh: 0.4906,
+            tariff_sell_price_per_kwh: 0.05, tariff_currency: 'AUD',
+            tariff_buy_period: 'PEAK', tariff_sell_period: 'ALL_DAY' } : {})
+        } });
+      }, { withCharger, withTariff });
+      assert.equal(await page.locator('[data-node="home"] .value').textContent(), '4 kW');
+      assert.equal(await page.locator('[data-node="solar"] .value').textContent(), '5.53 kW');
+      assert.equal(await page.locator('.charge').textContent(), '65.2%');
+      assert.equal(await page.locator('.status').textContent(), 'Live readings');
+      assert.equal(await page.locator('.chargers').isVisible(), withCharger);
+      assert.equal(await page.locator('[data-charger]').count(), withCharger ? 1 : 0);
+      if (withCharger) assert.match(await page.locator('.chargers').textContent(), /3.12 kW.*Drawing/);
+      assert.equal(await page.locator('.tariffs').isVisible(), true);
+      assert.equal(await page.locator('.tariff-buy .rate').textContent(), withTariff ? '0.4906 AUD/kWh' : '—');
+      assert.equal(await page.locator('.tariff-sell .rate').textContent(), withTariff ? '0.05 AUD/kWh' : '—');
+      assert.equal(await page.locator('.tariff-note').isVisible(), !withTariff);
+      if (!withTariff) assert.match(await page.locator('.tariff-note').textContent(), /Tariff unavailable/);
+    });
+  }
+}
+
+test('withdrawing both optional sections clears their previous values while live power continues', async () => {
+  await page.evaluate(() => {
+    const power = { charge_pct: 65.2, battery_power_w: -1190, solar_power_w: 5530,
+      home_power_w: 4000, grid_power_w: -340 };
+    host.update({ attributes: { ...power, wall_connector_1_power_w: 3120,
+      tariff_available: true, tariff_buy_price_per_kwh: 0.4906,
+      tariff_sell_price_per_kwh: 0.05, tariff_currency: 'AUD' } });
+  });
+  assert.match(await page.locator('.chargers').textContent(), /3.12 kW/);
+  assert.match(await page.locator('.tariffs').textContent(), /0.4906 AUD\/kWh/);
+  await page.evaluate(() => host.update({ attributes: {
+    charge_pct: 65.3, battery_power_w: -1200, solar_power_w: 6000,
+    home_power_w: 4200, grid_power_w: -600
+  } }));
+  assert.equal(await page.locator('.chargers').isVisible(), false);
+  assert.equal(await page.locator('[data-charger]').count(), 0);
+  assert.equal(await page.locator('.tariff-buy .rate').textContent(), '—');
+  assert.equal(await page.locator('.tariff-sell .rate').textContent(), '—');
+  assert.match(await page.locator('.tariff-note').textContent(), /Tariff unavailable/);
+  assert.equal(await page.locator('.charge').textContent(), '65.3%');
+  assert.equal(await page.locator('[data-node="home"] .value').textContent(), '4.2 kW');
+  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
+  assert.doesNotMatch(accessible.description, /Charger 1|3.12|0.4906|0.05 AUD/);
+  assert.match(accessible.description, /65.3%/);
 });
