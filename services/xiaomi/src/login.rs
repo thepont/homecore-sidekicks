@@ -131,3 +131,78 @@ async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8
     }
     Ok(bytes)
 }
+
+/// Cloud credentials remain inside the service; they are never returned to the setup page.
+pub struct Authentication {
+    user_id: String,
+    security: String,
+    service_token: String,
+}
+impl Authentication {
+    pub fn is_authenticated(&self) -> bool {
+        !self.user_id.is_empty() && !self.security.is_empty() && !self.service_token.is_empty()
+    }
+}
+impl Provider {
+    pub async fn poll(&self, challenge: &Challenge) -> Result<Authentication, &'static str> {
+        let response = self
+            .client
+            .get(challenge.poll_url.clone())
+            .send()
+            .await
+            .map_err(|_| "Waiting for Xiaomi sign-in failed")?
+            .error_for_status()
+            .map_err(|_| "Waiting for Xiaomi sign-in failed")?;
+        let data = bounded(response, 65536).await?;
+        let data = data.strip_prefix(b"&&&START&&&").unwrap_or(&data);
+        let body: Value = serde_json::from_slice(data).map_err(|_| "Invalid provider response")?;
+        let user_id = match body.get("userId") {
+            Some(Value::String(s))
+                if !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                s.clone()
+            }
+            Some(Value::Number(n)) if n.is_u64() => n.to_string(),
+            _ => return Err("Invalid provider response"),
+        };
+        let security = body
+            .get("ssecurity")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 4096 && STANDARD.decode(s).is_ok())
+            .ok_or("Invalid provider response")?
+            .to_owned();
+        let raw = body
+            .get("location")
+            .and_then(Value::as_str)
+            .ok_or("Invalid provider response")?;
+        let url = Url::parse(raw).map_err(|_| "Invalid provider response")?;
+        let test = self.base.scheme() == "http" && self.base.origin() == url.origin();
+        let trusted = url.scheme() == "https" && url.host_str() == Some("sts.api.io.mi.com");
+        if !(test || trusted)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("Invalid provider response");
+        }
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| "Xiaomi sign-in failed")?
+            .error_for_status()
+            .map_err(|_| "Xiaomi sign-in failed")?;
+        let service_token = response
+            .cookies()
+            .find(|c| c.name() == "serviceToken")
+            .map(|c| c.value().to_owned())
+            .filter(|s| !s.is_empty() && s.len() <= 4096 && s.bytes().all(|b| b.is_ascii_graphic()))
+            .ok_or("Invalid provider response")?;
+        Ok(Authentication {
+            user_id,
+            security,
+            service_token,
+        })
+    }
+}

@@ -35,3 +35,19 @@ async fn creates_a_qr_challenge_from_the_provider() {
     assert_eq!(result.qr_png, "iVBORw0KGgo=");
     server.abort();
 }
+
+#[tokio::test]
+async fn approved_qr_authenticates_without_returning_the_cloud_token_to_the_ui() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let app=Router::new().route("/longPolling/loginUrl",get(|State(base):State<String>|async move {Json(json!({"qr":format!("{base}/qr"),"lp":format!("{base}/poll"),"timeout":120}))}))
+        .route("/qr",get(||async {Response::builder().header(header::CONTENT_TYPE,"image/png").body(Body::from(vec![137,80,78,71,13,10,26,10])).unwrap()}))
+        .route("/poll",get(|State(base):State<String>|async move {Json(json!({"userId":"123","ssecurity":"c2VjdXJpdHk=","location":format!("{base}/token")}))}))
+        .route("/token",get(||async {Response::builder().header(header::SET_COOKIE,"serviceToken=fixture-session; Path=/; HttpOnly").body(Body::empty()).unwrap()})).with_state(base.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = Provider::new(&base).unwrap();
+    let challenge = provider.begin().await.unwrap();
+    assert!(provider.poll(&challenge).await.unwrap().is_authenticated());
+    server.abort();
+}
