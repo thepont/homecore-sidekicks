@@ -5,8 +5,23 @@
     {
       "slot": "device.card",
       "element": "hc-teslemetry-card",
-      "device_types": ["sensor"],
-      "forms": ["standard", "large", "compact"]
+      "device_types": [
+        "sensor"
+      ],
+      "forms": [
+        "standard",
+        "large",
+        "compact"
+      ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-solar",
+      "label": "Solar",
+      "forms": [
+        "standard",
+        "large"
+      ]
     }
   ]
 }

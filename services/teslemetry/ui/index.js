@@ -210,3 +210,25 @@ class TeslemetryCard extends HTMLElement {
 }
 
 customElements.define('hc-teslemetry-card', TeslemetryCard);
+
+class TeslemetrySolar extends HTMLElement {
+  #host;
+  #stop;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  #render() {
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin-top:8px}</style><div class="card"><span>Solar</span><strong></strong></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+  }
+}
+customElements.define('hc-teslemetry-solar', TeslemetrySolar);
