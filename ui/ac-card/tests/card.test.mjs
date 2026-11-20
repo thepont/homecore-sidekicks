@@ -23,7 +23,7 @@ async function preparePage(page) {
     '<main style="max-width:420px;margin:auto"></main>');
   await page.addScriptTag({ type: 'module', content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
-    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5, panelFixture = false } = {}) => {
+    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5, panelFixture = false, electrolux = false } = {}) => {
       const listeners = new Set();
       const units = new Set();
       const opened = [];
@@ -47,6 +47,16 @@ async function preparePage(page) {
         vertical_vane: { writable, options: ['auto', 'swing'] },
         ...(writable ? { horizontal_vane: { writable, options: ['c', 'swing'] } } : {})
       } };
+      if (electrolux) {
+        device.attributes = { temperature: 22, setpoint: 21, hvac_mode: "heat", on: true, fan_mode: "auto", swing: false, vertical_vane: "off" };
+        schema.attributes = {
+          temperature: { writable: false, unit: "°C" },
+          setpoint: { writable: true, min: 17, max: 30, step: 1, unit: "°C" },
+          hvac_mode: { writable: true, options: ["off", "heat", "cool", "auto", "dry", "fan_only"] },
+          fan_mode: { writable: true, options: ["auto", "low", "medium", "high", "turbo", "quiet"] },
+          vertical_vane: { writable: true, options: ["off", "swing"] }
+        };
+      }
       const host = {
         devices: {
           get: id => id === device.device_id ? device : undefined,
@@ -398,4 +408,22 @@ test('tapping the room reading opens the same controls with a larger dial', asyn
   } finally {
     await context.close();
   }
+});
+
+test('Electrolux controls use its reported setpoint, fan and swing schema', async () => {
+  await mount({ writable: true, electrolux: true, temperatureUnit: '°C' });
+  await page.getByRole('slider', { name: 'Target temperature' }).waitFor();
+  await button('Raise target').click();
+  assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { setpoint: 22 }]);
+  await page.evaluate(() => update({ attributes: { setpoint: 22 } }));
+  await selected('Fan speed').selectOption('quiet');
+  assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { fan_mode: 'quiet' }]);
+  await page.evaluate(() => update({ attributes: { fan_mode: 'quiet' } }));
+  await selected('Vertical vane').selectOption('swing');
+  assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { vertical_vane: 'swing' }]);
+  await page.evaluate(() => update({ attributes: { vertical_vane: 'swing' } }));
+  await button('Off').click();
+  assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { hvac_mode: 'off' }]);
+  await page.evaluate(() => update({ attributes: { hvac_mode: 'off' } }));
+  assert(await selected('Vertical vane').isDisabled());
 });
