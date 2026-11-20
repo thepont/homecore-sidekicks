@@ -347,6 +347,16 @@ async fn reads_each_contact_from_a_bridge_independently() {
         .0;
     let smoke_availability =
         format!("homecore/devices/homekit_021122334455_{smoke_id}/availability");
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == smoke_availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("smoke detector must initially be online");
     writeln!(fixture.child.stdin.as_mut().unwrap(), "smoke-offline").unwrap();
     tokio::time::timeout(Duration::from_secs(12), async {
         loop {
