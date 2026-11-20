@@ -249,6 +249,12 @@ pub async fn pair_and_read(
     }
     let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
     lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let recovery_marker = state_dir.join("pairing-recovery-required");
+    match std::fs::symlink_metadata(&recovery_marker) {
+        Ok(_) => return Err("Pairing requires recovery before retrying"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("Cannot check pairing recovery state"),
+    }
     let path = state_dir.join("pairing.json");
     if let Ok(m) = std::fs::symlink_metadata(&path) {
         if !m.is_file() || m.permissions().mode() & 0o077 != 0 {
@@ -314,7 +320,19 @@ pub async fn pair_and_read(
     let mut connection = hap_transport::HapConnection::connect(address)
         .await
         .map_err(|_| "Cannot connect to HomeKit accessory")?;
-    let pairing = pair_setup(&mut connection, pin, &key).await?;
+    let pairing = match pair_setup(&mut connection, pin, &key).await {
+        Ok(pairing) => pairing,
+        Err(error) if error.contains("confirmation was lost") => {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&recovery_marker)
+                .map_err(|_| "Pairing confirmation was lost; recovery marker could not be saved")?;
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     drop(connection);
     let valid_id = pairing.pairing_id.eq_ignore_ascii_case(id);
     let paired_id = pairing.pairing_id.clone();

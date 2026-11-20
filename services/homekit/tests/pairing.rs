@@ -428,7 +428,7 @@ async fn lost_final_pairing_response_warns_that_recovery_may_be_required() {
     )
     .unwrap();
     let result = homecore_homekit::pair_and_read(
-        hap_controller::Discovered::Ip(discovered),
+        hap_controller::Discovered::Ip(discovered.clone()),
         "123-45-678",
         &state_root,
     )
@@ -436,6 +436,16 @@ async fn lost_final_pairing_response_warns_that_recovery_may_be_required() {
     assert_eq!(
         result.unwrap_err(),
         "Pairing confirmation was lost; accessory recovery may be needed"
+    );
+    let retry = homecore_homekit::pair_and_read(
+        hap_controller::Discovered::Ip(discovered),
+        "123-45-678",
+        &state_root,
+    )
+    .await;
+    assert_eq!(
+        retry.unwrap_err(),
+        "Pairing requires recovery before retrying"
     );
 }
 
