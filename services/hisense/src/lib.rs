@@ -161,11 +161,31 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
     ));
     let (mqtt, mut eventloop) = AsyncClient::new(opts, 16);
     let (ready_tx, mut ready_rx) = tokio::sync::watch::channel(false);
+    let (command_tx, mut command_rx) =
+        tokio::sync::mpsc::channel::<(Control, tokio::time::Instant)>(8);
+    let subscribe_client = mqtt.clone();
+    let command_topic = format!("homecore/devices/{DEVICE}/cmd");
     let driver = tokio::spawn(async move {
         loop {
             match eventloop.poll().await {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                    if subscribe_client
+                        .subscribe(&command_topic, QoS::AtLeastOnce)
+                        .await
+                        .is_err()
+                    {
+                        ready_tx.send_replace(false);
+                    }
+                }
+                Ok(Event::Incoming(Incoming::SubAck(_))) => {
                     ready_tx.send_replace(true);
+                }
+                Ok(Event::Incoming(Incoming::Publish(message)))
+                    if message.topic == command_topic && !message.retain && !message.dup =>
+                {
+                    if let Ok(command) = Control::parse(&message.payload) {
+                        let _ = command_tx.try_send((command, tokio::time::Instant::now()));
+                    }
                 }
                 Ok(_) => {}
                 Err(_) => {
@@ -195,11 +215,15 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 if *ready_rx.borrow_and_update() {
                     send(&mqtt, &format!("homecore/plugins/{PLUGIN}/register"), json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room TV","device_type":"media_player"}).to_string(), true).await?;
                     send(&mqtt, &format!("homecore/plugins/{PLUGIN}/capabilities"), json!({"spec":"1","plugin_id":PLUGIN,"actions":[]}).to_string(), true).await?;
-                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), json!({"attributes":{"volume":{"kind":"integer","writable":false,"min":0,"max":100,"unit":"%"},"muted":{"kind":"bool","writable":false}},"primary":["volume","muted"]}).to_string(), true).await?;
+                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), json!({"attributes":{"volume":{"kind":"integer","writable":true,"min":0,"max":100,"unit":"%"},"muted":{"kind":"bool","writable":true}},"primary":["volume","muted"]}).to_string(), true).await?;
                     previous = None;
                     available = false;
                     send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "offline".into(), true).await?;
                 }
+            }
+            Some((command, received)) = command_rx.recv() => {
+                let eligible = *ready_rx.borrow() && available && received.elapsed() < Duration::from_secs(5);
+                if eligible && tv.control(command).await.is_ok() { ticks.reset_immediately(); }
             }
             _ = ticks.tick(), if *ready_rx.borrow() => {
                 match tv.read().await {
@@ -225,5 +249,99 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 send(&mqtt, &format!("homecore/plugins/{PLUGIN}/heartbeat"), json!({"version":env!("CARGO_PKG_VERSION"),"protocol_version":"0.1.5","uptime_secs":started.elapsed().as_secs(),"notices":[]}).to_string(), false).await?;
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Control {
+    Volume(u8),
+    Mute(bool),
+}
+
+impl Control {
+    pub fn parse(input: &[u8]) -> Result<Self, &'static str> {
+        if input.len() > 1024 {
+            return Err("Command too large");
+        }
+        use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
+        use std::fmt;
+        struct CommandVisitor;
+        impl<'de> Visitor<'de> for CommandVisitor {
+            type Value = Control;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("one TV control")
+            }
+            fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Control, M::Error> {
+                let mut command = None;
+                let mut context = false;
+                let mut correlation = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = match key.as_str() {
+                        "volume" => {
+                            let v = map.next_value::<u8>()?;
+                            if v > 100 {
+                                return Err(de::Error::custom("volume out of range"));
+                            }
+                            Control::Volume(v)
+                        }
+                        "muted" => Control::Mute(map.next_value::<bool>()?),
+                        "_hc" if !context => {
+                            context = true;
+                            map.next_value::<de::IgnoredAny>()?;
+                            continue;
+                        }
+                        "correlation_id" if !correlation => {
+                            correlation = true;
+                            map.next_value::<de::IgnoredAny>()?;
+                            continue;
+                        }
+                        _ => return Err(de::Error::custom("unknown or repeated field")),
+                    };
+                    if command.replace(value).is_some() {
+                        return Err(de::Error::custom("multiple controls"));
+                    }
+                }
+                command.ok_or_else(|| de::Error::custom("missing control"))
+            }
+        }
+        struct Parsed(Control);
+        impl<'de> Deserialize<'de> for Parsed {
+            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                d.deserialize_map(CommandVisitor).map(Parsed)
+            }
+        }
+        serde_json::from_slice::<Parsed>(input)
+            .map(|p| p.0)
+            .map_err(|_| "Invalid TV command")
+    }
+}
+
+impl Hisense {
+    pub async fn control(&self, control: Control) -> Result<(), &'static str> {
+        let (action, argument) = match control {
+            Control::Volume(value) if value <= 100 => (
+                "SetVolume",
+                format!("<DesiredVolume>{value}</DesiredVolume>"),
+            ),
+            Control::Volume(_) => return Err("Invalid volume"),
+            Control::Mute(value) => (
+                "SetMute",
+                format!("<DesiredMute>{}</DesiredMute>", u8::from(value)),
+            ),
+        };
+        let body = format!("<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{SERVICE}\"><InstanceID>0</InstanceID><Channel>Master</Channel>{argument}</u:{action}></s:Body></s:Envelope>");
+        let response = self
+            .client
+            .post(format!("http://{}/upnp/control/mingusrcr", self.address))
+            .header("Content-Type", "text/xml; charset=\"utf-8\"")
+            .header("SOAPACTION", format!("\"{SERVICE}#{action}\""))
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| "TV unavailable")?;
+        if !response.status().is_success() {
+            return Err("TV rejected command");
+        }
+        Ok(())
     }
 }

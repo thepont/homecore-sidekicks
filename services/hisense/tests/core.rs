@@ -1,16 +1,31 @@
 #[allow(dead_code)]
 #[path = "../../electrolux/tests/support/homecore.rs"]
 mod homecore;
-use axum::{http::HeaderMap, routing::post, Router};
+use axum::{extract::State, http::HeaderMap, routing::post, Router};
 use homecore_hisense::{run, Broker, Hisense};
 use std::time::Duration;
 use tokio::net::TcpListener;
 
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
-async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
+async fn homecore_exposes_the_tv_as_a_controllable_media_player() {
     let core = homecore::Core::start().await;
-    async fn response(headers: HeaderMap) -> &'static str {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(4);
+    async fn response(
+        State(tx): State<tokio::sync::mpsc::Sender<String>>,
+        headers: HeaderMap,
+        body: String,
+    ) -> &'static str {
+        if headers
+            .get("soapaction")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("#SetVolume")
+        {
+            tx.send(body).await.unwrap();
+            return "<r/>";
+        }
         if headers
             .get("soapaction")
             .unwrap()
@@ -28,7 +43,9 @@ async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
-            Router::new().route("/upnp/control/mingusrcr", post(response)),
+            Router::new()
+                .route("/upnp/control/mingusrcr", post(response))
+                .with_state(tx),
         )
         .await
         .unwrap()
@@ -68,8 +85,20 @@ async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
         .unwrap();
     assert!(schema.status().is_success(), "TV schema must be registered");
     let schema: serde_json::Value = schema.json().await.unwrap();
-    assert_eq!(schema["attributes"]["volume"]["writable"], false);
-    assert_eq!(schema["attributes"]["muted"]["writable"], false);
+    assert_eq!(schema["attributes"]["volume"]["writable"], true);
+    assert_eq!(schema["attributes"]["muted"]["writable"], true);
+    let response = core
+        .patch("/devices/hisense_living_room/state")
+        .json(&serde_json::json!({"volume":23}))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let body = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(body.contains("<DesiredVolume>23</DesiredVolume>"));
     task.abort();
     server.abort();
 }
