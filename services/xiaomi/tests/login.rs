@@ -125,6 +125,12 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
         .load_gateway()
         .unwrap()
         .is_some());
+    let restarted = homecore_xiaomi::setup::Setup::new(
+        Provider::new(&base).unwrap(),
+        homecore_xiaomi::store::Store::new(&root),
+        "cn",
+    );
+    assert_eq!(restarted.status().await, "gateway_saved");
     std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }
