@@ -255,7 +255,18 @@ impl Tariff {
         let mut fields = Map::new();
         fields.insert("tariff_buy_price_per_kwh".into(), buy.into());
         fields.insert("tariff_buy_period".into(), buy_period.into());
-        fields.insert("tariff_currency".into(), self.currency.clone().into());
+        let (currency, source, region) = if self.currency != "unspecified" {
+            (self.currency.as_str(), "tariff", None)
+        } else if let Some((currency, region)) = crate::currency::for_timezone(zone, date) {
+            (currency, "site_timezone", Some(region))
+        } else {
+            ("unspecified", "unspecified", None)
+        };
+        fields.insert("tariff_currency".into(), currency.into());
+        fields.insert("tariff_currency_source".into(), source.into());
+        if let Some(region) = region {
+            fields.insert("tariff_currency_region".into(), region.into());
+        }
         if let Some((sell, sell_period)) =
             self.sell.as_ref().and_then(|sell| sell.rate(date, minute))
         {

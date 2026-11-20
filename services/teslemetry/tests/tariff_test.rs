@@ -34,7 +34,7 @@ fn live_tariff() -> Value {
 }
 
 #[test]
-fn actual_tariff_prices_follow_local_time_without_inventing_currency() {
+fn actual_tariff_prices_follow_local_time_with_currency_inferred_from_site_zone() {
     let tariff = tariff::parse(&live_tariff()).expect("live V2 tariff should be supported");
     for (utc, price, period) in [
         ("2026-11-20T03:59:59Z", 0.0, "SUPER_OFF_PEAK"),
@@ -48,10 +48,25 @@ fn actual_tariff_prices_follow_local_time_without_inventing_currency() {
         assert_eq!(fields["tariff_buy_price_per_kwh"], price, "{utc}");
         assert_eq!(fields["tariff_buy_period"], period, "{utc}");
         assert_eq!(fields["tariff_sell_price_per_kwh"], 0.005, "{utc}");
-        assert_eq!(fields["tariff_currency"], "unspecified");
+        assert_eq!(fields["tariff_currency"], "AUD");
+        assert_eq!(fields["tariff_currency_source"], "site_timezone");
+        assert_eq!(fields["tariff_currency_region"], "AU");
         assert_eq!(fields["tariff_name"], "Example plan");
         assert_eq!(fields["tariff_provider"], "Example provider");
     }
+}
+
+#[test]
+fn explicit_tariff_currency_takes_precedence_over_site_inference() {
+    let mut document = live_tariff();
+    document["currency"] = json!("NZD");
+    let values = tariff::parse(&document)
+        .unwrap()
+        .readings(Melbourne, instant("2026-11-20T04:00:00Z"))
+        .unwrap();
+    assert_eq!(values["tariff_currency"], "NZD");
+    assert_eq!(values["tariff_currency_source"], "tariff");
+    assert!(!values.contains_key("tariff_currency_region"));
 }
 
 #[test]

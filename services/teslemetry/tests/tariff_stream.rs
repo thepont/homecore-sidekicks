@@ -34,6 +34,10 @@ fn tariff(site: u64, observed: DateTime<Utc>, buy: f64, sell: f64) -> Value {
     })
 }
 
+fn site(site_id: u64, observed: DateTime<Utc>, zone: &str) -> Value {
+    json!({"site_id":site_id,"createdAt":observed.to_rfc3339(),"site_info":{"installation_time_zone":zone}})
+}
+
 async fn send(frames: &mpsc::Sender<Event>, kind: &str, value: Value) {
     frames
         .send(Event::default().event(kind).data(value.to_string()))
@@ -80,7 +84,22 @@ fn assert_prices(state: &TariffState, at: DateTime<Utc>, buy: f64, sell: f64) {
     assert_eq!(fields["tariff_available"], true);
     assert_eq!(fields["tariff_buy_price_per_kwh"], buy);
     assert_eq!(fields["tariff_sell_price_per_kwh"], sell);
-    assert_eq!(fields["tariff_currency"], "unspecified");
+}
+
+fn assert_currency(
+    state: &TariffState,
+    at: DateTime<Utc>,
+    currency: &str,
+    source: &str,
+    region: Option<&str>,
+) {
+    let fields = state.readings(at);
+    assert_eq!(fields["tariff_currency"], currency);
+    assert_eq!(fields["tariff_currency_source"], source);
+    assert_eq!(
+        fields.get("tariff_currency_region").and_then(Value::as_str),
+        region
+    );
 }
 
 fn assert_unavailable(state: &TariffState, at: DateTime<Utc>) {
@@ -88,6 +107,9 @@ fn assert_unavailable(state: &TariffState, at: DateTime<Utc>) {
     assert_eq!(fields["tariff_available"], false);
     assert!(!fields.contains_key("tariff_buy_price_per_kwh"));
     assert!(!fields.contains_key("tariff_sell_price_per_kwh"));
+    assert!(!fields.contains_key("tariff_currency"));
+    assert!(!fields.contains_key("tariff_currency_source"));
+    assert!(!fields.contains_key("tariff_currency_region"));
 }
 
 async fn exercise_tariff_stream_lifecycle() {
@@ -135,10 +157,17 @@ async fn exercise_tariff_stream_lifecycle() {
     barrier(&frames, &mut totals_rx, observed, 1).await;
     assert_unavailable(&tariffs_rx.borrow(), now);
 
-    let site_info = json!({"site_id":42,"createdAt":observed.to_rfc3339(),"site_info":{"installation_time_zone":"Australia/Melbourne"}});
+    let site_info = site(42, observed, "Australia/Melbourne");
     send(&frames, "site_info", site_info.clone()).await;
     barrier(&frames, &mut totals_rx, observed, 2).await;
     assert_prices(&tariffs_rx.borrow(), now, 0.2715, 0.0421);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
 
     send(
         &frames,
@@ -160,6 +189,13 @@ async fn exercise_tariff_stream_lifecycle() {
     .await;
     barrier(&frames, &mut totals_rx, observed, 3).await;
     assert_prices(&tariffs_rx.borrow(), now, 0.2715, 0.0421);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
 
     send(&frames, "tariff_content_v2", json!({"site_id":42,"createdAt":(observed + chrono::Duration::seconds(2)).to_rfc3339(),"tariff_content_v2":null})).await;
     barrier(&frames, &mut totals_rx, observed, 4).await;
@@ -173,6 +209,13 @@ async fn exercise_tariff_stream_lifecycle() {
     .await;
     barrier(&frames, &mut totals_rx, observed, 5).await;
     assert_prices(&tariffs_rx.borrow(), now, 0.3197, 0.0873);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
     send(&frames, "tariff_content_v2", json!({"site_id":42,"createdAt":(observed + chrono::Duration::seconds(4)).to_rfc3339(),"tariff_content_v2":{"energy_charges":"invalid"}})).await;
     barrier(&frames, &mut totals_rx, observed, 6).await;
     assert_unavailable(&tariffs_rx.borrow(), now);
@@ -181,6 +224,13 @@ async fn exercise_tariff_stream_lifecycle() {
     send(&frames, "tariff_content_v2", cached.clone()).await;
     barrier(&frames, &mut totals_rx, observed, 7).await;
     assert_prices(&tariffs_rx.borrow(), now, 0.1981, -0.0123);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
     drop(frames);
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
@@ -207,6 +257,124 @@ async fn exercise_tariff_stream_lifecycle() {
     send(&frames, "tariff_content_v2", cached).await;
     barrier(&frames, &mut totals_rx, observed, 8).await;
     assert_prices(&tariffs_rx.borrow(), now, 0.1981, -0.0123);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
+
+    // A new site timezone changes the inferred currency without new tariff data.
+    send(
+        &frames,
+        "site_info",
+        site(
+            42,
+            observed + chrono::Duration::seconds(10),
+            "Europe/London",
+        ),
+    )
+    .await;
+    barrier(&frames, &mut totals_rx, observed, 9).await;
+    assert_prices(&tariffs_rx.borrow(), now, 0.1981, -0.0123);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "GBP",
+        "site_timezone",
+        Some("GB"),
+    );
+
+    send(
+        &frames,
+        "site_info",
+        site(
+            99,
+            observed + chrono::Duration::seconds(11),
+            "Australia/Melbourne",
+        ),
+    )
+    .await;
+    send(
+        &frames,
+        "site_info",
+        site(
+            42,
+            observed + chrono::Duration::seconds(9),
+            "Australia/Melbourne",
+        ),
+    )
+    .await;
+    send(
+        &frames,
+        "site_info",
+        site(42, now + chrono::Duration::days(1), "Australia/Melbourne"),
+    )
+    .await;
+    barrier(&frames, &mut totals_rx, observed, 10).await;
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "GBP",
+        "site_timezone",
+        Some("GB"),
+    );
+
+    // Explicit tariff currency wins and removes the prior inferred region.
+    let mut explicit = tariff(42, observed + chrono::Duration::seconds(6), 0.1981, -0.0123);
+    explicit["tariff_content_v2"]["currency"] = json!("JPY");
+    send(&frames, "tariff_content_v2", explicit).await;
+    barrier(&frames, &mut totals_rx, observed, 11).await;
+    assert_currency(&tariffs_rx.borrow(), now, "JPY", "tariff", None);
+
+    send(
+        &frames,
+        "site_info",
+        site(42, observed + chrono::Duration::seconds(12), "Etc/UTC"),
+    )
+    .await;
+    barrier(&frames, &mut totals_rx, observed, 12).await;
+    assert_currency(&tariffs_rx.borrow(), now, "JPY", "tariff", None);
+
+    // A global zone cannot supply a region or a currency when the source omits it.
+    send(
+        &frames,
+        "tariff_content_v2",
+        tariff(42, observed + chrono::Duration::seconds(7), 0.1981, -0.0123),
+    )
+    .await;
+    barrier(&frames, &mut totals_rx, observed, 13).await;
+    assert_prices(&tariffs_rx.borrow(), now, 0.1981, -0.0123);
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "unspecified",
+        "unspecified",
+        None,
+    );
+
+    send(
+        &frames,
+        "site_info",
+        site(
+            42,
+            observed + chrono::Duration::seconds(13),
+            "Australia/Melbourne",
+        ),
+    )
+    .await;
+    barrier(&frames, &mut totals_rx, observed, 14).await;
+    assert_currency(
+        &tariffs_rx.borrow(),
+        now,
+        "AUD",
+        "site_timezone",
+        Some("AU"),
+    );
+    send(&frames, "tariff_content_v2", json!({"site_id":42,"createdAt":(observed + chrono::Duration::seconds(8)).to_rfc3339(),"tariff_content_v2":null})).await;
+    barrier(&frames, &mut totals_rx, observed, 15).await;
+    assert_unavailable(&tariffs_rx.borrow(), now);
 }
 
 #[tokio::test]
