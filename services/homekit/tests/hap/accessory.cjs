@@ -68,5 +68,5 @@ if (bridgeMode) {
   accessory.addBridgedAccessory(second);
 }
 accessory.on('listening',port=>{boundPort=port;console.log(`PORT=${port}`)});
-accessory.publish({username:'02:11:22:33:44:55',pincode:'123-45-678',category:Categories.SENSOR,port:0,bind:'127.0.0.1',addIdentifyingMaterial:false}).catch(()=>process.exit(1));
+accessory.publish({username:'02:11:22:33:44:55',pincode:'123-45-678',category:Categories.SENSOR,port:Number(process.env.HAP_PORT||0),bind:'127.0.0.1',addIdentifyingMaterial:false}).catch(()=>process.exit(1));
 process.on('SIGTERM',()=>{accessory.unpublish().finally(()=>process.exit(0))});

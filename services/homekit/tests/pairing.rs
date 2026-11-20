@@ -332,6 +332,33 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .unwrap();
+    fixture.child.wait().unwrap();
+    let mut restarted =
+        Command::new(std::env::var("HAP_NODE_BIN").unwrap_or_else(|_| "node".into()))
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
+            .env("HAP_STORE_DIR", fixture.root.join("accessory"))
+            .env("HAP_BRIDGE", "1")
+            .env("HAP_PORT", port.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+    let mut ready = String::new();
+    let mut restarted_output = BufReader::new(restarted.stdout.take().unwrap());
+    restarted_output.read_line(&mut ready).unwrap();
+    assert_eq!(ready.trim(), format!("PORT={port}"));
+    fixture.child = restarted;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
