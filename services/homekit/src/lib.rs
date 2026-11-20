@@ -1,6 +1,41 @@
 use serde_json::{json, Map, Value};
 pub mod setup;
 
+/// Validate a homeCore outlet command and identify its target.
+pub fn outlet_command(bridge_id: &str, topic: &str, value: &Value) -> Option<(u64, bool)> {
+    if bridge_id.len() != 17
+        || !bridge_id.bytes().enumerate().all(|(i, b)| {
+            if i % 3 == 2 {
+                b == b':'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+    {
+        return None;
+    }
+    let prefix = format!(
+        "homecore/devices/homekit_{}_",
+        bridge_id.replace(':', "").to_ascii_lowercase()
+    );
+    let text = topic.strip_prefix(&prefix)?.strip_suffix("/cmd")?;
+    let aid = text.parse::<u64>().ok()?;
+    if aid == 0 || aid.to_string() != text {
+        return None;
+    }
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "on" | "_hc" | "origin" | "correlation_id"))
+        || object.get("_hc").is_some_and(|v| !v.is_object())
+        || object.get("origin").is_some_and(|v| !v.is_string())
+        || object.get("correlation_id").is_some_and(|v| !v.is_string())
+    {
+        return None;
+    }
+    Some((aid, object.get("on")?.as_bool()?))
+}
+
 /// Publish supported sensors to homeCore.
 pub async fn publish_sensors(
     mqtt: &rumqttc::AsyncClient,
@@ -148,7 +183,7 @@ pub async fn publish_sensors(
         let mut attributes = Map::new();
         attributes.insert(
             "on".into(),
-            json!({"kind":"bool","writable":false,"display_name":"On"}),
+            json!({"kind":"bool","writable":true,"display_name":"On"}),
         );
         if state.get("in_use").is_some() {
             attributes.insert(
@@ -342,17 +377,58 @@ pub async fn run_contact_publisher_with_interval(
     state_dir: std::path::PathBuf,
     refresh: std::time::Duration,
 ) -> Result<(), &'static str> {
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(16);
+    run_sensor_publisher_with_commands(mqtt, plugin, bridge_id, state_dir, refresh, &mut commands)
+        .await
+}
+
+/// Publish sensor state and process validated homeCore commands.
+pub async fn run_sensor_publisher_with_commands(
+    mqtt: rumqttc::AsyncClient,
+    plugin: String,
+    bridge_id: String,
+    state_dir: std::path::PathBuf,
+    refresh: std::time::Duration,
+    commands: &mut tokio::sync::mpsc::Receiver<(String, Value)>,
+) -> Result<(), &'static str> {
     if refresh < std::time::Duration::from_secs(1) || refresh > std::time::Duration::from_secs(3600)
     {
         return Err("Invalid refresh interval");
     }
     let mut watch = watch_contacts_with_interval(&bridge_id, &state_dir, refresh).await?;
+    let prefix = format!(
+        "homecore/devices/homekit_{}_",
+        bridge_id.replace(':', "").to_ascii_lowercase()
+    );
+    for (aid, state) in watch.current() {
+        if state.get("on").is_some() {
+            mqtt.subscribe(format!("{prefix}{aid}/cmd"), rumqttc::QoS::AtLeastOnce)
+                .await
+                .map_err(|_| "Cannot subscribe to outlet commands")?;
+        }
+    }
     publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
     contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
-    while let Some(update) = watch.next().await {
+    loop {
+        let update = tokio::select! {
+            update = watch.next() => match update { Some(update) => update, None => break },
+            command = commands.recv() => {
+                let Some((topic, command)) = command else { break };
+                if let Some((aid, on)) = outlet_command(&bridge_id, &topic, &command) { let _ = watch.set_outlet(aid, on).await; }
+                continue;
+            }
+        };
         if update.1.is_null() {
             contact_availability(&mqtt, &bridge_id, &[update], false).await?;
             continue;
+        }
+        if update.1.get("on").is_some() {
+            mqtt.subscribe(
+                format!("{prefix}{}/cmd", update.0),
+                rumqttc::QoS::AtLeastOnce,
+            )
+            .await
+            .map_err(|_| "Cannot subscribe to outlet commands")?;
         }
         publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
         contact_availability(&mqtt, &bridge_id, &[update], true).await?;

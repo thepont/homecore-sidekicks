@@ -371,6 +371,32 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .expect("smoke detector must initially be online");
+    let outlet_topic = format!("homecore/devices/homekit_021122334455_{outlet_id}");
+    probe
+        .client
+        .publish(
+            format!("{outlet_topic}/cmd"),
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            r#"{"on":true}"#,
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == format!("{outlet_topic}/state")
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload)
+                    .unwrap()
+                    .get("on")
+                    == Some(&json!(true))
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("outlet command must be reflected in confirmed state");
     writeln!(fixture.child.stdin.as_mut().unwrap(), "smoke-offline").unwrap();
     tokio::time::timeout(Duration::from_secs(12), async {
         loop {

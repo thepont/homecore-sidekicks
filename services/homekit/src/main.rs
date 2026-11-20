@@ -66,11 +66,19 @@ async fn run() -> Result<(), &'static str> {
     options.set_keep_alive(Duration::from_secs(15));
     let (mqtt, mut events) = AsyncClient::new(options, 32);
     let (ready, mut connection) = watch::channel(false);
+    let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(32);
     let worker = tokio::spawn(async move {
         loop {
             match events.poll().await {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                     ready.send_replace(true);
+                }
+                Ok(Event::Incoming(Incoming::Publish(message))) => {
+                    if !message.retain && message.payload.len() <= 4096 {
+                        if let Ok(value) = serde_json::from_slice(&message.payload) {
+                            let _ = command_tx.try_send((message.topic, value));
+                        }
+                    }
                 }
                 Ok(_) => {}
                 Err(_) => {
@@ -100,7 +108,7 @@ async fn run() -> Result<(), &'static str> {
                 continue;
             };
             tokio::select! {
-            _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh)) => {
+            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx) => {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 _ = connection.changed() => {}

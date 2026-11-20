@@ -5,6 +5,39 @@ mod mqtt_broker;
 use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
 
+#[test]
+fn only_well_formed_commands_for_the_expected_bridge_are_accepted() {
+    let topic = "homecore/devices/homekit_021122334455_7/cmd";
+    assert_eq!(
+        homecore_homekit::outlet_command("02:11:22:33:44:55", topic, &json!({"on":true})),
+        Some((7, true))
+    );
+    assert_eq!(
+        homecore_homekit::outlet_command("02:11:22:33:44:55", topic, &json!({"on":"true"})),
+        None
+    );
+    assert_eq!(
+        homecore_homekit::outlet_command("02:11:22:33:44:55", topic, &json!({"on":true,"extra":1})),
+        None
+    );
+    assert_eq!(
+        homecore_homekit::outlet_command(
+            "02:11:22:33:44:55",
+            "homecore/devices/homekit_aaaaaaaaaaaa_7/cmd",
+            &json!({"on":true})
+        ),
+        None
+    );
+    assert_eq!(
+        homecore_homekit::outlet_command(
+            "02:11:22:33:44:55",
+            "homecore/devices/homekit_021122334455_07/cmd",
+            &json!({"on":true})
+        ),
+        None
+    );
+}
+
 #[tokio::test]
 async fn outlet_is_published_as_a_switch_with_its_on_and_in_use_states() {
     let broker = mqtt_broker::Broker::start().await;
@@ -37,7 +70,7 @@ async fn outlet_is_published_as_a_switch_with_its_on_and_in_use_states() {
     );
     assert_eq!(
         messages["homecore/devices/homekit_021122334455_2/schema"]["attributes"]["on"]["writable"],
-        false
+        true
     );
 }
 
