@@ -80,6 +80,7 @@ const style = `
     --ac-surface:var(--surface,#fff);--ac-line:var(--card-line,#d1dbd5);
     --ac-accent:var(--accent,#17634e);
     --ac-wash:color-mix(in srgb,var(--ac-accent) 10%,var(--ac-surface));
+    --ac-step:var(--surface-2,#edf1ee);
     color:var(--ac-ink);font:14px/1.45 var(--font,system-ui,sans-serif);
   }
   *{box-sizing:border-box}
@@ -94,40 +95,53 @@ const style = `
   button{cursor:pointer}
   :disabled{opacity:.55;cursor:default}
   :focus-visible{outline:2px solid var(--ac-accent);outline-offset:2px}
-  .name{display:block;max-width:100%;min-height:34px;margin:0 auto;padding:0 4px;border:0;
+  .name{display:block;max-width:100%;min-height:44px;margin:3px auto 5px;padding:0 4px;border:0;
     font-size:18px;font-weight:650;overflow-wrap:anywhere;background:none}
   .name:not(:disabled):hover{text-decoration:underline}
   .name:disabled{opacity:1}
-  .room{padding:8px 8px 10px;margin:8px 0 10px;border-radius:12px;background:var(--ac-wash)}
-  .readout{width:100%}
-  button.readout{border:0;background:none;padding:0;min-height:44px;border-radius:6px}
+  .room{margin:0 0 5px}
+  .readout{position:absolute;left:50%;top:51.28%;transform:translate(-50%,-50%);
+    display:grid;justify-items:center;gap:2px;width:57%;line-height:1.2}
+  button.readout{border:0;background:none;padding:3px 0;min-height:44px;border-radius:12px}
   button.readout:disabled{opacity:1}
-  .room-label,.open-label{display:block}
-  .open-label{margin-block-start:5px;color:var(--ac-accent);font-weight:620;font-size:12px;
-    text-decoration:underline;text-underline-offset:2px}
+  .open-label{display:block;color:var(--ac-accent);font-weight:620;font-size:12px;
+    text-underline-offset:2px}
+  .name:hover .open-label,.name:focus-visible .open-label{text-decoration:underline}
   .room-label,small,dt,.mode-note{color:var(--ac-muted);font-size:12px}
-  .dial{width:min(var(--ac-dial-size,124px),100%);aspect-ratio:220 / 155;margin:0 auto 3px}
+  .dial{position:relative;container-type:inline-size;width:min(var(--ac-dial-size,168px),100%);
+    aspect-ratio:168 / 156;margin:0 auto}
   .dial[data-editable]{touch-action:none;user-select:none;cursor:grab}
   .dial[data-dragging]{cursor:grabbing}
   .dial svg{display:block;width:100%;height:100%;overflow:visible}
-  .dial path{fill:none;stroke-width:7;stroke-linecap:round}
-  .track{stroke:color-mix(in srgb,var(--ac-accent) 24%,var(--ac-surface))}
-  .range{stroke:var(--ac-accent)}
+  .dial-face{stroke:var(--ac-line);stroke-width:1}
+  .face-center{stop-color:var(--ac-surface)}
+  .face-edge{stop-color:color-mix(in srgb,var(--ac-surface) 54%,var(--bg,var(--ac-step)))}
+  .dial path{fill:none;stroke-width:13}
+  .track{stroke:var(--track-off,var(--ac-step))}
+  .range-start{stop-color:var(--track-on,#ffb45b)}
+  .range-end{stop-color:var(--ac-accent)}
+  .card[data-cooling] .range-start{stop-color:color-mix(in srgb,var(--cool,#5aa9e6) 68%,var(--ac-ink))}
+  .card[data-cooling] .range-end{stop-color:var(--cool,#5aa9e6)}
   .room-dot{fill:var(--ac-ink);stroke:var(--ac-surface);stroke-width:2}
   .target-dot{fill:var(--ac-surface);stroke:var(--ac-accent);stroke-width:3}
   .target-dot[role="slider"]{r:6.5;fill:var(--ac-accent);stroke:var(--ac-surface)}
   .target-dot[role="slider"]:focus-visible{outline:none;stroke:var(--ac-ink);stroke-width:4}
-  .reading{display:block;font-size:clamp(17px,8cqi,22px);font-weight:650;line-height:1.2}
-  .reading,output,dd{font-variant-numeric:tabular-nums}
-  .activity{display:block;color:var(--ac-accent);font-size:13px;font-weight:620}
-  .offline .activity{color:var(--ac-muted)}
-  .offline .dial{opacity:.65}
+  .room-current{display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .reading,.dial-target{font-size:clamp(17px,17cqw,42px);font-weight:680;line-height:1.08;white-space:nowrap}
+  .reading,.dial-target,output,dd{font-variant-numeric:tabular-nums}
+  .room-label,.activity{font-size:clamp(10px,7.5cqw,15px);text-wrap:balance}
+  .activity{color:var(--ac-muted)}
+  .dial[data-has-target] .room-current{flex-direction:row;gap:.3em}
+  .dial:not([data-has-target]) .reading{order:-1}
+  .dial[data-has-target] .reading{font-size:clamp(10px,7.5cqw,15px);font-weight:500;color:var(--ac-muted)}
+  .offline .dial svg{opacity:.65}
   .target{display:grid;grid-template-columns:44px minmax(0,108px) 44px;justify-content:center;
-    align-items:center;gap:8px;margin:8px 0}
-  .target button{width:44px;height:44px;padding:0;font-size:20px}
+    align-items:center;gap:clamp(4px,2.5cqi,8px);margin:8px 0}
+  .target button{width:44px;height:44px;padding:0;border-radius:50%;font-size:22px;line-height:1;
+    background:var(--ac-step)}
   .target-value{grid-column:2;display:grid;gap:1px}
   .target button:last-child{grid-column:3}
-  output{font-size:17px;font-weight:620;white-space:nowrap}
+  output{font-size:clamp(13px,9cqi,17px);font-weight:620;white-space:nowrap}
   .modes,.airflow-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,72px),1fr));gap:6px}
   .modes{grid-template-columns:repeat(3,minmax(0,1fr));margin:8px 0}
   .modes button{display:grid;justify-items:center;align-content:center;gap:3px;min-height:52px;min-width:0;
@@ -149,17 +163,21 @@ const style = `
   .diagnostics dl{display:grid;grid-template-columns:1fr auto;gap:6px 10px;text-align:left}
   .diagnostics dd{text-align:right}
   @container (max-width:225px){.card{padding:9px}}
-  @media (any-pointer:coarse) {
-    .dial:has(.target-dot[role="slider"]){width:min(var(--ac-dial-size,152px),100%)}
-    .target-dot[role="slider"]{r:8}
+  @media (any-pointer:coarse) {.target-dot[role="slider"]{r:8}}
+  @media(forced-colors:active){
+    .airflow-field select{appearance:auto;background:var(--ac-surface);padding-inline:3px}
+    .dial-face{fill:Canvas;stroke:CanvasText}
+    .track{stroke:GrayText}
+    .range{stroke:Highlight}
+    .target-dot[role="slider"]{fill:Highlight;stroke:Canvas}
+    .target-dot[role="slider"]:focus-visible{stroke:CanvasText}
   }
-  @media(forced-colors:active){.airflow-field select{appearance:auto;background:var(--ac-surface);padding-inline:3px}}
 `;
 
 const targetRow = (key, label, name) => `
   <div class="target" data-target="${key}" role="group" aria-label="${name}">
     <button type="button" data-step="-1" aria-label="Lower ${name.toLowerCase()}">−</button>
-    <div class="target-value"><small>${label}</small><output aria-live="off"></output></div>
+    <div class="target-value"><small>${label}</small>${key === 'single' ? '' : '<output aria-live="off"></output>'}</div>
     <button type="button" data-step="1" aria-label="Raise ${name.toLowerCase()}">+</button>
   </div>`;
 
@@ -168,25 +186,32 @@ const template = panel => {
   return `
   <style>${style}</style>
   <section class="card">
-    ${panel ? '' : '<button class="name" type="button" aria-haspopup="dialog"></button>'}
     <div class="room">
       <div class="dial">
-        <svg viewBox="0 0 220 155" role="group" aria-label="Temperature dial" aria-hidden="true">
-          <path class="track" aria-hidden="true"></path><path class="range" aria-hidden="true"></path>
+        <svg viewBox="26 8 168 156" role="group" aria-label="Temperature dial" aria-hidden="true">
+          <defs>
+            <radialGradient id="ac-face"><stop class="face-center" offset="38%"/><stop class="face-edge" offset="100%"/></radialGradient>
+            <linearGradient id="ac-range" gradientUnits="userSpaceOnUse" x1="62" y1="138" x2="158" y2="37">
+              <stop class="range-start" offset="0%"/><stop class="range-end" offset="100%"/>
+            </linearGradient>
+          </defs>
+          <circle class="dial-face" cx="110" cy="88" r="62" fill="url(#ac-face)" aria-hidden="true"></circle>
+          <path class="track" aria-hidden="true"></path>
+          <path class="range" stroke="url(#ac-range)" aria-hidden="true"></path>
           <circle class="target-dot low" r="5" aria-hidden="true"></circle><circle class="target-dot high" r="5" aria-hidden="true"></circle>
           <circle class="room-dot" r="5" aria-hidden="true"></circle>
         </svg>
+        <${readoutTag} class="readout"${panel ? '' : ' type="button" aria-haspopup="dialog"'}>
+          <span class="activity" id="ac-dial-activity"></span>
+          <strong class="dial-target" id="ac-dial-target" hidden></strong>
+          <span class="room-current" id="ac-dial-room"><span class="room-label">Room temp</span> <strong class="reading"></strong></span>
+        </${readoutTag}>
       </div>
-      <${readoutTag} class="readout"${panel ? '' : ' type="button" aria-haspopup="dialog"'}>
-        <span class="room-label">Room temperature</span>
-        <strong class="reading"></strong>
-        <span class="activity"></span>
-        ${panel ? '' : '<span class="open-label">Open controls</span>'}
-      </${readoutTag}>
     </div>
     ${targetRow('single', 'Target', 'Target')}
     ${targetRow('heat', 'Heat to', 'Heating target')}
     ${targetRow('cool', 'Cool to', 'Cooling target')}
+    ${panel ? '' : '<button class="name" type="button" aria-haspopup="dialog"><span class="name-label"></span><span class="open-label" aria-hidden="true">Open controls</span></button>'}
     <p class="gap-note mode-note" hidden></p>
     <div class="modes" role="group" aria-label="Mode">
       ${Object.entries(modes).map(([key, label]) => `<button type="button" data-mode="${key}" aria-pressed="false">
@@ -273,12 +298,14 @@ function readTemperatureTargets(attributes, mode) {
 function climateOf(device) {
   const a = record(device?.attributes);
   const mode = lookup(modes, a.hvac_mode) ? a.hvac_mode : undefined;
+  const room = temperature(a.temperature);
   const { targets, targetsByKey } = readTemperatureTargets(a, mode);
   let activity = mode === 'off' ? 'Off' : lookup(activities, a.hvac_action);
   if (mode === 'heat' || mode === 'auto') {
     activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, a.sub_mode) ?? activity;
   }
-  return { available: device?.available === true, mode, activity, room: temperature(a.temperature),
+  if (room !== undefined) activity ??= lookup(modes, mode);
+  return { available: device?.available === true, mode, activity, room,
     gap: number(a.min_setpoint_gap) >= 0 && a.min_setpoint_gap <= 30 ? a.min_setpoint_gap : 0,
     targets, targetsByKey, reported: { hvac_mode: mode,
       ...Object.fromEntries(airflow.map(({ key }) => [key, choice(a[key])])) },
@@ -422,7 +449,8 @@ class AcCard extends HTMLElement {
     const get = selector => root.querySelector(selector);
     const diagnosticsPanel = get('.diagnostics');
     this.#view = {
-      card: get('.card'), name: get('.name'), readout: get('.readout'), openLabel: get('.open-label'),
+      card: get('.card'), name: get('.name'), nameLabel: get('.name-label'), readout: get('.readout'),
+      openLabel: get('.open-label'), roomLabel: get('.room-label'), dialTarget: get('.dial-target'),
       reading: get('.reading'), activity: get('.activity'),
       dial: get('.dial'), svg: get('.dial svg'), track: get('.track'), range: get('.range'), room: get('.room-dot'), low: get('.low'), high: get('.high'),
       modeGrid: get('.modes'), modeButtons: [...root.querySelectorAll('[data-mode]')], mode: get('.current-mode'),
@@ -536,11 +564,12 @@ class AcCard extends HTMLElement {
 
     const view = this.#view;
     view.card.classList.toggle('offline', !available);
+    view.card.toggleAttribute('data-cooling', model.mode === 'cool' || activity === 'Cooling');
     if (view.name) {
       const label = device && this.#host.devices.label(device);
       const name = typeof label === 'string' && label ? label.slice(0, 256) : 'Air conditioner';
       const canOpen = !!device && typeof this.#host.ui?.openDevice === 'function';
-      view.name.textContent = name;
+      view.nameLabel.textContent = name;
       view.name.disabled = !canOpen;
       view.readout.disabled = !canOpen;
       view.readout.setAttribute('aria-label', `Open controls for ${name}`);
@@ -695,8 +724,8 @@ class AcCard extends HTMLElement {
       const slot = row.dataset.target;
       const target = targets[slot];
       const visible = available && target?.value !== undefined;
-      show(row, visible);
       const spec = schema?.[target?.key];
+      show(row, visible && (slot !== 'single' || spec?.writable === true));
       const control = visible ? targetControl(target, spec, model) : undefined;
       if (control) {
         controls[slot] = control;
@@ -711,6 +740,7 @@ class AcCard extends HTMLElement {
       }
     }
     this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
+      restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
       scale, controls, lowSlot: targets.heat ? 'heat' : 'single' };
     if (this.#drag) {
       const active = controls[this.#drag.slot];
@@ -730,12 +760,24 @@ class AcCard extends HTMLElement {
   }
 
   #drawTargets() {
-    const { targets, room, scale, controls, lowSlot } = this.#dialState;
+    const { targets, room, restingTarget, scale, controls, lowSlot } = this.#dialState;
     const view = this.#view;
     const value = slot => this.#drag?.slot === slot ? this.#drag.value : targets[slot]?.value;
     const low = value(lowSlot);
     const high = value('cool');
-    view.range.setAttribute('d', high !== undefined && low < high ? arc(low, high, scale) : '');
+    const faceTarget = lowSlot === 'single' ? low ?? restingTarget : undefined;
+    const hasTarget = faceTarget !== undefined;
+    const rangeStart = high === undefined ? scale.min : low;
+    const rangeEnd = high ?? faceTarget;
+    view.range.setAttribute('d', rangeEnd > rangeStart ? arc(rangeStart, rangeEnd, scale) : '');
+    view.dial.toggleAttribute('data-has-target', hasTarget);
+    view.dialTarget.textContent = this.#format(faceTarget);
+    show(view.dialTarget, hasTarget);
+    view.roomLabel.textContent = hasTarget ? 'Now' : 'Room temp';
+    if (view.name) {
+      view.readout.setAttribute('aria-describedby', hasTarget
+        ? 'ac-dial-activity ac-dial-target ac-dial-room' : 'ac-dial-activity ac-dial-room');
+    }
     mark(view.room, room, scale, 82);
     mark(view.low, low, scale);
     const sharedPoint = high === low && high !== undefined;
@@ -761,7 +803,7 @@ class AcCard extends HTMLElement {
       marker.setAttribute('aria-disabled', String(!!this.#pending));
     }
     for (const { row, output } of view.targets) {
-      output.textContent = this.#format(value(row.dataset.target));
+      if (output) output.textContent = this.#format(value(row.dataset.target));
     }
   }
 

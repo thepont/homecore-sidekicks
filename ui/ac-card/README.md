@@ -25,15 +25,17 @@ include a `device_types` filter in its own manifest.
 | `has_vertical_vane`, `has_horizontal_vane` | Optional capability flags. An explicit false hides that vane even if a setting is reported. |
 | `outside_temperature`, `compressor_frequency`, `runtime` | Optional diagnostics in °C, Hz, and hours. |
 
-The current room temperature appears below the dial in whole degrees, using
-the person’s display units. Targets retain the adapter’s precision.
+The thermostat dial shows the target above the current room temperature. With
+separate Auto targets, it shows the room temperature in the centre and the two
+targets below the dial. The room reading uses whole degrees in the person’s
+display units. Targets retain the adapter’s precision.
 
 The card suppresses retained readings when HomeCore reports a device offline.
-Off can still show a current room reading. Off, Dry and Fan only omit
-temperature targets. The Airflow row goes below the mode controls and adapts to
-the fields the device supports. Tap **Open controls** on the room temperature
-readout or tap the device name to open the same controls with a larger dial
-in HomeCore’s device sheet.
+Off can still show a current room reading and a reported target. Target controls
+are unavailable in Off, Dry and Fan only. Airflow appears below the mode
+controls and adapts to the fields the device supports. Tap the dial readout or
+**Open controls** under the device name for the larger dial in HomeCore’s device
+sheet.
 
 Controls require command permission and schema attributes marked
 `writable: true`. Mode and airflow controls use schema `options` (strings or

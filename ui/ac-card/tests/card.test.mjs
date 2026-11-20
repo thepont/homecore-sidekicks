@@ -208,16 +208,46 @@ test('targets and airflow fit a phone card and keep their labels aligned', async
       const box = selector => get(selector).getBoundingClientRect();
       const center = rect => rect.left + rect.width / 2;
       const dial = box('.dial');
-      const centered = ['.name', '.room-label', '.reading', '.activity', '[data-target=heat] .target-value']
+      const centered = ['.name', '.reading', '.activity', '[data-target=heat] .target-value']
         .every(selector => Math.abs(center(box(selector)) - center(dial)) <= 1);
-      return centered && dial.bottom <= box('.room-label').top &&
-        box('.room-label').bottom <= box('.reading').top && box('.reading').bottom <= box('.activity').top &&
-        parseFloat(getComputedStyle(get('.reading')).fontSize) <= 24 &&
+      const heat = '[data-target=heat]';
+      const heatText = document.createRange();
+      heatText.selectNodeContents(get(heat + ' output'));
+      const target = heatText.getBoundingClientRect();
+      return centered && dial.top <= box('.activity').top &&
+        box('.activity').bottom <= box('.reading').top &&
+        box('.reading').bottom <= dial.bottom &&
+        box('.reading').bottom <= box('.room-label').top &&
+        box('[data-target=cool]').bottom <= box('.name').top &&
+        target.left > box(heat + ' button:first-child').right &&
+        target.right < box(heat + ' button:last-child').left &&
         box('.modes').bottom <= box('.airflow').top &&
         document.documentElement.scrollWidth <= innerWidth;
     });
     assert(layout, width + 'px tile');
   }
+});
+
+test('the thermostat face shows the target above the live reading and keeps off controls locked', async () => {
+  await mount({ writable: true, electrolux: true, temperatureUnit: '°C' });
+  const target = page.locator('.dial-target');
+  const dial = page.locator('.dial');
+  await page.getByRole('slider', { name: 'Target temperature' }).waitFor();
+  await target.getByText('21 °C', { exact: true }).waitFor();
+  const targetBox = await target.boundingBox();
+  const roomBox = await dial.getByText('22°C', { exact: true }).boundingBox();
+  assert(targetBox.y + targetBox.height <= roomBox.y + 1);
+  assert((await dial.locator('.range').getAttribute('d')).length > 0);
+  assert.equal(await button('Raise target').evaluate(element => getComputedStyle(element).borderRadius), '50%');
+  await page.evaluate(() => update({ attributes: { hvac_mode: 'off' } }));
+  await dial.getByText('Off', { exact: true }).waitFor();
+  await target.getByText('21 °C', { exact: true }).waitFor();
+  assert(!(await button('Raise target').isVisible()));
+  assert.equal(await page.getByRole('slider').count(), 0);
+  assert.deepEqual(await page.evaluate(() => sent), []);
+  await page.evaluate(() => update({ available: false }));
+  assert(!(await target.isVisible()));
+  assert.equal(await dial.locator('.range').getAttribute('d'), '');
 });
 
 test('rounds the current temperature in Celsius and keeps the Auto targets precise', async () => {
