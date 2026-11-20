@@ -2,6 +2,16 @@ use plugin_sdk_rs::{types::Capabilities, AsyncActionFuture, PluginClient, Plugin
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
+pub type Discover = Arc<
+    dyn Fn() -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<Vec<hap_transport::DiscoveredAccessory>, ()>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
 
 /// Serve authenticated homeCore management requests for an unconfigured controller.
 pub async fn run(
@@ -11,6 +21,34 @@ pub async fn run(
     password: String,
     state_dir: PathBuf,
     ui: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_with_discovery(
+        host,
+        port,
+        id,
+        password,
+        state_dir,
+        ui,
+        Arc::new(|| {
+            Box::pin(async {
+                hap_transport::discover(Duration::from_secs(3))
+                    .await
+                    .map_err(|_| ())
+            })
+        }),
+    )
+    .await
+}
+
+/// Serve management using an injected discovery source.
+pub async fn run_with_discovery(
+    host: String,
+    port: u16,
+    id: String,
+    password: String,
+    state_dir: PathBuf,
+    ui: PathBuf,
+    discover: Discover,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = PluginClient::connect(PluginConfig {
         broker_host: host,
@@ -38,9 +76,10 @@ pub async fn run(
             let params = command.clone();
             let discoveries = discoveries.clone();
             let state_dir = state_dir.clone();
+            let discover = discover.clone();
             Some(Box::pin(async move {
                 if action == "discover_accessories" {
-                    match hap_transport::discover(Duration::from_secs(3)).await {
+                    match discover().await {
                         Ok(found) => {
                             let found: Vec<_> = found
                                 .into_iter()
