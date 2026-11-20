@@ -42,6 +42,11 @@ fn command(payload: &[u8]) -> Option<Command> {
             .map(|v| Command::Temperature(v as u8)),
         "on" => value.as_bool().map(Command::Power),
         "swing" => value.as_bool().map(Command::Swing),
+        "vertical_vane" => match value.as_str()? {
+            "swing" => Some(Command::Swing(true)),
+            "off" => Some(Command::Swing(false)),
+            _ => None,
+        },
         "hvac_mode" => match value.as_str()? {
             "off" => Some(Command::Power(false)),
             "cool" => Some(Command::Mode("cool")),
@@ -205,7 +210,7 @@ async fn main() -> Result<(), &'static str> {
                     mqtt.subscribe(format!("homecore/plugins/{PLUGIN}/manage/cmd"),QoS::AtLeastOnce).await.map_err(|_| "MQTT subscribe failed")?;
                     mqtt.publish(format!("homecore/plugins/{PLUGIN}/capabilities"),QoS::AtLeastOnce,true,json!({"spec":"1","plugin_id":PLUGIN,"actions":[],"ui":assets.as_ref().as_ref().map(|a|a.descriptor())}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     mqtt.publish(format!("homecore/plugins/{PLUGIN}/register"),QoS::AtLeastOnce,true,json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room AC","device_type":"thermostat"}).to_string()).await.map_err(|_| "MQTT publish failed")?;
-                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30,"step":1},"on":{"kind":"bool","writable":true},"hvac_mode":{"kind":"string","writable":true,"options":["off","heat","cool","auto","dry","fan_only"]},"fan_mode":{"kind":"string","writable":true,"options":["auto","low","medium","high","turbo","quiet"]},"swing":{"kind":"bool","writable":true}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
+                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30,"step":1},"on":{"kind":"bool","writable":true},"hvac_mode":{"kind":"string","writable":true,"options":["off","heat","cool","auto","dry","fan_only"]},"fan_mode":{"kind":"string","writable":true,"options":["auto","low","medium","high","turbo","quiet"]},"swing":{"kind":"bool","writable":true},"vertical_vane":{"kind":"string","writable":true,"options":["off","swing"]}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     publish(&mqtt,rx.borrow_and_update().as_ref()).await?;
                 }
                 Ok(Event::Incoming(Incoming::Publish(message))) if !message.retain && rx.borrow().is_some() && message.topic == format!("homecore/devices/{DEVICE}/cmd") && message.payload.len() <= 1024 => {
@@ -224,7 +229,7 @@ async fn publish(
     state: Option<&homecore_electrolux::ClimateStatus>,
 ) -> Result<(), &'static str> {
     if let Some(state) = state {
-        mqtt.publish(format!("homecore/devices/{DEVICE}/state"),QoS::AtLeastOnce,true,json!({"temperature":state.current_temperature,"setpoint":state.target_temperature,"on":state.mode!="off","hvac_mode":state.mode,"fan_mode":state.fan,"swing":state.swing}).to_string()).await.map_err(|_| "MQTT publish failed")?;
+        mqtt.publish(format!("homecore/devices/{DEVICE}/state"),QoS::AtLeastOnce,true,json!({"temperature":state.current_temperature,"setpoint":state.target_temperature,"on":state.mode!="off","hvac_mode":state.mode,"fan_mode":state.fan,"swing":state.swing,"vertical_vane":if state.swing {"swing"} else {"off"}}).to_string()).await.map_err(|_| "MQTT publish failed")?;
     }
     mqtt.publish(
         AVAIL,

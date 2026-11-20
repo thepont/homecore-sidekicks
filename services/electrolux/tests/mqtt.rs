@@ -275,7 +275,7 @@ async fn homecore_controls_follow_reported_device_state() {
                     peer,
                 )
                 .unwrap();
-            if changes == 5 && request[0] == 0x0e {
+            if changes == 6 && request[0] == 0x0e {
                 break;
             }
         }
@@ -309,6 +309,11 @@ async fn homecore_controls_follow_reported_device_state() {
             serde_json::json!("quiet"),
         ),
         (r#"{"swing":false}"#, "swing", serde_json::json!(false)),
+        (
+            r#"{"vertical_vane":"swing"}"#,
+            "vertical_vane",
+            serde_json::json!("swing"),
+        ),
     ];
     tokio::time::timeout(Duration::from_secs(5), async {
         while let Some(m) = probe.messages.recv().await {
