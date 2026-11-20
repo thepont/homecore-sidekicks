@@ -95,7 +95,15 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
         "cn",
     );
     assert_eq!(setup.status().await, "unconfigured");
-    assert!(setup.begin().await.unwrap().starts_with("iVBORw0KGgo"));
+    let reply = homecore_xiaomi::actions::dispatch(&setup, "sign_in_status")
+        .await
+        .unwrap();
+    assert_eq!(reply["status"], "ok");
+    assert_eq!(reply["setup_status"], "unconfigured");
+    let reply = homecore_xiaomi::actions::dispatch(&setup, "begin_sign_in")
+        .await
+        .unwrap();
+    assert!(reply["qr_png"].as_str().unwrap().starts_with("iVBORw0KGgo"));
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         while setup.status().await == "waiting" {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
