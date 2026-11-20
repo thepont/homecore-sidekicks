@@ -1,10 +1,9 @@
 # Hisense TV sensor
 
-A homeCore `media_player` for Hisense VIDAA TVs that expose the local UPnP
-RenderingControl service. It polls `GetVolume` and `GetMute`, and accepts
-absolute volume (0–100 percent) and mute commands using `SetVolume` and
-`SetMute`. It does not use Home Assistant pairing credentials. State is updated
-from subsequent TV readings, not assumed from command submission. UPnP
+A read-only homeCore `media_player` for Hisense VIDAA TVs that expose the local
+UPnP RenderingControl service. It polls `GetVolume` and `GetMute`; it does not
+send TV control commands or use the Home Assistant pairing credentials. The
+reported fields are `volume` (0–100 percent) and `muted` (boolean). UPnP
 reachability does not prove whether a screen is on: if a reading fails the
 device becomes unavailable, not “off”. This first slice does not report HDMI,
 Cast playback, power, or source.
@@ -26,7 +25,7 @@ Required environment:
 
 For tests, run `cargo test --locked`. The broker contract is opt-in because it
 starts a pinned Mosquitto container: `cargo test --locked --test mqtt -- --ignored`.
-The hardware status check is read-only and opt-in: set `HISENSE_LIVE_ADDRESS` to the
+The hardware check is read-only and opt-in: set `HISENSE_LIVE_ADDRESS` to the
 TV's IP and port, then run `cargo test --locked --test status
 reads_the_real_tv_without_sending_commands -- --ignored`.
 
