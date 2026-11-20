@@ -565,6 +565,20 @@ class AcCard extends HTMLElement {
     const view = this.#view;
     view.card.classList.toggle('offline', !available);
     view.card.toggleAttribute('data-cooling', model.mode === 'cool' || activity === 'Cooling');
+    this.#renderIdentity(device);
+    view.reading.textContent = this.#roomReading(available ? room : undefined);
+    view.activity.textContent = !device ? 'Waiting for device' : !available ? 'Unavailable' :
+      activity ?? (room === undefined ? 'Waiting for readings' : '');
+    this.#renderTargets(model, schema);
+
+    this.#renderModes(model, schema);
+    this.#renderAirflow(model, schema);
+    this.#renderDiagnostics(model);
+    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
+  }
+
+  #renderIdentity(device) {
+    const view = this.#view;
     if (view.name) {
       const label = device && this.#host.devices.label(device);
       const name = typeof label === 'string' && label ? label.slice(0, 256) : 'Air conditioner';
@@ -575,15 +589,6 @@ class AcCard extends HTMLElement {
       view.readout.setAttribute('aria-label', `Open controls for ${name}`);
       show(view.openLabel, canOpen);
     }
-    view.reading.textContent = this.#roomReading(available ? room : undefined);
-    view.activity.textContent = !device ? 'Waiting for device' : !available ? 'Unavailable' :
-      activity ?? (room === undefined ? 'Waiting for readings' : '');
-    this.#renderTargets(model, schema);
-
-    this.#renderModes(model, schema);
-    this.#renderAirflow(model, schema);
-    this.#renderDiagnostics(model);
-    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
   }
 
   #renderDiagnostics({ available, diagnostics: readings }) {
