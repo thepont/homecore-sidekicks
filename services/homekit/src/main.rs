@@ -43,8 +43,9 @@ async fn run() -> Result<(), &'static str> {
         return Err("Invalid broker credential");
     }
     let plugin = required("HOMEKIT_PLUGIN_ID")?;
-    let bridge_id = required("HOMEKIT_BRIDGE_ID")?;
+    let bridge_id = env::var("HOMEKIT_BRIDGE_ID").ok().filter(|v| !v.is_empty());
     let state_dir = PathBuf::from(required("HOMEKIT_STATE_DIR")?);
+    let ui = PathBuf::from(env::var("HOMEKIT_UI_DIR").unwrap_or_else(|_| "ui".into()));
     let refresh = env::var("HOMEKIT_REFRESH_SECS")
         .unwrap_or_else(|_| "30".into())
         .parse::<u64>()
@@ -52,7 +53,15 @@ async fn run() -> Result<(), &'static str> {
     if !(1..=3600).contains(&refresh) {
         return Err("Invalid refresh interval");
     }
-    let mut options = MqttOptions::new(&plugin, host, port);
+    let management = homecore_homekit::setup::run(
+        host.clone(),
+        port,
+        username.clone(),
+        password.to_owned(),
+        state_dir.clone(),
+        ui,
+    );
+    let mut options = MqttOptions::new(format!("{plugin}-publisher"), host, port);
     options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(15));
     let (mqtt, mut events) = AsyncClient::new(options, 32);
@@ -71,18 +80,28 @@ async fn run() -> Result<(), &'static str> {
             }
         }
     });
-    loop {
-        while !*connection.borrow_and_update() {
-            if connection.changed().await.is_err() {
-                worker.abort();
-                return Err("Broker worker stopped");
+    let publisher = async move {
+        loop {
+            while !*connection.borrow_and_update() {
+                if connection.changed().await.is_err() {
+                    worker.abort();
+                    return Err("Broker worker stopped");
+                }
             }
-        }
-        tokio::select! {
-            _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id.clone(), state_dir.clone(), Duration::from_secs(refresh)) => {
+            let Some(bridge_id) = bridge_id.as_ref() else {
                 tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            tokio::select! {
+                _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id.clone(), state_dir.clone(), Duration::from_secs(refresh)) => {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                _ = connection.changed() => {}
             }
-            _ = connection.changed() => {}
         }
+    };
+    tokio::select! {
+        result = management => result.map_err(|_| "Setup service stopped"),
+        result = publisher => result,
     }
 }
