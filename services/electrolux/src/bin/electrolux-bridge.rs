@@ -8,6 +8,51 @@ const DEVICE: &str = "electrolux_living_room";
 const PLUGIN: &str = "plugin.electrolux.living_room";
 const AVAIL: &str = "homecore/devices/electrolux_living_room/availability";
 
+enum Command {
+    Temperature(u8),
+    Power(bool),
+    Mode(&'static str),
+    Fan(&'static str),
+    Swing(bool),
+}
+fn command(payload: &[u8]) -> Option<Command> {
+    let serde_json::Value::Object(values) = serde_json::from_slice(payload).ok()? else {
+        return None;
+    };
+    if values.len() != 1 {
+        return None;
+    }
+    let (key, value) = values.iter().next()?;
+    match key.as_str() {
+        "setpoint" => value
+            .as_f64()
+            .filter(|v| v.fract() == 0.0 && (17.0..=30.0).contains(v))
+            .map(|v| Command::Temperature(v as u8)),
+        "on" => value.as_bool().map(Command::Power),
+        "swing" => value.as_bool().map(Command::Swing),
+        "hvac_mode" => match value.as_str()? {
+            "off" => Some(Command::Power(false)),
+            "cool" => Some(Command::Mode("cool")),
+            "heat" => Some(Command::Mode("heat")),
+            "dry" => Some(Command::Mode("dry")),
+            "fan_only" => Some(Command::Mode("fan_only")),
+            "auto" => Some(Command::Mode("auto")),
+            "heat_cool" => Some(Command::Mode("heat_cool")),
+            _ => None,
+        },
+        "fan_mode" => match value.as_str()? {
+            "auto" => Some(Command::Fan("auto")),
+            "low" => Some(Command::Fan("low")),
+            "medium" => Some(Command::Fan("medium")),
+            "high" => Some(Command::Fan("high")),
+            "turbo" => Some(Command::Fan("turbo")),
+            "quiet" => Some(Command::Fan("quiet")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn setting(name: &str) -> Result<String, &'static str> {
     env::var(name).map_err(|_| "Missing configuration")
 }
@@ -69,12 +114,13 @@ async fn main() -> Result<(), &'static str> {
     opts.set_last_will(LastWill::new(AVAIL, "offline", QoS::AtLeastOnce, true));
     let (mqtt, mut events) = AsyncClient::new(opts, 16);
     let (tx, mut rx) = watch::channel(None);
-    let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<u8>(8);
+    let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<Command>(8);
     tokio::task::spawn_blocking(move || loop {
         if let Ok(mut client) = Client::connect(address, mac, Duration::from_secs(2)) {
             loop {
                 let state = client.status().ok();
                 let available = state.is_some();
+                let off = state.as_ref().is_some_and(|s| s.mode == "off");
                 if tx.send(state).is_err() {
                     return;
                 }
@@ -82,8 +128,21 @@ async fn main() -> Result<(), &'static str> {
                     break;
                 }
                 match command_rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(temperature) => {
-                        if client.set_temperature(temperature).is_err() {
+                    Ok(command) => {
+                        let result = match command {
+                            Command::Temperature(value) => client.set_temperature(value),
+                            Command::Power(value) => client.set_power(value),
+                            Command::Mode(value) => {
+                                if off {
+                                    client.set_power(true).and_then(|_| client.set_mode(value))
+                                } else {
+                                    client.set_mode(value)
+                                }
+                            }
+                            Command::Fan(value) => client.set_fan(value),
+                            Command::Swing(value) => client.set_swing(value),
+                        };
+                        if result.is_err() {
                             let _ = tx.send(None);
                             break;
                         }
@@ -103,17 +162,11 @@ async fn main() -> Result<(), &'static str> {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                     mqtt.subscribe(format!("homecore/devices/{DEVICE}/cmd"),QoS::AtLeastOnce).await.map_err(|_| "MQTT subscribe failed")?;
                     mqtt.publish(format!("homecore/plugins/{PLUGIN}/register"),QoS::AtLeastOnce,true,json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room AC","device_type":"thermostat"}).to_string()).await.map_err(|_| "MQTT publish failed")?;
-                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30},"hvac_mode":{"kind":"string","writable":false},"fan_mode":{"kind":"string","writable":false},"swing":{"kind":"bool","writable":false}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
+                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30},"on":{"kind":"bool","writable":true},"hvac_mode":{"kind":"string","writable":true},"fan_mode":{"kind":"string","writable":true},"swing":{"kind":"bool","writable":true}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     publish(&mqtt,rx.borrow_and_update().as_ref()).await?;
                 }
                 Ok(Event::Incoming(Incoming::Publish(message))) if !message.retain && rx.borrow().is_some() && message.topic == format!("homecore/devices/{DEVICE}/cmd") && message.payload.len() <= 1024 => {
-                    if let Ok(serde_json::Value::Object(values)) = serde_json::from_slice(&message.payload) {
-                        if values.len() == 1 {
-                            if let Some(value) = values.get("setpoint").and_then(|v|v.as_f64()).filter(|v|v.fract()==0.0 && (17.0..=30.0).contains(v)) {
-                                let _ = command_tx.try_send(value as u8);
-                            }
-                        }
-                    }
+                    if let Some(command) = command(&message.payload) { let _ = command_tx.try_send(command); }
                 }
                 Ok(_) => {},
                 Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
@@ -127,7 +180,7 @@ async fn publish(
     state: Option<&homecore_electrolux::ClimateStatus>,
 ) -> Result<(), &'static str> {
     if let Some(state) = state {
-        mqtt.publish(format!("homecore/devices/{DEVICE}/state"),QoS::AtLeastOnce,true,json!({"temperature":state.current_temperature,"setpoint":state.target_temperature,"hvac_mode":state.mode,"fan_mode":state.fan,"swing":state.swing}).to_string()).await.map_err(|_| "MQTT publish failed")?;
+        mqtt.publish(format!("homecore/devices/{DEVICE}/state"),QoS::AtLeastOnce,true,json!({"temperature":state.current_temperature,"setpoint":state.target_temperature,"on":state.mode!="off","hvac_mode":state.mode,"fan_mode":state.fan,"swing":state.swing}).to_string()).await.map_err(|_| "MQTT publish failed")?;
     }
     mqtt.publish(
         AVAIL,
