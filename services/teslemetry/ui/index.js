@@ -287,7 +287,7 @@ class TeslemetryCard extends HTMLElement {
       return available && typeof value === 'number' && Number.isFinite(value) ? value : undefined;
     };
     const rawCharge = number('charge_pct');
-    const charge = rawCharge >= 0 && rawCharge <= 100 ? rawCharge : undefined;
+    const charge = rawCharge >= 0 && rawCharge <= 100 ? Number(rawCharge.toFixed(1)) : undefined;
     const label = device ? this.#host.devices.label(device) : 'Powerwall';
     const name = typeof label === 'string' ? label.slice(0, 256) : 'Powerwall';
     const view = this.#view;
