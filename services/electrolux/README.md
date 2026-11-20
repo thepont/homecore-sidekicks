@@ -33,3 +33,4 @@ cargo build --release --locked --bin electrolux-bridge
 The MQTT tests require Docker and the pinned Mosquitto image named in `tests/support/mqtt_broker.rs`; they use a simulated AC and isolated broker. `tests/live.rs` is an opt-in, read-only hardware test and requires `ELECTROLUX_LIVE_CONFIG` to point to a private JSON file containing `host` and `mac`. Never commit the file. A read-only status check succeeded against the existing living-room AC; real-device control and end-to-end homeCore control have not yet been verified.
 
 The Electrolux frame follows the installed [Electrolux Climate component](https://github.com/jnctech/ElectroluxClimateComponent), and the bridge uses pinned `rbroadlink` for Broadlink packet encryption. Its dependency audit currently reports unmaintained transitive `chrono` and `gcc` crates. Review those dependencies before deployment.
+
