@@ -280,6 +280,28 @@ fn vehicle_schema(state: &Map<String, Value>) -> Value {
     json!({"attributes":attrs,"primary":["battery_level", "vehicle_state"]})
 }
 
+fn apply_observation(
+    state: &mut Map<String, Value>,
+    times: &mut HashMap<String, chrono::DateTime<chrono::FixedOffset>>,
+    key: String,
+    value: Value,
+    observed: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    if times
+        .get(&key)
+        .is_some_and(|previous| observed <= *previous)
+    {
+        return false;
+    }
+    times.insert(key.clone(), observed);
+    if value.is_null() {
+        state.remove(&key);
+    } else {
+        state.insert(key, value);
+    }
+    true
+}
+
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
     let id = device_id(&vin);
     let availability = format!("homecore/devices/{id}/availability");
@@ -354,16 +376,13 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
                                 if let Some((observed, fields)) = parse_event(&data, &vin) {
                                     let mut changed = false;
                                     for (key, value) in fields {
-                                        if field_times
-                                            .get(&key)
-                                            .is_none_or(|previous| observed > *previous)
-                                        {
-                                            field_times.insert(key.clone(), observed);
-                                            if value.is_null() {
-                                                state.remove(&key);
-                                            } else {
-                                                state.insert(key, value);
-                                            }
+                                        if apply_observation(
+                                            &mut state,
+                                            &mut field_times,
+                                            key,
+                                            value,
+                                            observed,
+                                        ) {
                                             changed = true;
                                         }
                                     }
