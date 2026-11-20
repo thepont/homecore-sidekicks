@@ -76,3 +76,23 @@ fn hvac_modes_map_to_electrolux_commands() {
     }
     assert!(homecore_electrolux::protocol::mode_request("unsupported").is_err());
 }
+
+#[test]
+fn fan_modes_map_to_electrolux_commands() {
+    for (mode, code) in [
+        ("auto", 0),
+        ("low", 1),
+        ("medium", 2),
+        ("high", 3),
+        ("turbo", 4),
+        ("quiet", 5),
+    ] {
+        let frame = homecore_electrolux::protocol::fan_request(mode).unwrap();
+        assert_eq!(&frame[..2], &[0x19, 0]);
+        assert_eq!(
+            std::str::from_utf8(&frame[14..]).unwrap(),
+            format!("{{\"ac_mark\":{code}}}")
+        );
+    }
+    assert!(homecore_electrolux::protocol::fan_request("unsupported").is_err());
+}
