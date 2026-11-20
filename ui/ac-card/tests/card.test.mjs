@@ -20,7 +20,7 @@ beforeEach(async () => {
   await page.setContent('<main style="max-width:420px;margin:auto"></main>');
   await page.addScriptTag({ type: 'module', content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
-    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F' } = {}) => {
+    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5 } = {}) => {
       const listeners = new Set();
       const units = new Set();
       const opened = [];
@@ -29,7 +29,7 @@ beforeEach(async () => {
       let device = {
         device_id: 'ac_1', name: 'Office AC', name_override: 'Study AC',
         available: true, attributes: writable
-          ? { temperature: 24.5, hvac_mode: 'auto', hvac_action: 'idle', heat_setpoint: 22.5,
+          ? { temperature: 24.5, hvac_mode: mode, hvac_action: 'idle', setpoint: 22, heat_setpoint: 22.5,
               cool_setpoint: 25, min_setpoint_gap: 2, fan_mode: 'auto', vertical_vane: 'swing', horizontal_vane: 'c' }
           : { temperature: 24.5, hvac_mode: 'auto', hvac_action: 'idle', setpoint: 22,
               heating_setpoint: 22.5, cooling_setpoint: 25, fan_mode: 'quiet', vertical_vane: 'swing',
@@ -39,7 +39,7 @@ beforeEach(async () => {
       const schema = { attributes: {
         temperature: { writable: false, unit: '°C' },
         hvac_mode: { writable, options: ['off', 'heat', 'auto', 'cool', 'dry', 'fan_only'] },
-        setpoint: number, heat_setpoint: number, cool_setpoint: number,
+        setpoint: { ...number, step: setpointStep }, heat_setpoint: number, cool_setpoint: number,
         fan_mode: { writable, options: ['auto', 'quiet'] },
         vertical_vane: { writable, options: ['auto', 'swing'] },
         ...(writable ? { horizontal_vane: { writable, options: ['c', 'swing'] } } : {})
@@ -206,4 +206,95 @@ test('an accepted command without a matching report expires and leaves the old t
   await byText('72.5 °F').waitFor();
   assert(await lower.isEnabled());
   await page.clock.resume();
+});
+
+async function pointOnDial(value) {
+  return page.locator('.dial svg').evaluate((svg, value) => {
+    const angle = (135 + 270 * (value - 16) / 14.5) * Math.PI / 180;
+    const point = new DOMPoint(110 + 69 * Math.cos(angle), 88 + 69 * Math.sin(angle));
+    const position = point.matrixTransform(svg.getScreenCTM());
+    return { x: position.x, y: position.y };
+  }, value);
+}
+
+async function beginDrag(from, to) {
+  const start = await pointOnDial(from);
+  const end = await pointOnDial(to);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 5 });
+}
+
+test('drag previews a single temperature and sends one rounded setting on release', async () => {
+  await mount({ writable: true, mode: 'cool', setpointStep: 1, temperatureUnit: '°C' });
+  const target = page.getByRole('slider', { name: 'Target temperature' });
+  await target.waitFor();
+  const nearby = await pointOnDial(23.3);
+  await page.mouse.click(nearby.x, nearby.y);
+  assert.deepEqual(await page.evaluate(() => sent), []);
+  await beginDrag(22, 23.7);
+  await byText('24 °C').waitFor();
+  assert.deepEqual(await page.evaluate(() => sent), []);
+  await page.mouse.up();
+  assert.deepEqual(await page.evaluate(() => sent), [['ac_1', { setpoint: 24 }]]);
+  await byText('22 °C').waitFor();
+  await page.evaluate(() => update({ attributes: { setpoint: 24 } }));
+  await byText('24 °C').waitFor();
+  assert.equal(await target.getAttribute('aria-valuenow'), '24');
+});
+
+test('Auto drag selects the nearest target and respects the other target', async () => {
+  await mount({ writable: true, temperatureUnit: '°C' });
+  const heat = page.getByRole('slider', { name: 'Heating target' });
+  const cool = page.getByRole('slider', { name: 'Cooling target' });
+  await heat.waitFor();
+  assert.equal(await heat.getAttribute('aria-valuemax'), '23');
+  assert.equal(await cool.getAttribute('aria-valuemin'), '24.5');
+  await beginDrag(22.5, 27);
+  await page.mouse.up();
+  assert.deepEqual(await page.evaluate(() => sent), [['ac_1', { heat_setpoint: 23 }]]);
+  await page.evaluate(() => update({ attributes: { heat_setpoint: 23 } }));
+  await beginDrag(25, 27.8);
+  await page.mouse.up();
+  assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { cool_setpoint: 28 }]);
+});
+
+test('a cancelled drag, an offline unit and a read-only account send nothing', async () => {
+  await mount({ writable: true, mode: 'heat', temperatureUnit: '°C' });
+  const target = page.getByRole('slider', { name: 'Target temperature' });
+  await target.waitFor();
+  await beginDrag(22, 24);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await byText('22 °C').waitFor();
+  await beginDrag(22, 24);
+  await page.evaluate(() => update({ available: false }));
+  await page.mouse.up();
+  assert.deepEqual(await page.evaluate(() => sent), []);
+  await page.evaluate(() => card.remove());
+  await mount({ writable: true, allowed: false, mode: 'heat' });
+  assert.equal(await target.count(), 0);
+  await beginDrag(22, 24);
+  await page.mouse.up();
+  assert.deepEqual(await page.evaluate(() => sent), []);
+});
+
+test('dial accepts keyboard and touch input using the same temperature limits', async () => {
+  await mount({ writable: true, mode: 'cool', setpointStep: 1 });
+  const target = page.getByRole('slider', { name: 'Target temperature' });
+  await target.press('ArrowRight');
+  assert.deepEqual(await page.evaluate(() => sent), [['ac_1', { setpoint: 23 }]]);
+  await page.evaluate(() => update({ attributes: { setpoint: 23 } }));
+  const cdp = await page.context().newCDPSession(page);
+  const start = await pointOnDial(23);
+  const end = await pointOnDial(26);
+  try {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [end] });
+    assert.equal((await page.evaluate(() => sent)).length, 1);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { setpoint: 26 }]);
+  } finally {
+    await cdp.detach();
+  }
 });

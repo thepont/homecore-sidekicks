@@ -38,8 +38,13 @@ Controls require command permission and schema attributes marked
 objects with string `value` and optional `label`). Target controls require an
 explicit `min`, `max` and positive `step` in °C. The card sends the raw value
 through `host.command` and keeps the reported display until the device echoes
-the requested value. Adapters must enforce command validity and interlocks
-themselves because commands may also come from outside the card.
+the requested value. Drag a target marker to preview a temperature and release
+to send it. The dial and step buttons share the same temperature limits. Use
+the arrow keys to adjust a focused marker and Escape to cancel a drag.
+In Auto, the heating and cooling markers move separately.
+
+Adapters must enforce command validity and interlocks themselves because
+commands may also come from outside the card.
 
 Mitsubishi CN105 is the first consumer. Its adapter sends commands to each
 controller and advertises the controls supported by that unit.

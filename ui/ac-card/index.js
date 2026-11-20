@@ -99,12 +99,16 @@ const style = `
   .room{padding:8px 8px 10px;margin:8px 0 10px;border-radius:12px;background:var(--ac-wash)}
   .room-label,small,dt,.mode-note{color:var(--ac-muted);font-size:12px}
   .dial{width:min(124px,100%);aspect-ratio:220 / 155;margin:0 auto 3px}
+  .dial[data-editable]{touch-action:none;user-select:none;cursor:grab}
+  .dial[data-dragging]{cursor:grabbing}
   .dial svg{display:block;width:100%;height:100%;overflow:visible}
   .dial path{fill:none;stroke-width:7;stroke-linecap:round}
   .track{stroke:color-mix(in srgb,var(--ac-accent) 24%,var(--ac-surface))}
   .range{stroke:var(--ac-accent)}
   .room-dot{fill:var(--ac-ink);stroke:var(--ac-surface);stroke-width:2}
   .target-dot{fill:var(--ac-surface);stroke:var(--ac-accent);stroke-width:3}
+  .target-dot[role="slider"]{r:6.5;fill:var(--ac-accent);stroke:var(--ac-surface)}
+  .target-dot[role="slider"]:focus-visible{outline:none;stroke:var(--ac-ink);stroke-width:4}
   .reading{display:block;font-size:clamp(17px,8cqi,22px);font-weight:650;line-height:1.2}
   .reading,output,dd{font-variant-numeric:tabular-nums}
   .activity{display:block;color:var(--ac-accent);font-size:13px;font-weight:620}
@@ -153,10 +157,10 @@ const template = `
     <button class="name" type="button"></button>
     <div class="room">
       <div class="dial">
-        <svg viewBox="0 0 220 155" aria-hidden="true">
-          <path class="track"></path><path class="range"></path>
-          <circle class="target-dot low" r="5"></circle><circle class="target-dot high" r="5"></circle>
-          <circle class="room-dot" r="5"></circle>
+        <svg viewBox="0 0 220 155" role="group" aria-label="Temperature dial" aria-hidden="true">
+          <path class="track" aria-hidden="true"></path><path class="range" aria-hidden="true"></path>
+          <circle class="target-dot low" r="5" aria-hidden="true"></circle><circle class="target-dot high" r="5" aria-hidden="true"></circle>
+          <circle class="room-dot" r="5" aria-hidden="true"></circle>
         </svg>
       </div>
       <div class="room-label">Room temperature</div>
@@ -245,39 +249,76 @@ function climateOf(device) {
       key === 'outside_temperature' ? temperature(a[key]) : number(a[key])])) };
 }
 
-function nextTarget(target, spec, direction, model) {
-  if (!spec?.writable || model.targetsByKey[target.key] === undefined ||
+function targetControl(target, spec, model) {
+  if (!target || !spec?.writable || model.targetsByKey[target.key] === undefined ||
       spec.min === undefined || spec.max === undefined || !(spec.step > 0)) return undefined;
-  const offset = (target.value - spec.min) / spec.step;
+  let min = spec.min;
+  let max = spec.max;
+  if (model.targets.heat) {
+    if (target.key === 'heat_setpoint') max = Math.min(max, model.targets.cool.value - model.gap);
+    else min = Math.max(min, model.targets.heat.value + model.gap);
+  }
+  const offset = { origin: spec.min, step: spec.step };
+  const first = atTick(offset, Math.ceil((min - spec.min) / spec.step - 1e-6));
+  const last = atTick(offset, Math.floor((max - spec.min) / spec.step + 1e-6));
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) return undefined;
+  return { ...target, ...offset, min: first, max: last };
+}
+
+function atTick(control, tick) {
+  return Number((control.origin + tick * control.step).toFixed(6));
+}
+
+function nextTarget(control, direction) {
+  if (!control) return undefined;
+  const offset = (control.value - control.origin) / control.step;
   const nearest = Math.round(offset);
   const tick = Math.abs(offset - nearest) < 1e-6 ? nearest + direction :
     direction > 0 ? Math.ceil(offset) : Math.floor(offset);
-  const value = Number((spec.min + tick * spec.step).toFixed(6));
-  if (!Number.isFinite(value) || value < spec.min || value > spec.max || value === target.value) return undefined;
-  if (model.targets.heat && (target.key === 'heat_setpoint' ?
-      value > model.targets.cool.value - model.gap : value < model.targets.heat.value + model.gap)) return undefined;
-  return value;
+  const value = atTick(control, tick);
+  return value >= control.min && value <= control.max && value !== control.value ? value : undefined;
 }
 
-function dialPoint(value, radius = 69) {
-  const progress = Math.max(0, Math.min(1, (value - 16) / 14.5));
-  const angle = (135 + 270 * progress) * Math.PI / 180;
-  return [110 + radius * Math.cos(angle), 88 + radius * Math.sin(angle)];
+function snapTarget(control, value) {
+  const tick = Math.round((value - control.origin) / control.step);
+  return Math.max(control.min, Math.min(control.max, atTick(control, tick)));
 }
 
-function arc(from, to) {
-  const [x, y] = dialPoint(from);
-  const [endX, endY] = dialPoint(to);
-  const large = Math.min(30.5, to) - Math.max(16, from) > 14.5 * 2 / 3 ? 1 : 0;
-  return `M${x} ${y} A69 69 0 ${large} 1 ${endX} ${endY}`;
+const dialGeometry = { x: 110, y: 88, radius: 69, start: 135, sweep: 270 };
+const defaultScale = { min: 16, max: 30.5 };
+const dialLabels = { single: 'Target temperature', heat: 'Heating target', cool: 'Cooling target' };
+
+function dialPoint(value, scale, radius = dialGeometry.radius) {
+  const progress = Math.max(0, Math.min(1, (value - scale.min) / (scale.max - scale.min)));
+  const angle = (dialGeometry.start + dialGeometry.sweep * progress) * Math.PI / 180;
+  return [dialGeometry.x + radius * Math.cos(angle), dialGeometry.y + radius * Math.sin(angle)];
 }
 
-function mark(dot, value, radius) {
+function arc(from, to, scale) {
+  const [x, y] = dialPoint(from, scale);
+  const [endX, endY] = dialPoint(to, scale);
+  const { radius, sweep } = dialGeometry;
+  const span = Math.min(scale.max, to) - Math.max(scale.min, from);
+  const large = span / (scale.max - scale.min) * sweep > 180 ? 1 : 0;
+  return `M${x} ${y} A${radius} ${radius} 0 ${large} 1 ${endX} ${endY}`;
+}
+
+function mark(dot, value, scale, radius) {
   show(dot, value !== undefined);
   if (value === undefined) return;
-  const [x, y] = dialPoint(value, radius);
+  const [x, y] = dialPoint(value, scale, radius);
   dot.setAttribute('cx', x);
   dot.setAttribute('cy', y);
+}
+
+function dialPointer(svg, event) {
+  const screen = svg.getScreenCTM();
+  if (!screen) return undefined;
+  const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(screen.inverse());
+  const x = point.x - dialGeometry.x;
+  const y = point.y - dialGeometry.y;
+  const degrees = Math.atan2(y, x) * 180 / Math.PI;
+  return { x: point.x, y: point.y, radius: Math.hypot(x, y), angle: (degrees - dialGeometry.start + 720) % 360 };
 }
 
 class AcCard extends HTMLElement {
@@ -292,6 +333,8 @@ class AcCard extends HTMLElement {
   #pending;
   #message = '';
   #commands = new Map();
+  #dialState;
+  #drag;
 
   constructor() {
     super();
@@ -327,7 +370,7 @@ class AcCard extends HTMLElement {
     const get = selector => root.querySelector(selector);
     this.#view = {
       card: get('.card'), name: get('.name'), reading: get('.reading'), activity: get('.activity'),
-      track: get('.track'), range: get('.range'), room: get('.room-dot'), low: get('.low'), high: get('.high'),
+      dial: get('.dial'), svg: get('.dial svg'), track: get('.track'), range: get('.range'), room: get('.room-dot'), low: get('.low'), high: get('.high'),
       modeGrid: get('.modes'), modeButtons: [...root.querySelectorAll('[data-mode]')], mode: get('.current-mode'),
       targets: [...root.querySelectorAll('[data-target]')].map(row => ({
         row, output: row.querySelector('output'), buttons: [...row.querySelectorAll('button')]
@@ -339,7 +382,7 @@ class AcCard extends HTMLElement {
       }),
       diagnostics: get('.diagnostics'), feedback: get('.feedback')
     };
-    this.#view.track.setAttribute('d', arc(16, 30.5));
+    this.#listenDial();
     this.#view.name.addEventListener('click', () => this.#host?.ui?.openDevice(this.#deviceId));
     root.addEventListener('click', event => {
       const command = this.#commands.get(event.target.closest('button'));
@@ -370,6 +413,8 @@ class AcCard extends HTMLElement {
   }
 
   #resetDevice() {
+    this.#cancelDrag();
+    this.#dialState = undefined;
     this.#schemaRequest?.abort();
     this.#schemaRequest = undefined;
     this.#schema = undefined;
@@ -414,7 +459,7 @@ class AcCard extends HTMLElement {
     if (!this.isConnected || !this.#view) return;
     const device = this.#deviceId ? this.#host?.devices.get(this.#deviceId) : undefined;
     const model = climateOf(device);
-    const { available, mode, activity, room, targets } = model;
+    const { available, mode, activity, room } = model;
     if (available !== this.#available) {
       this.#available = available;
       if (available) void this.#loadSchema();
@@ -434,30 +479,7 @@ class AcCard extends HTMLElement {
     view.reading.textContent = this.#roomReading(available ? room : undefined);
     view.activity.textContent = !device ? 'Waiting for device' : !available ? 'Unavailable' :
       activity ?? (room === undefined ? 'Waiting for readings' : '');
-    const low = available ? targets.heat?.value ?? targets.single?.value : undefined;
-    const high = available ? targets.cool?.value : undefined;
-    view.range.setAttribute('d', high !== undefined && low < high ? arc(low, high) : '');
-    mark(view.room, available ? room : undefined, 82);
-    mark(view.low, low);
-    mark(view.high, high === low ? undefined : high);
-
-    const dualWritable = !!(schema?.heat_setpoint.writable || schema?.cool_setpoint.writable);
-    show(view.gap, available && dualWritable && !!targets.heat && model.gap > 0 &&
-      targets.cool.value - targets.heat.value <= model.gap);
-    view.gap.textContent = 'Minimum temperature gap reached';
-    for (const { row, output, buttons } of view.targets) {
-      const target = targets[row.dataset.target];
-      const visible = available && target?.value !== undefined;
-      show(row, visible);
-      output.textContent = this.#format(visible ? target.value : undefined);
-      const spec = schema?.[target?.key];
-      for (const button of buttons) {
-        const value = visible ? nextTarget(target, spec, Number(button.dataset.step), model) : undefined;
-        show(button, spec?.writable === true);
-        button.disabled = value === undefined || !!this.#pending;
-        if (!button.disabled) this.#commands.set(button, [target.key, value]);
-      }
-    }
+    this.#renderTargets(model, schema);
 
     const writableModes = schema?.hvac_mode.writable ? new Set(schema.hvac_mode.options.map(option => option.value)) : new Set();
     let hasModeButtons = false;
@@ -485,6 +507,178 @@ class AcCard extends HTMLElement {
       output.textContent = this.#format(value, unit);
     }
     if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
+  }
+
+  #listenDial() {
+    const { dial } = this.#view;
+    dial.addEventListener('pointerdown', event => this.#beginDrag(event));
+    dial.addEventListener('pointermove', event => this.#moveDrag(event));
+    dial.addEventListener('pointerup', event => {
+      if (this.#drag?.pointer !== event.pointerId) return;
+      this.#moveDrag(event);
+      const { control, value } = this.#drag;
+      this.#cancelDrag();
+      if (Number.isFinite(value) && value !== control.value) void this.#send(control.key, value);
+      else this.#drawTargets();
+    });
+    for (const name of ['pointercancel', 'lostpointercapture']) {
+      dial.addEventListener(name, event => {
+        if (this.#drag?.pointer !== event.pointerId) return;
+        this.#cancelDrag();
+        this.#drawTargets();
+      });
+    }
+    dial.addEventListener('keydown', event => this.#dialKey(event));
+  }
+
+  #beginDrag(event) {
+    const state = this.#dialState;
+    if (!state || this.#drag || this.#pending || !event.isPrimary || event.button !== 0) return;
+    const point = dialPointer(this.#view.svg, event);
+    if (!point) return;
+    const handles = [
+      { marker: this.#view.low, slot: state.lowSlot },
+      { marker: this.#view.high, slot: 'cool' }
+    ].map(handle => {
+      const { marker, slot } = handle;
+      const control = state.controls[slot];
+      const distance = Math.hypot(point.x - Number(marker.getAttribute('cx')),
+        point.y - Number(marker.getAttribute('cy')));
+      return { marker, slot, control, distance };
+    });
+    const nearest = handles.reduce((a, b) => {
+      if (!b.control) return a;
+      return !a?.control || b.distance < a.distance ? b : a;
+    }, undefined);
+    if (!nearest?.control || nearest.distance > 34) return;
+    event.preventDefault();
+    nearest.marker.focus({ preventScroll: true });
+    const { control, slot } = nearest;
+    this.#drag = { pointer: event.pointerId, slot, control, value: control.value,
+      startX: event.clientX, startY: event.clientY, moved: false };
+    this.#view.dial.setPointerCapture(event.pointerId);
+    this.#view.dial.toggleAttribute('data-dragging', true);
+  }
+
+  #moveDrag(event) {
+    const drag = this.#drag;
+    if (drag?.pointer !== event.pointerId) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 3) return;
+    drag.moved = true;
+    const point = dialPointer(this.#view.svg, event);
+    if (!point || point.radius < 15 || point.angle > dialGeometry.sweep) return;
+    const { min, max } = this.#dialState.scale;
+    const target = min + (max - min) * point.angle / dialGeometry.sweep;
+    const value = snapTarget(drag.control, target);
+    if (!Number.isFinite(value) || value === drag.value) return;
+    drag.value = value;
+    this.#drawTargets();
+  }
+
+  #cancelDrag() {
+    if (!this.#drag) return;
+    const { pointer } = this.#drag;
+    this.#drag = undefined;
+    const { dial } = this.#view;
+    dial.toggleAttribute('data-dragging', false);
+    if (dial.hasPointerCapture(pointer)) dial.releasePointerCapture(pointer);
+  }
+
+  #dialKey(event) {
+    if (event.key === 'Escape' && this.#drag) {
+      event.preventDefault();
+      this.#cancelDrag();
+      this.#drawTargets();
+      return;
+    }
+    const marker = event.target;
+    const control = this.#dialState?.controls[marker.dataset?.targetSlider];
+    if (!control || this.#pending || this.#drag) return;
+    const direction = lookup({ ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }, event.key);
+    const edge = lookup({ Home: control.min, End: control.max }, event.key);
+    if (direction === undefined && edge === undefined) return;
+    event.preventDefault();
+    const value = direction === undefined ? edge : nextTarget(control, direction);
+    if (value !== undefined && value !== control.value) void this.#send(control.key, value);
+  }
+
+  #renderTargets(model, schema) {
+    const { available, targets, gap, room } = model;
+    const view = this.#view;
+    const controls = {};
+    const scale = { ...defaultScale };
+    for (const { row, buttons } of view.targets) {
+      const slot = row.dataset.target;
+      const target = targets[slot];
+      const visible = available && target?.value !== undefined;
+      show(row, visible);
+      const spec = schema?.[target?.key];
+      const control = visible ? targetControl(target, spec, model) : undefined;
+      if (control) {
+        controls[slot] = control;
+        scale.min = Math.min(scale.min, spec.min);
+        scale.max = Math.max(scale.max, spec.max);
+      }
+      for (const button of buttons) {
+        const value = nextTarget(control, Number(button.dataset.step));
+        show(button, spec?.writable === true);
+        button.disabled = value === undefined || !!this.#pending;
+        if (!button.disabled) this.#commands.set(button, [target.key, value]);
+      }
+    }
+    this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
+      scale, controls, lowSlot: targets.heat ? 'heat' : 'single' };
+    if (this.#drag) {
+      const active = controls[this.#drag.slot];
+      const original = this.#drag.control;
+      if (!active || ['key', 'value', 'min', 'max', 'origin', 'step'].some(field => active[field] !== original[field])) {
+        this.#cancelDrag();
+      }
+    }
+    const editable = Object.keys(controls).length > 0;
+    view.dial.toggleAttribute('data-editable', editable && !this.#pending);
+    view.svg.setAttribute('aria-hidden', String(!editable));
+    view.track.setAttribute('d', arc(scale.min, scale.max, scale));
+    show(view.gap, available && !!(controls.heat || controls.cool) && !!targets.heat && gap > 0 &&
+      targets.cool.value - targets.heat.value <= gap);
+    view.gap.textContent = 'Minimum temperature gap reached';
+    this.#drawTargets();
+  }
+
+  #drawTargets() {
+    const { targets, room, scale, controls, lowSlot } = this.#dialState;
+    const view = this.#view;
+    const value = slot => this.#drag?.slot === slot ? this.#drag.value : targets[slot]?.value;
+    const low = value(lowSlot);
+    const high = value('cool');
+    view.range.setAttribute('d', high !== undefined && low < high ? arc(low, high, scale) : '');
+    mark(view.room, room, scale, 82);
+    mark(view.low, low, scale);
+    const sharedPoint = high === low && high !== undefined;
+    mark(view.high, sharedPoint && !controls.cool ? undefined : high, scale,
+      sharedPoint ? dialGeometry.radius + 12 : undefined);
+
+    for (const [marker, slot] of [[view.low, lowSlot], [view.high, 'cool']]) {
+      const control = controls[slot];
+      marker.setAttribute('aria-hidden', String(!control));
+      if (!control) {
+        marker.removeAttribute('role');
+        marker.removeAttribute('tabindex');
+        continue;
+      }
+      marker.dataset.targetSlider = slot;
+      marker.setAttribute('role', 'slider');
+      marker.setAttribute('tabindex', '0');
+      marker.setAttribute('aria-label', dialLabels[slot]);
+      marker.setAttribute('aria-valuemin', String(control.min));
+      marker.setAttribute('aria-valuemax', String(control.max));
+      marker.setAttribute('aria-valuenow', String(Math.max(control.min, Math.min(control.max, value(slot)))));
+      marker.setAttribute('aria-valuetext', this.#format(value(slot)));
+      marker.setAttribute('aria-disabled', String(!!this.#pending));
+    }
+    for (const { row, output } of view.targets) {
+      output.textContent = this.#format(value(row.dataset.target));
+    }
   }
 
   #renderAirflow({ available, mode, reported, unsupportedAirflow }, schema) {
@@ -523,6 +717,7 @@ class AcCard extends HTMLElement {
   }
 
   async #send(key, value) {
+    this.#cancelDrag();
     const pending = { key, value, sent: false, timer: setTimeout(() => {
       this.#finish('Change not confirmed.');
       this.#render();
