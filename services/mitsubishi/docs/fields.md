@@ -46,6 +46,22 @@ sensors retain their status and age but omit temperature, humidity, battery
 and signal readings. Battery -1 means unknown and is omitted. Legacy flat
 BLE readings duplicate the sensor list and are not published separately.
 
+Each reported BLE slot is also registered as a separate read-only homeCore
+`temperature_sensor`, named after its AC and its one-based sensor slot. It
+reports temperature, humidity, battery, signal and type when provided. The
+AC keeps its own reported room temperature, which can differ from a paired
+sensor or reflect the controller's configured room source. A sensor becomes
+unavailable when its slot is absent, disabled, stale, or its controller is
+offline; old measurements are withdrawn. Each sensor uses its own MQTT last
+will, so an adapter disconnect marks it offline too.
+
+The identity is based on the controller and slot, because the adapter does not
+publish sensor addresses. Replacing a sensor in a slot therefore keeps that
+slot's homeCore identity and history; moving a sensor to another slot gives it
+a different identity. Pairing, room source and averaging settings are not
+changed by the bridge. A reported Link sensor is also registered separately;
+its readings are withdrawn when it is no longer present, active and fresh.
+
 `room_offset_0` through `room_offset_5` convert calibration offsets to °C.
 Index 0 is the internal thermistor, 1 is Link, and 2–5 correspond to BLE
 slots 0–3. The same indices define the room member masks. These assignments
