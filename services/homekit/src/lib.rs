@@ -1,6 +1,123 @@
 use serde_json::{json, Map, Value};
 pub mod setup;
 
+/// Publish supported sensors to homeCore.
+pub async fn publish_sensors(
+    mqtt: &rumqttc::AsyncClient,
+    plugin: &str,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+) -> Result<(), &'static str> {
+    if plugin.is_empty()
+        || plugin.len() > 128
+        || !plugin
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || bridge_id.len() != 17
+        || !bridge_id.bytes().enumerate().all(|(i, b)| {
+            if i % 3 == 2 {
+                b == b':'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+        || readings.len() > 1024
+    {
+        return Err("Invalid sensor publication");
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut contacts = Vec::new();
+    let mut climate = Vec::new();
+    for (aid, state) in readings {
+        let object = state.as_object().ok_or("Invalid sensor state")?;
+        if *aid == 0 || !seen.insert(*aid) {
+            return Err("Invalid sensor state");
+        }
+        if object.contains_key("open") {
+            if object.get("open").and_then(Value::as_bool).is_none()
+                || object.keys().any(|k| k != "open" && k != "battery_pct")
+                || object
+                    .get("battery_pct")
+                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+            {
+                return Err("Invalid sensor state");
+            }
+            contacts.push((*aid, state.clone()));
+        } else {
+            if (!object.contains_key("temperature") && !object.contains_key("humidity"))
+                || object
+                    .keys()
+                    .any(|k| !matches!(k.as_str(), "temperature" | "humidity" | "battery_pct"))
+                || object.get("temperature").is_some_and(|v| {
+                    v.as_f64()
+                        .is_none_or(|n| !n.is_finite() || !(-100.0..=100.0).contains(&n))
+                })
+                || object.get("humidity").is_some_and(|v| {
+                    v.as_f64()
+                        .is_none_or(|n| !n.is_finite() || !(0.0..=100.0).contains(&n))
+                })
+                || object
+                    .get("battery_pct")
+                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+            {
+                return Err("Invalid sensor state");
+            }
+            climate.push((*aid, state));
+        }
+    }
+    publish_contacts(mqtt, plugin, bridge_id, &contacts).await?;
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, state) in climate {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        for (name, label, unit, kind) in [
+            ("temperature", "Temperature", "°C", "float"),
+            ("humidity", "Humidity", "%", "float"),
+            ("battery_pct", "Battery", "%", "integer"),
+        ] {
+            if state.get(name).is_some() {
+                attributes.insert(
+                    name.into(),
+                    json!({"kind":kind,"writable":false,"display_name":label,"unit":unit}),
+                );
+            }
+        }
+        let primary = if state.get("temperature").is_some() {
+            "temperature"
+        } else {
+            "humidity"
+        };
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit climate {aid}"),"device_type":"temperature_sensor"});
+        for (topic, retained, payload) in [
+            (
+                format!("homecore/plugins/{plugin}/register"),
+                false,
+                register,
+            ),
+            (
+                format!("homecore/devices/{device}/schema"),
+                true,
+                json!({"attributes":attributes,"primary":[primary]}),
+            ),
+            (
+                format!("homecore/devices/{device}/state"),
+                true,
+                state.clone(),
+            ),
+        ] {
+            mqtt.publish(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+                retained,
+                payload.to_string(),
+            )
+            .await
+            .map_err(|_| "Cannot publish sensor")?;
+        }
+    }
+    Ok(())
+}
+
 /// Publish a validated contact snapshot using homeCore's device protocol.
 pub async fn publish_contacts(
     mqtt: &rumqttc::AsyncClient,
