@@ -369,6 +369,7 @@ dependencies = [
  "hap-transport",
  "serde_json",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

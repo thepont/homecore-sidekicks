@@ -31,7 +31,13 @@ Accessory.prototype.handleInitialPairSetupFinished=function(...args){
 };
 const accessory = new Accessory('Fixture contact', uuid.generate('homecore.fixture.contact'));
 const contact = accessory.addService(Service.ContactSensor, 'Fixture contact');
-contact.getCharacteristic(Characteristic.ContactSensorState).onGet(() => 1);
+let contactValue=1;
+const state=contact.getCharacteristic(Characteristic.ContactSensorState);
+state.onGet(()=>contactValue);
+state.on('subscribe',()=>console.log('SUBSCRIBED'));
+require('readline').createInterface({input:process.stdin}).on('line',line=>{
+  if(line==='close'){contactValue=0;state.updateValue(contactValue);}
+});
 const battery = accessory.addService(Service.Battery, 'Fixture battery');
 battery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 69);
 battery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);

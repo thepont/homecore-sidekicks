@@ -318,3 +318,70 @@ async fn pair_setup(
     }
     Err("HomeKit pairing failed")
 }
+
+pub struct ContactWatch {
+    current: Value,
+    updates: tokio::sync::mpsc::Receiver<Value>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl ContactWatch {
+    pub fn current(&self) -> &Value {
+        &self.current
+    }
+    pub async fn next(&mut self) -> Option<Value> {
+        let state = self.updates.recv().await?;
+        self.current = state.clone();
+        Some(state)
+    }
+}
+impl Drop for ContactWatch {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+/// Start receiving contact changes from a previously paired accessory.
+pub async fn watch_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<ContactWatch, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    use tokio_stream::StreamExt;
+    let (lock, mut handle) = connect_saved(id, state_dir).await?;
+    let current = read_contact(&mut handle).await?;
+    let (aid, iid) = handle
+        .find(
+            ServiceType::ContactSensor,
+            CharacteristicType::ContactSensorState,
+        )
+        .map_err(|_| "Contact sensor unavailable")?;
+    let mut events = Box::pin(handle.events());
+    handle
+        .subscribe(aid, iid)
+        .await
+        .map_err(|_| "Cannot subscribe to contact")?;
+    let (send, updates) = tokio::sync::mpsc::channel(32);
+    let mut state = current.clone();
+    let task = tokio::spawn(async move {
+        let _lock = lock;
+        let _handle = handle;
+        while let Some(event) = events.next().await {
+            if event.aid != aid || event.iid != iid {
+                continue;
+            }
+            let open = match event.value.to_json().as_u64() {
+                Some(0) => false,
+                Some(1) => true,
+                _ => continue,
+            };
+            state["open"] = json!(open);
+            if send.send(state.clone()).await.is_err() {
+                break;
+            }
+        }
+    });
+    Ok(ContactWatch {
+        current,
+        updates,
+        task,
+    })
+}

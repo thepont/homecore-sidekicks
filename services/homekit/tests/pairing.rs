@@ -1,7 +1,7 @@
 use serde_json::json;
 use std::{
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     net::{Ipv4Addr, SocketAddrV4},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
@@ -38,27 +38,28 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
         .env("HAP_STORE_DIR", fixture_root)
         .env("HAP_CONTROLLER_DIR", &state_root)
         .env("HAP_DROP_VERIFY_NUMBER", "2")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let output = child.stdout.take().unwrap();
-    let _fixture = Fixture { child, root };
+    let mut fixture_process = Fixture { child, root };
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
-            if let Some(port) = line
-                .strip_prefix("PORT=")
-                .and_then(|s| s.parse::<u16>().ok())
-            {
-                let _ = tx.send(port);
+            if tx.send(line).is_err() {
                 break;
             }
         }
     });
     let port = rx
         .recv_timeout(Duration::from_secs(10))
-        .expect("fixture did not start");
+        .expect("fixture did not start")
+        .strip_prefix("PORT=")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let txt = std::collections::HashMap::from([
         ("id".to_owned(), "02:11:22:33:44:55".to_owned()),
@@ -111,4 +112,18 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
         .await
         .unwrap();
     assert_eq!(restored, json!({"open":true,"battery_pct":69}));
+    let mut watch = homecore_homekit::watch_saved("02:11:22:33:44:55", &state_root)
+        .await
+        .unwrap();
+    assert_eq!(watch.current(), &json!({"open":true,"battery_pct":69}));
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "SUBSCRIBED"
+    );
+    writeln!(fixture_process.child.stdin.as_mut().unwrap(), "close").unwrap();
+    let update = tokio::time::timeout(Duration::from_secs(5), watch.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(update, json!({"open":false,"battery_pct":69}));
 }
