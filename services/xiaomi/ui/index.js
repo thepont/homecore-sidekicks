@@ -29,13 +29,13 @@ class XiaomiSetup extends HTMLElement {
     let result;try{result=await this.#host.action('sign_in_status');}catch{result=undefined;}
     if(generation!==this.#generation || !this.isConnected)return;
     const status=this.shadowRoot.querySelector('.status'), button=this.shadowRoot.querySelector('button');
-    if(result?.ok && result.data?.status==='gateway_saved') {
+    if(result?.ok && result.data?.setup_status==='gateway_saved') {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Gateway saved. Connection needs verification.';return;
     }
-    if(result?.ok && result.data?.status==='connected') {
+    if(result?.ok && result.data?.setup_status==='connected') {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
     }
-    if(result?.ok && result.data?.status==='waiting') {
+    if(result?.ok && result.data?.setup_status==='waiting') {
       this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
     }
     this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;
