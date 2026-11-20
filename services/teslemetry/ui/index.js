@@ -231,7 +231,7 @@ class TeslemetrySolar extends HTMLElement {
     try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: 1000 }); }
     catch { result = undefined; }
     if (generation !== this.#generation || !this.isConnected) return;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
     this.#render();
   }
   #render() {
@@ -248,14 +248,14 @@ class TeslemetrySolar extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at)));
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : 'Not enough history yet'; return; }
     const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
     svg.setAttribute('aria-label', 'Solar power history');
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', values.map((v, i) => `${i * 300 / (values.length - 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
   }
 }
@@ -297,7 +297,7 @@ class TeslemetryGrid extends HTMLElement {
     const a = device?.available === true ? device.attributes : undefined;
     const watts = a?.grid_power_w;
     const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
-    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><button type="button"></button></div>';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
     button.textContent = this.#details ? 'Back to grid' : 'Grid details';
@@ -308,14 +308,15 @@ class TeslemetryGrid extends HTMLElement {
     if (!this.#details) return;
     const cost = a?.tariff_available === true ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
+    this.shadowRoot.querySelector('.cost-note').textContent = cost ? 'Daily import at the current rate; excludes fees.' : '';
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at)));
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : 'Not enough history yet'; return; }
     const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', values.map((v,i) => `${i * 300 / (values.length - 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    line.setAttribute('points', values.map((v,i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
   }
 }

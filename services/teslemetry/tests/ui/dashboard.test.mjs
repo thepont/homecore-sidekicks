@@ -64,3 +64,19 @@ test('battery card shows charge without needing graph or tariff data', async () 
   await page.evaluate(() => { const c = document.createElement('hc-teslemetry-battery'); c.host = host; document.querySelector('main').replaceChildren(c); });
   assert.equal(await page.getByText('70%', {exact:true}).count(), 1);
 });
+
+test('history graph positions readings by time and labels the estimate basis', async () => {
+  await page.evaluate(() => {
+    device.attributes.tariff_available = true;
+    host.devices.history = async () => ({ok:true,data:[
+      {at:'2026-11-20T01:00:00Z',value:0}, {at:'2026-11-20T02:00:00Z',value:1000},
+      {at:'2026-11-20T05:00:00Z',value:2000}]});
+    const c = document.createElement('hc-teslemetry-grid'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Grid details'}).click();
+  const graph = page.getByRole('img',{name:'Grid power history'});
+  await graph.waitFor();
+  const points = await graph.locator('polyline').getAttribute('points');
+  assert.equal(Number(points.split(' ')[1].split(',')[0]), 75);
+  assert.equal(await page.getByText('Daily import at the current rate; excludes fees.', {exact:true}).count(), 1);
+});
