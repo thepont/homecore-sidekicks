@@ -46,3 +46,14 @@ test('solar card opens a history graph and returns to live reading', async () =>
   await page.getByRole('button', {name: 'Back to solar'}).click();
   assert.equal(await page.getByText('2.4 kW', {exact:true}).count(), 1);
 });
+
+test('grid card shows estimated import cost when a tariff exists and works without one', async () => {
+  const manifest = JSON.parse(await readFile(new URL('manifest.json', ui), 'utf8'));
+  assert.ok(manifest.slots.some(s => s.slot === 'dashboard.card' && s.element === 'hc-teslemetry-grid'));
+  await page.evaluate(() => { const c = document.createElement('hc-teslemetry-grid'); c.host = host; document.querySelector('main').replaceChildren(c); });
+  await page.getByRole('button', {name:'Grid details'}).click();
+  assert.equal(await page.getByText('Estimated import cost: AUD 0.90', {exact:true}).count(), 1);
+  await page.evaluate(() => { device.attributes.tariff_available = false; document.querySelector('hc-teslemetry-grid').host = host; });
+  assert.equal(await page.getByText('Import cost unavailable', {exact:true}).count(), 1);
+  assert.equal(await page.getByText('1 kW', {exact:true}).count(), 1);
+});

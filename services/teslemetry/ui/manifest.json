@@ -22,6 +22,15 @@
         "standard",
         "large"
       ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-grid",
+      "label": "Grid",
+      "forms": [
+        "standard",
+        "large"
+      ]
     }
   ]
 }

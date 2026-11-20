@@ -260,3 +260,63 @@ class TeslemetrySolar extends HTMLElement {
   }
 }
 customElements.define('hc-teslemetry-solar', TeslemetrySolar);
+
+// This is an estimate at the current rate, not a time-of-use bill.
+function estimateEnergyCost(energyWh, rate, currency) {
+  if (typeof energyWh !== 'number' || !Number.isFinite(energyWh) || energyWh < 0 ||
+      typeof rate !== 'number' || !Number.isFinite(rate) ||
+      typeof currency !== 'string' || !/^[A-Za-z]{3}$/.test(currency)) return undefined;
+  const amount = energyWh / 1000 * rate;
+  if (!Number.isFinite(amount)) return undefined;
+  return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
+}
+
+class TeslemetryGrid extends HTMLElement {
+  #host; #stop; #details = false; #history; #generation = 0;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#generation++; this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  async #showHistory() {
+    this.#details = true; this.#history = undefined;
+    const generation = ++this.#generation; this.#render();
+    let result;
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit:1000}); }
+    catch { result = undefined; }
+    if (generation !== this.#generation || !this.isConnected) return;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#render();
+  }
+  #render() {
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const a = device?.available === true ? device.attributes : undefined;
+    const watts = a?.grid_power_w;
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><button type="button"></button></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+    const button = this.shadowRoot.querySelector('button');
+    button.textContent = this.#details ? 'Back to grid' : 'Grid details';
+    button.addEventListener('click', () => {
+      if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
+      else void this.#showHistory();
+    });
+    if (!this.#details) return;
+    const cost = a?.tariff_available === true ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
+    this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
+    const target = this.shadowRoot.querySelector('.history');
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at)));
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : 'Not enough history yet'; return; }
+    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', values.map((v,i) => `${i * 300 / (values.length - 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    svg.append(line); target.append(svg);
+  }
+}
+customElements.define('hc-teslemetry-grid', TeslemetryGrid);
