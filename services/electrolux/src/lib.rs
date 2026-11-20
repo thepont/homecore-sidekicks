@@ -65,3 +65,5 @@ pub fn parse_status(value: &Value) -> Result<ClimateStatus, &'static str> {
         swing,
     })
 }
+
+pub mod protocol;
