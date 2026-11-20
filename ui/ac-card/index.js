@@ -238,21 +238,42 @@ function normalizeSchema(input) {
   }));
 }
 
+function readTemperatureTargets(attributes, mode) {
+  const { heat_setpoint: heatSetpoint, cool_setpoint: coolSetpoint } = attributes;
+  const single = temperature(attributes.setpoint);
+  const targetsByKey = {
+    setpoint: single,
+    heat_setpoint: temperature(heatSetpoint),
+    cool_setpoint: temperature(coolSetpoint)
+  };
+  const heat = heatSetpoint == null ? temperature(attributes.heating_setpoint) : targetsByKey.heat_setpoint;
+  const cool = coolSetpoint == null ? temperature(attributes.cooling_setpoint) : targetsByKey.cool_setpoint;
+
+  if (mode === 'auto' && heat !== undefined && cool !== undefined && heat <= cool) {
+    return { targetsByKey, targets: {
+      heat: { key: 'heat_setpoint', value: heat },
+      cool: { key: 'cool_setpoint', value: cool }
+    } };
+  }
+
+  if (mode !== 'heat' && mode !== 'cool' && mode !== 'auto') {
+    return { targetsByKey, targets: {} };
+  }
+
+  if (single !== undefined || mode === 'auto') {
+    return { targetsByKey, targets: { single: { key: 'setpoint', value: single } } };
+  }
+
+  const target = mode === 'heat'
+    ? { key: 'heat_setpoint', value: heat }
+    : { key: 'cool_setpoint', value: cool };
+  return { targetsByKey, targets: { single: target } };
+}
+
 function climateOf(device) {
   const a = record(device?.attributes);
   const mode = lookup(modes, a.hvac_mode) ? a.hvac_mode : undefined;
-  const heat = temperature(a.heat_setpoint ?? a.heating_setpoint);
-  const cool = temperature(a.cool_setpoint ?? a.cooling_setpoint);
-  const single = temperature(a.setpoint);
-  const dual = mode === 'auto' && heat !== undefined && cool !== undefined && heat <= cool;
-  const controlsTemperature = mode === 'heat' || mode === 'cool' || mode === 'auto';
-  const singleKey = single !== undefined ? 'setpoint' : mode === 'heat' ? 'heat_setpoint' :
-    mode === 'cool' ? 'cool_setpoint' : 'setpoint';
-  const targetsByKey = { setpoint: single, heat_setpoint: temperature(a.heat_setpoint),
-    cool_setpoint: temperature(a.cool_setpoint) };
-  const targets = dual ? { heat: { key: 'heat_setpoint', value: heat },
-    cool: { key: 'cool_setpoint', value: cool } } : controlsTemperature ?
-    { single: { key: singleKey, value: single ?? (mode === 'heat' ? heat : mode === 'cool' ? cool : undefined) } } : {};
+  const { targets, targetsByKey } = readTemperatureTargets(a, mode);
   let activity = mode === 'off' ? 'Off' : lookup(activities, a.hvac_action);
   if (mode === 'heat' || mode === 'auto') {
     activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, a.sub_mode) ?? activity;
@@ -338,6 +359,18 @@ function dialPointer(svg, event) {
   const degrees = Math.atan2(y, x) * 180 / Math.PI;
   return { x: point.x, y: point.y, radius: Math.hypot(x, y),
     angle: (degrees - dialGeometry.start + 720) % 360, pixelsPerUnit: Math.hypot(screen.a, screen.b) };
+}
+
+function updateAirflowOptions({ select, reading, values }, choices, reported) {
+  const options = choices.map(({ value, label }) => [value, label ?? lookup(values, value) ?? value]);
+  const hasReportedOption = options.some(([value]) => value === reported);
+  if (!hasReportedOption) options.unshift(['', reading.textContent]);
+  const serialized = JSON.stringify(options);
+  if (select.dataset.options !== serialized) {
+    select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+    select.dataset.options = serialized;
+  }
+  select.value = hasReportedOption ? reported : '';
 }
 
 class AcCard extends HTMLElement {
@@ -725,12 +758,12 @@ class AcCard extends HTMLElement {
   #renderAirflow({ available, mode, reported, unsupportedAirflow }, schema) {
     let hasAirflow = false;
     let canAdjustAirflow = false;
-    for (const { key, row, select, reading, values } of this.#view.fields) {
+    for (const field of this.#view.fields) {
+      const { key, row, select, reading, values } = field;
       const spec = schema?.[key];
       const supported = !unsupportedAirflow.has(key);
       const writable = supported && spec?.writable && spec.options.length > 0;
       const raw = reported[key];
-      const optionLabel = option => option.label ?? lookup(values, option.value) ?? option.value;
       const visible = supported && (writable || (raw !== undefined && raw !== 'unknown'));
       show(row, visible);
       hasAirflow ||= visible;
@@ -739,14 +772,7 @@ class AcCard extends HTMLElement {
       reading.textContent = available ? spec?.options.find(option => option.value === raw)?.label ??
         lookup(values, raw) ?? raw ?? '—' : '—';
       if (!writable) continue;
-      const options = spec.options.map(option => [option.value, optionLabel(option)]);
-      if (!options.some(([value]) => value === raw)) options.unshift(['', reading.textContent]);
-      const serialized = JSON.stringify(options);
-      if (select.dataset.options !== serialized) {
-        select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
-        select.dataset.options = serialized;
-      }
-      select.value = options.some(([value]) => value === raw) ? raw : '';
+      updateAirflowOptions(field, spec.options, raw);
       select.disabled = mode === 'off' || mode === undefined || !!this.#pending;
       canAdjustAirflow = true;
       if (!select.disabled) {
