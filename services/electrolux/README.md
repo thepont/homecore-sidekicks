@@ -27,10 +27,11 @@ The broker command topic is `homecore/devices/electrolux_living_room/cmd`. Suppo
 ```sh
 cargo test --locked
 cargo test --locked --test mqtt -- --ignored --test-threads=1
+cargo test --locked --test core_command -- --ignored --test-threads=1
 cargo build --release --locked --bin electrolux-bridge
 ```
 
-The MQTT tests require Docker and the pinned Mosquitto image named in `tests/support/mqtt_broker.rs`; they use a simulated AC and isolated broker. `tests/live.rs` is an opt-in, read-only hardware test and requires `ELECTROLUX_LIVE_CONFIG` to point to a private JSON file containing `host` and `mac`. Never commit the file. A read-only status check succeeded against the existing living-room AC; real-device control and end-to-end homeCore control have not yet been verified.
+The MQTT tests require Docker and the pinned Mosquitto image named in `tests/support/mqtt_broker.rs`; they use a simulated AC and isolated broker. `tests/live.rs` is an opt-in, read-only hardware test and requires `ELECTROLUX_LIVE_CONFIG` to point to a private JSON file containing `host` and `mac`. Never commit the file. A real-device on/off test through the homeCore API succeeded, with both homeCore and Home Assistant reporting the changes. Other real-device controls have not yet been exercised.
 
 The Electrolux frame follows the installed [Electrolux Climate component](https://github.com/jnctech/ElectroluxClimateComponent), and the bridge uses pinned `rbroadlink` for Broadlink packet encryption. Its dependency audit currently reports unmaintained transitive `chrono` and `gcc` crates. Review those dependencies before deployment.
 
