@@ -458,11 +458,12 @@ async fn management_setup_pairs_the_discovered_fake_accessory() {
         let broker=mqtt_broker::Broker::start().await;let mut probe=mqtt_broker::Probe::start(broker.port).await;
         let task=tokio::task::spawn_local(homecore_homekit::setup::run_with_discovery("127.0.0.1".into(),broker.port,"fixture-user".into(),"fixture-password".into(),state_root.clone(),std::path::PathBuf::from("ui"),discover));
         tokio::time::timeout(Duration::from_secs(10),async {loop {if probe.messages.recv().await.unwrap().topic=="homecore/plugins/fixture-user/capabilities" {break;}}}).await.unwrap();
-        for command in [json!({"action":"discover_accessories","request_id":"discover"}),json!({"action":"pair_accessory","request_id":"pair","id":"02:11:22:33:44:55","pin":"123-45-678"})] {
+        for command in [json!({"action":"discover_accessories","request_id":"discover"}),json!({"action":"pair_accessory","request_id":"pair","id":"02:11:22:33:44:55","pin":"123-45-678"}),json!({"action":"pair_accessory","request_id":"again","id":"02:11:22:33:44:55","pin":"123-45-678"})] {
             let request=command["request_id"].as_str().unwrap().to_owned();
             probe.client.publish("homecore/plugins/fixture-user/manage/cmd",rumqttc::QoS::AtLeastOnce,false,command.to_string()).await.unwrap();
             let reply=tokio::time::timeout(Duration::from_secs(20),async {loop {let p=probe.messages.recv().await.unwrap();if p.topic.contains("manage/") && !p.topic.ends_with("/cmd") {if let Ok(v)=serde_json::from_slice::<serde_json::Value>(&p.payload) {if v["request_id"]==request {break v;}}}}}).await.unwrap();
-            assert_eq!(reply["status"],"ok");
+            if request == "again" { assert_eq!(reply["error"],"Controller already configured"); }
+            else { assert_eq!(reply["status"],"ok"); }
         }
         assert_eq!(homecore_homekit::read_saved("02:11:22:33:44:55",&state_root).await.unwrap(),json!({"open":true,"battery_pct":69}));
         task.abort();

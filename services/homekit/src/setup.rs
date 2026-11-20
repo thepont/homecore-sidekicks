@@ -137,6 +137,9 @@ pub async fn run_with_discovery(
                     .await;
                     match result {
                         Ok(Ok(_)) => json!({"status":"ok"}),
+                        Ok(Err("Controller already configured")) => {
+                            json!({"status":"error","error":"Controller already configured"})
+                        }
                         Ok(Err(error))
                             if error.contains("recovery")
                                 || error.contains("confirmation was lost") =>

@@ -274,6 +274,14 @@ pub async fn pair_and_read(
     create_tmp()?;
     let _temporary = PairingTemp(tmp.clone());
     let store = JsonFileStore::new(&path);
+    if !store
+        .load_pairings()
+        .await
+        .map_err(|_| "Cannot read pairing")?
+        .is_empty()
+    {
+        return Err("Controller already configured");
+    }
     if store
         .load_controller()
         .await
