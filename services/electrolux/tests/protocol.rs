@@ -56,3 +56,23 @@ fn target_temperature_encodes_a_validated_device_command() {
     assert_eq!(&frame[14..], br#"{"temp":24}"#);
     assert!(homecore_electrolux::protocol::temperature_request(41).is_err());
 }
+
+#[test]
+fn hvac_modes_map_to_electrolux_commands() {
+    for (mode, code) in [
+        ("cool", 0),
+        ("heat", 1),
+        ("dry", 2),
+        ("fan_only", 3),
+        ("auto", 4),
+        ("heat_cool", 6),
+    ] {
+        let frame = homecore_electrolux::protocol::mode_request(mode).unwrap();
+        assert_eq!(&frame[..2], &[0x19, 0]);
+        assert_eq!(
+            std::str::from_utf8(&frame[14..]).unwrap(),
+            format!("{{\"ac_mode\":{code}}}")
+        );
+    }
+    assert!(homecore_electrolux::protocol::mode_request("unsupported").is_err());
+}
