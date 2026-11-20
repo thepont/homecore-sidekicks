@@ -562,17 +562,17 @@ class AcCard extends HTMLElement {
     dial.addEventListener('keydown', event => this.#dialKey(event));
   }
 
+  #dialMarkers(lowSlot) {
+    return [[this.#view.low, lowSlot], [this.#view.high, 'cool']];
+  }
+
   #beginDrag(event) {
     const state = this.#dialState;
     const touch = event.pointerType === 'touch';
     if (!state || this.#drag || this.#pending || !event.isPrimary || (!touch && event.button !== 0)) return;
     const point = dialPointer(this.#view.svg, event);
     if (!point) return;
-    const handles = [
-      { marker: this.#view.low, slot: state.lowSlot },
-      { marker: this.#view.high, slot: 'cool' }
-    ].map(handle => {
-      const { marker, slot } = handle;
+    const handles = this.#dialMarkers(state.lowSlot).map(([marker, slot]) => {
       const control = state.controls[slot];
       const distance = Math.hypot(point.x - Number(marker.getAttribute('cx')),
         point.y - Number(marker.getAttribute('cy')));
@@ -695,7 +695,7 @@ class AcCard extends HTMLElement {
     mark(view.high, sharedPoint && !controls.cool ? undefined : high, scale,
       sharedPoint ? dialGeometry.radius + 12 : undefined);
 
-    for (const [marker, slot] of [[view.low, lowSlot], [view.high, 'cool']]) {
+    for (const [marker, slot] of this.#dialMarkers(lowSlot)) {
       const control = controls[slot];
       marker.setAttribute('aria-hidden', String(!control));
       if (!control) {
