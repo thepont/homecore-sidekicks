@@ -62,26 +62,8 @@ impl Config {
             }
             let name = text(row, "name", 128)?;
             let url = text(row, "url", 255)?;
-            let uri: Uri = url.parse().map_err(|_| "Invalid unit URL")?;
-            if uri.scheme_str() != Some("ws")
-                || uri.path() != "/ws"
-                || uri.query().is_some()
-                || url.contains(['@', '#'])
-                || uri.port_u16() == Some(0)
-            {
-                return Err("Unit URL must be ws://host[:port]/ws without credentials or query");
-            }
-            let host = uri.host().ok_or("Missing controller host")?;
-            let authority = uri.authority().ok_or("Missing controller host")?;
-            if authority.as_str() != host && uri.port_u16().is_none() {
-                return Err("Invalid controller port");
-            }
-            let endpoint = format!(
-                "{}:{}",
-                host.to_ascii_lowercase(),
-                uri.port_u16().unwrap_or(80)
-            );
-            if !valid_host(host) || !urls.insert(endpoint) {
+            let endpoint = controller_endpoint(&url)?;
+            if !urls.insert(endpoint) {
                 return Err("Controller URLs must be valid and unique");
             }
             units.push(Unit { id, name, url });
@@ -92,6 +74,32 @@ impl Config {
             stale_after_secs: seconds(&raw, "stale_after_secs", 10, 2, 300)?,
         })
     }
+}
+
+fn controller_endpoint(url: &str) -> Result<String, &'static str> {
+    let uri: Uri = url.parse().map_err(|_| "Invalid unit URL")?;
+    if uri.scheme_str() != Some("ws")
+        || uri.path() != "/ws"
+        || uri.query().is_some()
+        || url.contains(['@', '#'])
+        || uri.port_u16() == Some(0)
+    {
+        return Err("Unit URL must be ws://host[:port]/ws without credentials or query");
+    }
+    let host = uri.host().ok_or("Missing controller host")?;
+    let authority = uri.authority().ok_or("Missing controller host")?;
+    if authority.as_str() != host && uri.port_u16().is_none() {
+        return Err("Invalid controller port");
+    }
+    let endpoint = format!(
+        "{}:{}",
+        host.to_ascii_lowercase(),
+        uri.port_u16().unwrap_or(80)
+    );
+    if !valid_host(host) {
+        return Err("Controller URLs must be valid and unique");
+    }
+    Ok(endpoint)
 }
 
 fn valid_host(host: &str) -> bool {
