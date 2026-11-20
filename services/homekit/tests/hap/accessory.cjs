@@ -98,6 +98,11 @@ if (bridgeMode) {
   smokeBattery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);
   smokeBattery.getCharacteristic(Characteristic.StatusLowBattery).onGet(() => 0);
   accessory.addBridgedAccessory(smoke);
+  const outlet = new Accessory('Outlet', uuid.generate('homecore.fixture.outlet'));
+  const outletService = outlet.addService(Service.Outlet, 'Outlet');
+  outletService.getCharacteristic(Characteristic.On).onGet(() => true);
+  outletService.getCharacteristic(Characteristic.OutletInUse).onGet(() => false);
+  accessory.addBridgedAccessory(outlet);
 }
 accessory.on('listening',port=>{boundPort=port;console.log(`PORT=${port}`)});
 accessory.publish({username:'02:11:22:33:44:55',pincode:'123-45-678',category:Categories.SENSOR,port:Number(process.env.HAP_PORT||0),bind:'127.0.0.1',addIdentifyingMaterial:false}).catch(()=>process.exit(1));

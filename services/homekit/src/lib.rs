@@ -29,6 +29,7 @@ pub async fn publish_sensors(
     let mut contacts = Vec::new();
     let mut climate = Vec::new();
     let mut smoke = Vec::new();
+    let mut outlets = Vec::new();
     for (aid, state) in readings {
         let object = state.as_object().ok_or("Invalid sensor state")?;
         if *aid == 0 || !seen.insert(*aid) {
@@ -44,6 +45,16 @@ pub async fn publish_sensors(
                 return Err("Invalid sensor state");
             }
             contacts.push((*aid, state.clone()));
+        } else if object.contains_key("on") {
+            if object.get("on").and_then(Value::as_bool).is_none()
+                || object.get("in_use").is_some_and(|v| v.as_bool().is_none())
+                || object
+                    .keys()
+                    .any(|k| !matches!(k.as_str(), "on" | "in_use"))
+            {
+                return Err("Invalid sensor state");
+            }
+            outlets.push((*aid, state));
         } else if object.contains_key("smoke_detected") {
             if object
                 .get("smoke_detected")
@@ -115,6 +126,47 @@ pub async fn publish_sensors(
                 format!("homecore/devices/{device}/schema"),
                 true,
                 json!({"attributes":attributes,"primary":[primary]}),
+            ),
+            (
+                format!("homecore/devices/{device}/state"),
+                true,
+                state.clone(),
+            ),
+        ] {
+            mqtt.publish(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+                retained,
+                payload.to_string(),
+            )
+            .await
+            .map_err(|_| "Cannot publish sensor")?;
+        }
+    }
+    for (aid, state) in outlets {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        attributes.insert(
+            "on".into(),
+            json!({"kind":"bool","writable":false,"display_name":"On"}),
+        );
+        if state.get("in_use").is_some() {
+            attributes.insert(
+                "in_use".into(),
+                json!({"kind":"bool","writable":false,"display_name":"In use"}),
+            );
+        }
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit outlet {aid}"),"device_type":"switch"});
+        for (topic, retained, payload) in [
+            (
+                format!("homecore/plugins/{plugin}/register"),
+                false,
+                register,
+            ),
+            (
+                format!("homecore/devices/{device}/schema"),
+                true,
+                json!({"attributes":attributes,"primary":["on"]}),
             ),
             (
                 format!("homecore/devices/{device}/state"),
@@ -748,6 +800,8 @@ async fn read_sensors(
         let mut battery = None;
         let mut smoke = None;
         let mut fault = None;
+        let mut on = None;
+        let mut in_use = None;
         for service in accessory.services {
             for characteristic in service.characteristics {
                 let target = match (&service.service_type, &characteristic.char_type) {
@@ -760,6 +814,8 @@ async fn read_sensors(
                     (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut battery,
                     (ServiceType::SmokeSensor, CharacteristicType::SmokeDetected) => &mut smoke,
                     (ServiceType::SmokeSensor, CharacteristicType::StatusFault) => &mut fault,
+                    (ServiceType::Outlet, CharacteristicType::On) => &mut on,
+                    (ServiceType::Outlet, CharacteristicType::OutletInUse) => &mut in_use,
                     _ => continue,
                 };
                 if target.replace(characteristic.iid).is_some() {
@@ -767,13 +823,25 @@ async fn read_sensors(
                 }
             }
         }
-        if temperature.is_none() && humidity.is_none() && smoke.is_none() {
+        if temperature.is_none() && humidity.is_none() && smoke.is_none() && on.is_none() {
             continue;
         }
-        if smoke.is_some() && (temperature.is_some() || humidity.is_some()) {
+        if (smoke.is_some() && (temperature.is_some() || humidity.is_some() || on.is_some()))
+            || (on.is_some() && (temperature.is_some() || humidity.is_some()))
+        {
             return Err("Ambiguous sensor type");
         }
         let mut state = Map::new();
+        for (name, iid) in [("on", on), ("in_use", in_use)] {
+            if let Some(iid) = iid {
+                let value = match handle.read(accessory.aid, iid).await {
+                    Ok(value) => value.to_json(),
+                    Err(_) => continue 'accessory,
+                };
+                let value = value.as_bool().ok_or("Invalid outlet reading")?;
+                state.insert(name.into(), json!(value));
+            }
+        }
         for (name, iid) in [("smoke_detected", smoke), ("fault", fault)] {
             if let Some(iid) = iid {
                 let value = match handle.read(accessory.aid, iid).await {

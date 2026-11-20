@@ -211,6 +211,12 @@ async fn reads_each_contact_from_a_bridge_independently() {
                 == json!({"smoke_detected":true,"fault":false,"battery_pct":74})),
         "smoke detector missing: {sensors:?}"
     );
+    assert!(
+        sensors
+            .iter()
+            .any(|(_, state)| *state == json!({"on":true,"in_use":false})),
+        "outlet missing: {sensors:?}"
+    );
     let invited_root = fixture.root.join("invited-controller");
     fs::create_dir(&invited_root).unwrap();
     fs::set_permissions(&invited_root, fs::Permissions::from_mode(0o700)).unwrap();

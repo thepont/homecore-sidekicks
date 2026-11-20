@@ -6,6 +6,42 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
 
 #[tokio::test]
+async fn outlet_is_published_as_a_switch_with_its_on_and_in_use_states() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    homecore_homekit::publish_sensors(
+        &probe.client,
+        "plugin.homekit",
+        "02:11:22:33:44:55",
+        &[(2, json!({"on":true,"in_use":false}))],
+    )
+    .await
+    .unwrap();
+    let messages = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut received = HashMap::<String, Value>::new();
+        while received.len() < 3 {
+            let msg = probe.messages.recv().await.unwrap();
+            received.insert(msg.topic, serde_json::from_slice(&msg.payload).unwrap());
+        }
+        received
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        messages["homecore/plugins/plugin.homekit/register"]["device_type"],
+        "switch"
+    );
+    assert_eq!(
+        messages["homecore/devices/homekit_021122334455_2/state"],
+        json!({"on":true,"in_use":false})
+    );
+    assert_eq!(
+        messages["homecore/devices/homekit_021122334455_2/schema"]["attributes"]["on"]["writable"],
+        false
+    );
+}
+
+#[tokio::test]
 async fn smoke_detector_reports_alarm_fault_and_battery_as_a_smoke_detector() {
     let broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;
