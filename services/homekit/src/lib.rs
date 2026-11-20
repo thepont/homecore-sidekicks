@@ -661,9 +661,15 @@ pub async fn read_sensors_saved(
     id: &str,
     state_dir: &std::path::Path,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
-    use hap_controller::{CharacteristicType, ServiceType};
     let (_lock, mut handle) = connect_saved(id, state_dir).await?;
-    let mut readings = read_contacts(&mut handle).await?;
+    read_sensors(&mut handle).await
+}
+
+async fn read_sensors(
+    handle: &mut hap_controller::AccessoryHandle,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    let mut readings = read_contacts(handle).await?;
     let accessories = handle
         .accessories()
         .await
