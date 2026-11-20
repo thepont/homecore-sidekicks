@@ -1131,9 +1131,23 @@ pub async fn watch_saved(
 pub struct ContactsWatch {
     current: Vec<(u64, Value)>,
     updates: tokio::sync::mpsc::Receiver<(u64, Value)>,
+    commands: tokio::sync::mpsc::Sender<(
+        u64,
+        bool,
+        tokio::sync::oneshot::Sender<Result<(), &'static str>>,
+    )>,
     task: tokio::task::JoinHandle<()>,
 }
 impl ContactsWatch {
+    /// Set an outlet attached to this bridge.
+    pub async fn set_outlet(&mut self, aid: u64, on: bool) -> Result<(), &'static str> {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        self.commands
+            .send((aid, on, reply))
+            .await
+            .map_err(|_| "Outlet unavailable")?;
+        received.await.map_err(|_| "Outlet unavailable")?
+    }
     pub fn current(&self) -> &Vec<(u64, Value)> {
         &self.current
     }
@@ -1178,10 +1192,16 @@ async fn watch_contacts_with_interval(
         .to_vec();
     let mut contacts = Vec::new();
     let mut batteries = Vec::new();
+    let mut outlets = Vec::new();
     for accessory in accessories {
         for service in accessory.services {
             for characteristic in service.characteristics {
-                if service.service_type == ServiceType::ContactSensor
+                if service.service_type == ServiceType::Outlet
+                    && characteristic.char_type == CharacteristicType::On
+                    && characteristic.perms.write
+                {
+                    outlets.push((accessory.aid, characteristic.iid));
+                } else if service.service_type == ServiceType::ContactSensor
                     && characteristic.char_type == CharacteristicType::ContactSensorState
                 {
                     contacts.push((accessory.aid, characteristic.iid));
@@ -1204,6 +1224,11 @@ async fn watch_contacts_with_interval(
     }
     let current = read_sensors(&mut handle).await?;
     let (send, updates) = tokio::sync::mpsc::channel(32);
+    let (commands, mut command_rx) = tokio::sync::mpsc::channel::<(
+        u64,
+        bool,
+        tokio::sync::oneshot::Sender<Result<(), &'static str>>,
+    )>(16);
     let mut state = current.clone();
     let task = tokio::spawn(async move {
         let _lock = lock;
@@ -1211,6 +1236,29 @@ async fn watch_contacts_with_interval(
         timer.tick().await;
         loop {
             let event = tokio::select! {
+                command = command_rx.recv() => {
+                    let Some((aid, on, reply)) = command else { break };
+                    let result = if let Some((_, iid)) = outlets.iter().find(|(outlet, _)| *outlet == aid) {
+                        match handle.write(aid, *iid, hap_controller::CharValue::Bool(on)).await {
+                            Ok(()) => match handle.read(aid, *iid).await {
+                                Ok(value) => match value.to_json().as_bool() {
+                                    Some(actual) => {
+                                        if let Some((_, state)) = state.iter_mut().find(|(item, _)| *item == aid) {
+                                            state["on"] = json!(actual);
+                                            if send.try_send((aid, state.clone())).is_err() { return; }
+                                        }
+                                        Ok(())
+                                    },
+                                    None => Err("Invalid outlet reading"),
+                                },
+                                Err(_) => Err("Cannot read outlet"),
+                            },
+                            Err(_) => Err("Cannot set outlet"),
+                        }
+                    } else { Err("Outlet unavailable") };
+                    let _ = reply.send(result);
+                    continue;
+                }
                 event = events.next() => match event { Some(event) => event, None => break },
                 _ = timer.tick() => {
                     let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_sensors(&mut handle)).await {
@@ -1257,6 +1305,7 @@ async fn watch_contacts_with_interval(
     Ok(ContactsWatch {
         current,
         updates,
+        commands,
         task,
     })
 }

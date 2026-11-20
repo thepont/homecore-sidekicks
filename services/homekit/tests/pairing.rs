@@ -240,6 +240,20 @@ async fn reads_each_contact_from_a_bridge_independently() {
         .unwrap();
     assert_eq!(watch.current()[0].1, json!({"open":false,"battery_pct":69}));
     assert_eq!(watch.current()[1], readings[1]);
+    let outlet_id = sensors
+        .iter()
+        .find(|(_, state)| state.get("in_use").is_some())
+        .unwrap()
+        .0;
+    watch.set_outlet(outlet_id, false).await.unwrap();
+    let outlet_update = tokio::time::timeout(Duration::from_secs(5), watch.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        outlet_update,
+        (outlet_id, json!({"on":false,"in_use":false}))
+    );
     writeln!(fixture.child.stdin.as_mut().unwrap(), "open").unwrap();
     let update = tokio::time::timeout(Duration::from_secs(5), watch.next())
         .await

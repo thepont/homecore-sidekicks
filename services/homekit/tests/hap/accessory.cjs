@@ -49,6 +49,7 @@ Accessory.prototype.handleInitialPairSetupFinished=function(...args){
 };
 const bridgeMode = process.env.HAP_BRIDGE === '1';
 let smokeOffline = false;
+let outletOn = true;
 const accessory = bridgeMode ? new Bridge('Fixture bridge', uuid.generate('homecore.fixture.bridge')) : new Accessory('Fixture contact', uuid.generate('homecore.fixture.contact'));
 const first = bridgeMode ? new Accessory('First contact', uuid.generate('homecore.fixture.contact')) : accessory;
 if (bridgeMode) accessory.addBridgedAccessory(first);
@@ -100,7 +101,7 @@ if (bridgeMode) {
   accessory.addBridgedAccessory(smoke);
   const outlet = new Accessory('Outlet', uuid.generate('homecore.fixture.outlet'));
   const outletService = outlet.addService(Service.Outlet, 'Outlet');
-  outletService.getCharacteristic(Characteristic.On).onGet(() => true);
+  outletService.getCharacteristic(Characteristic.On).onGet(() => outletOn).onSet(value => {outletOn=value;});
   outletService.getCharacteristic(Characteristic.OutletInUse).onGet(() => false);
   accessory.addBridgedAccessory(outlet);
 }
