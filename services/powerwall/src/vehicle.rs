@@ -256,6 +256,30 @@ pub async fn supervise(base: String, token: String, broker: Broker) {
     }
 }
 
+fn vehicle_schema(state: &Map<String, Value>) -> Value {
+    let mut attrs = Map::new();
+    for (key, value) in state {
+        let kind = if value.is_boolean() {
+            "bool"
+        } else if value.is_string() {
+            "string"
+        } else if value.is_i64() || value.is_u64() {
+            "integer"
+        } else {
+            "float"
+        };
+        let mut spec = json!({"kind":kind,"writable":false,"display_name":key.replace('_', " ")});
+        if key == "battery_level" {
+            spec["unit"] = json!("%");
+        }
+        if key.ends_with("_temp") {
+            spec["unit"] = json!("°C");
+        }
+        attrs.insert(key.clone(), spec);
+    }
+    json!({"attributes":attrs,"primary":["battery_level", "vehicle_state"]})
+}
+
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
     let id = device_id(&vin);
     let availability = format!("homecore/devices/{id}/availability");
@@ -350,27 +374,7 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
                                                 previous.max(observed)
                                             },
                                         ));
-                                        let mut attrs = Map::new();
-                                        for (key, value) in &state {
-                                            let kind = if value.is_boolean() {
-                                                "bool"
-                                            } else if value.is_string() {
-                                                "string"
-                                            } else if value.is_i64() || value.is_u64() {
-                                                "integer"
-                                            } else {
-                                                "float"
-                                            };
-                                            let mut spec = json!({"kind":kind,"writable":false,"display_name":key.replace('_', " ")});
-                                            if key == "battery_level" {
-                                                spec["unit"] = json!("%");
-                                            }
-                                            if key.ends_with("_temp") {
-                                                spec["unit"] = json!("°C");
-                                            }
-                                            attrs.insert(key.clone(), spec);
-                                        }
-                                        let schema = json!({"attributes":attrs,"primary":["battery_level", "vehicle_state"]});
+                                        let schema = vehicle_schema(&state);
                                         if mqtt
                                             .publish(
                                                 format!("homecore/devices/{id}/schema"),
