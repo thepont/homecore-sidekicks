@@ -103,3 +103,113 @@ async fn device_status_is_published_to_homecore() {
     assert_eq!(state["hvac_mode"], "cool");
     worker.join().unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires the pinned local Mosquitto image and Docker"]
+async fn setpoint_command_reaches_ac_and_publishes_reported_state() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    let address = server.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let mut buf = [0; 8192];
+        let mut setpoint = 24;
+        loop {
+            let (n, peer) = server.recv_from(&mut buf).unwrap();
+            let count = u16::from_le_bytes([buf[40], buf[41]]);
+            if buf[38] == 0x65 {
+                let mut auth = vec![1, 2, 3, 4];
+                auth.extend_from_slice(&KEY);
+                server
+                    .send_to(
+                        &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                            .pack_with_payload(&auth, &INITIAL)
+                            .unwrap(),
+                        peer,
+                    )
+                    .unwrap();
+                continue;
+            }
+            let request = CommandMessage::unpack_with_payload(buf[..n].to_vec(), &KEY).unwrap();
+            let payload = if request[0] == 0x17 {
+                assert_eq!(&request[14..], br#"{"temp":25}"#);
+                setpoint = 25;
+                "{}".to_string()
+            } else {
+                assert_eq!(request[0], 0x0e);
+                format!(
+                    r#"{{"envtemp":22,"temp":{setpoint},"ac_pwr":1,"ac_mode":0,"ac_mark":3,"ac_vdir":1}}"#
+                )
+            };
+            let mut frame = vec![0; 14];
+            frame[10..12].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+            frame.extend_from_slice(payload.as_bytes());
+            let checksum = frame[8..]
+                .iter()
+                .fold(0xc0adu16, |s, b| s.wrapping_add(u16::from(*b)));
+            frame[6..8].copy_from_slice(&checksum.to_le_bytes());
+            server
+                .send_to(
+                    &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                        .pack_with_payload(&frame, &KEY)
+                        .unwrap(),
+                    peer,
+                )
+                .unwrap();
+            if setpoint == 25 && request[0] == 0x0e {
+                break;
+            }
+        }
+    });
+    let path = std::env::temp_dir().join(format!("electrolux-command-pass-{}", std::process::id()));
+    std::fs::write(&path, "fixture-password").unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_electrolux-bridge"))
+        .env("ELECTROLUX_ADDRESS", address.to_string())
+        .env("ELECTROLUX_MAC", "020304050607")
+        .env("MQTT_HOST", "127.0.0.1")
+        .env("MQTT_PORT", broker.port.to_string())
+        .env("MQTT_USERNAME", "fixture-user")
+        .env("MQTT_PASSWORD_FILE", &path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _owned = Owned(child, path);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/electrolux_living_room/state" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("initial state");
+    probe
+        .client
+        .publish(
+            "homecore/devices/electrolux_living_room/cmd",
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            br#"{"setpoint":25}"#.as_slice(),
+        )
+        .await
+        .unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/electrolux_living_room/state" {
+                let value: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
+                if value["setpoint"] == 25.0 {
+                    return value;
+                }
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("updated AC state");
+    assert_eq!(state["setpoint"], 25.0);
+    worker.join().unwrap();
+}

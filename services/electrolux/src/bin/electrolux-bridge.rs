@@ -69,22 +69,51 @@ async fn main() -> Result<(), &'static str> {
     opts.set_last_will(LastWill::new(AVAIL, "offline", QoS::AtLeastOnce, true));
     let (mqtt, mut events) = AsyncClient::new(opts, 16);
     let (tx, mut rx) = watch::channel(None);
+    let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<u8>(8);
     tokio::task::spawn_blocking(move || loop {
-        let state = Client::connect(address, mac, Duration::from_secs(2))
-            .and_then(|mut client| client.status())
-            .ok();
-        if tx.send(state).is_err() {
-            break;
+        if let Ok(mut client) = Client::connect(address, mac, Duration::from_secs(2)) {
+            loop {
+                let state = client.status().ok();
+                let available = state.is_some();
+                if tx.send(state).is_err() {
+                    return;
+                }
+                if !available {
+                    break;
+                }
+                match command_rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(temperature) => {
+                        if client.set_temperature(temperature).is_err() {
+                            let _ = tx.send(None);
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+        } else if tx.send(None).is_err() {
+            return;
         }
-        std::thread::sleep(Duration::from_secs(5));
+        std::thread::sleep(Duration::from_secs(1));
     });
     loop {
         tokio::select! {
             event=events.poll() => match event {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                    mqtt.subscribe(format!("homecore/devices/{DEVICE}/cmd"),QoS::AtLeastOnce).await.map_err(|_| "MQTT subscribe failed")?;
                     mqtt.publish(format!("homecore/plugins/{PLUGIN}/register"),QoS::AtLeastOnce,true,json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room AC","device_type":"thermostat"}).to_string()).await.map_err(|_| "MQTT publish failed")?;
-                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":false},"hvac_mode":{"kind":"string","writable":false},"fan_mode":{"kind":"string","writable":false},"swing":{"kind":"bool","writable":false}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
+                    mqtt.publish(format!("homecore/devices/{DEVICE}/schema"),QoS::AtLeastOnce,true,json!({"attributes":{"temperature":{"kind":"float","unit":"°C","writable":false},"setpoint":{"kind":"float","unit":"°C","writable":true,"min":17,"max":30},"hvac_mode":{"kind":"string","writable":false},"fan_mode":{"kind":"string","writable":false},"swing":{"kind":"bool","writable":false}},"primary":["temperature","setpoint","hvac_mode"]}).to_string()).await.map_err(|_| "MQTT publish failed")?;
                     publish(&mqtt,rx.borrow_and_update().as_ref()).await?;
+                }
+                Ok(Event::Incoming(Incoming::Publish(message))) if !message.retain && rx.borrow().is_some() && message.topic == format!("homecore/devices/{DEVICE}/cmd") && message.payload.len() <= 1024 => {
+                    if let Ok(serde_json::Value::Object(values)) = serde_json::from_slice(&message.payload) {
+                        if values.len() == 1 {
+                            if let Some(value) = values.get("setpoint").and_then(|v|v.as_f64()).filter(|v|v.fract()==0.0 && (17.0..=30.0).contains(v)) {
+                                let _ = command_tx.try_send(value as u8);
+                            }
+                        }
+                    }
                 }
                 Ok(_) => {},
                 Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
