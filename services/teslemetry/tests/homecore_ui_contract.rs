@@ -98,6 +98,18 @@ async fn verify() {
         .unwrap()
         .iter()
         .any(|s| s["slot"] == "device.card"));
+    for element in [
+        "hc-teslemetry-solar",
+        "hc-teslemetry-grid",
+        "hc-teslemetry-battery",
+        "hc-teslemetry-combined",
+    ] {
+        assert!(ui["slots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["slot"] == "dashboard.card" && s["element"] == element));
+    }
     let entry = ui["entry"].as_str().unwrap();
     let build = ui["build"].as_str().unwrap();
     let path = format!("/plugins/plugin.teslemetry-powerwall/ui/{build}/{entry}");

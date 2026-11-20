@@ -274,3 +274,44 @@ fn large_transfers_leave_no_open_files_between_requests() {
     }
     assert_eq!(received, data);
 }
+
+#[test]
+fn shipped_manifest_advertises_multiple_dashboard_cards() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let ui = UiAssets::load(&dir, "0.1.0").expect("shipped manifest is accepted");
+    let descriptor = ui.descriptor();
+    let slots = descriptor["slots"].as_array().unwrap();
+    assert!(slots
+        .iter()
+        .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-grid"));
+    assert!(slots
+        .iter()
+        .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-solar"));
+    assert!(slots
+        .iter()
+        .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-battery"));
+    assert!(slots
+        .iter()
+        .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-combined"));
+}
+
+#[test]
+fn dashboard_manifest_rejects_duplicate_or_unrecognised_slots() {
+    let dir = Folder::with_script(b"export {};");
+    let mut m = manifest();
+    m["slots"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"slot":"dashboard.card", "element":"hc-teslemetry-grid", "label":"Grid"}));
+    for bad in [
+        json!({"slot":"dashboard.card", "element":"hc-teslemetry-grid", "label":"Grid"}),
+        json!({"slot":"dashboard.card", "element":"hc-unknown", "label":"Unknown"}),
+        json!({"slot":"dashboard.card", "element":"hc-teslemetry-solar", "label":"Solar", "device_types":["sensor"]}),
+        json!({"slot":"dashboard.card", "element":"hc-teslemetry-solar", "label":"<script>"}),
+    ] {
+        let mut invalid = m.clone();
+        invalid["slots"].as_array_mut().unwrap().push(bad);
+        fs::write(dir.0.join("manifest.json"), invalid.to_string()).unwrap();
+        assert!(UiAssets::load(&dir.0, "0.1.0").is_err());
+    }
+}

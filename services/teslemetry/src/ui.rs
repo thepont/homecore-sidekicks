@@ -213,33 +213,64 @@ fn validate_manifest(m: &Value) -> Result<(), UiError> {
         return Err(UiError);
     }
     let slots = m["slots"].as_array().ok_or(UiError)?;
-    if slots.len() != 1 {
+    if slots.is_empty() || slots.len() > 5 {
         return Err(UiError);
     }
-    let slot = slots[0].as_object().ok_or(UiError)?;
-    if slot
-        .keys()
-        .any(|k| !["slot", "element", "device_types", "forms"].contains(&k.as_str()))
-        || slot.get("slot") != Some(&json!("device.card"))
-        || slot.get("element") != Some(&json!("hc-teslemetry-card"))
-    {
-        return Err(UiError);
-    }
-    if let Some(types) = slot.get("device_types") {
-        if types != &json!(["sensor"]) {
-            return Err(UiError);
-        }
-    }
-    if let Some(forms) = slot.get("forms") {
-        let forms = forms.as_array().ok_or(UiError)?;
-        if forms.is_empty()
-            || forms.len() > 3
-            || forms.iter().enumerate().any(|(i, f)| {
-                !matches!(f.as_str(), Some("compact" | "standard" | "large"))
-                    || forms[..i].contains(f)
-            })
+    for (index, value) in slots.iter().enumerate() {
+        let slot = value.as_object().ok_or(UiError)?;
+        let element = slot.get("element").and_then(Value::as_str).ok_or(UiError)?;
+        if slots[..index]
+            .iter()
+            .any(|previous| previous.get("element") == Some(&json!(element)))
         {
             return Err(UiError);
+        }
+        match (slot.get("slot").and_then(Value::as_str), element) {
+            (Some("device.card"), "hc-teslemetry-card") => {
+                if slot
+                    .keys()
+                    .any(|k| !["slot", "element", "device_types", "forms"].contains(&k.as_str()))
+                    || slot
+                        .get("device_types")
+                        .is_some_and(|v| v != &json!(["sensor"]))
+                {
+                    return Err(UiError);
+                }
+            }
+            (
+                Some("dashboard.card"),
+                "hc-teslemetry-solar"
+                | "hc-teslemetry-grid"
+                | "hc-teslemetry-battery"
+                | "hc-teslemetry-combined",
+            ) => {
+                let label = match element {
+                    "hc-teslemetry-solar" => "Solar",
+                    "hc-teslemetry-grid" => "Grid",
+                    "hc-teslemetry-combined" => "Combined energy",
+                    _ => "Battery",
+                };
+                if slot
+                    .keys()
+                    .any(|k| !["slot", "element", "label", "forms"].contains(&k.as_str()))
+                    || slot.get("label") != Some(&json!(label))
+                {
+                    return Err(UiError);
+                }
+            }
+            _ => return Err(UiError),
+        }
+        if let Some(forms) = slot.get("forms") {
+            let forms = forms.as_array().ok_or(UiError)?;
+            if forms.is_empty()
+                || forms.len() > 3
+                || forms.iter().enumerate().any(|(i, f)| {
+                    !matches!(f.as_str(), Some("compact" | "standard" | "large"))
+                        || forms[..i].contains(f)
+                })
+            {
+                return Err(UiError);
+            }
         }
     }
     Ok(())

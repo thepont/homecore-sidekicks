@@ -27,7 +27,7 @@ fn assets() -> Option<UiAssets> {
     }
 }
 
-pub async fn run(client: AsyncClient, mut events: EventLoop) {
+pub async fn run(client: AsyncClient, mut events: EventLoop, connections: watch::Sender<()>) {
     let (online_tx, online_rx) = watch::channel(false);
     let (requests_tx, requests_rx) = mpsc::channel(1);
     let worker = tokio::spawn(serve(client, online_rx, requests_rx, assets()));
@@ -35,6 +35,7 @@ pub async fn run(client: AsyncClient, mut events: EventLoop) {
         match events.poll().await {
             Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                 online_tx.send_replace(true);
+                connections.send_replace(());
             }
             Ok(Event::Incoming(Incoming::Publish(p)))
                 if p.topic == COMMAND && !p.retain && p.payload.len() <= MAX_REQUEST_BYTES =>

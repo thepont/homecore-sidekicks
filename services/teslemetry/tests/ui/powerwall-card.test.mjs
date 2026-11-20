@@ -404,3 +404,9 @@ test('withdrawing both optional sections clears their previous values while live
   assert.doesNotMatch(accessible.description, /Charger 1|3.12|0.4906|0.05 AUD/);
   assert.match(accessible.description, /65.3%/);
 });
+
+test('rounds a high precision battery charge on the Powerwall flow card', async () => {
+  await page.evaluate(() => host.update({ attributes: { charge_pct: 54.31899430207542, battery_power_w: 0 } }));
+  assert.match(await text(), /54\.3%/);
+  assert.doesNotMatch(await text(), /54\.318994/);
+});

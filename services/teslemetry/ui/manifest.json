@@ -5,8 +5,50 @@
     {
       "slot": "device.card",
       "element": "hc-teslemetry-card",
-      "device_types": ["sensor"],
-      "forms": ["standard", "large", "compact"]
+      "device_types": [
+        "sensor"
+      ],
+      "forms": [
+        "standard",
+        "large",
+        "compact"
+      ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-solar",
+      "label": "Solar",
+      "forms": [
+        "standard",
+        "large"
+      ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-grid",
+      "label": "Grid",
+      "forms": [
+        "standard",
+        "large"
+      ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-battery",
+      "label": "Battery",
+      "forms": [
+        "compact",
+        "standard"
+      ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-combined",
+      "label": "Combined energy",
+      "forms": [
+        "large",
+        "standard"
+      ]
     }
   ]
 }

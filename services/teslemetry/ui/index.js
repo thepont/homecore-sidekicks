@@ -303,7 +303,7 @@ class TeslemetryCard extends HTMLElement {
       return available && typeof value === 'number' && Number.isFinite(value) ? value : undefined;
     };
     const rawCharge = number('charge_pct');
-    const charge = rawCharge >= 0 && rawCharge <= 100 ? rawCharge : undefined;
+    const charge = rawCharge >= 0 && rawCharge <= 100 ? Number(rawCharge.toFixed(1)) : undefined;
     const label = device ? this.#host.devices.label(device) : 'Powerwall';
     const name = typeof label === 'string' ? label.slice(0, 256) : 'Powerwall';
     const view = this.#view;
@@ -331,3 +331,266 @@ class TeslemetryCard extends HTMLElement {
 }
 
 customElements.define('hc-teslemetry-card', TeslemetryCard);
+
+// Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
+async function readTariffPeriods(host) {
+  try {
+    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit:1000});
+    return result?.ok && Array.isArray(result.data) ? result.data.slice(0,1000) : [];
+  } catch { return []; }
+}
+function renderTariffBands(svg, records, points) {
+  const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
+  if (end <= start) return;
+  const periods = records.filter(p => typeof p?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(p.value) && Number.isFinite(Date.parse(p.at)))
+    .sort((a,b) => Date.parse(a.at) - Date.parse(b.at))
+    .filter((p, i, all) => i === 0 || p.value !== all[i - 1].value);
+  for (let i = 0; i < periods.length; i++) {
+    const from = Math.max(start, Date.parse(periods[i].at));
+    const until = Math.min(end, i + 1 < periods.length ? Date.parse(periods[i + 1].at) : end);
+    if (until <= from) continue;
+    const x = (from - start) * 300 / (end - start), width = (until - from) * 300 / (end - start);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', '0'); rect.setAttribute('width', width); rect.setAttribute('height', '100');
+    rect.setAttribute('fill', i % 2 ? '#8b7ad0' : '#e4ae47'); rect.setAttribute('fill-opacity', '0.18');
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x > 180 ? Math.min(297, x + width - 3) : x + 3);
+    if (x > 180) label.setAttribute('text-anchor', 'end');
+    label.setAttribute('y', '10'); label.setAttribute('fill', 'currentColor'); label.setAttribute('font-size', '8');
+    label.textContent = periods[i].value.replaceAll('_', ' ');
+    svg.append(rect, label);
+  }
+}
+
+class TeslemetrySolar extends HTMLElement {
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#generation++; this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  async #showHistory() {
+    this.#details = true;
+    this.#history = undefined;
+    const generation = ++this.#generation;
+    this.#render();
+    let result;
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: 1000 }); }
+    catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
+    if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#render();
+  }
+  #render() {
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+    const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
+    button.textContent = this.#details ? 'Back to solar' : 'Solar details';
+    button.addEventListener('click', () => {
+      if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
+      else void this.#showHistory();
+    });
+    if (!this.#details) return;
+    const target = this.shadowRoot.querySelector('.history');
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Solar power history');
+    renderTariffBands(svg, this.#periods, points);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
+  }
+}
+customElements.define('hc-teslemetry-solar', TeslemetrySolar);
+
+// This is an estimate at the current rate, not a time-of-use bill.
+function estimateEnergyCost(energyWh, rate, currency) {
+  if (typeof energyWh !== 'number' || !Number.isFinite(energyWh) || energyWh < 0 ||
+      typeof rate !== 'number' || !Number.isFinite(rate) ||
+      typeof currency !== 'string' || !/^[A-Za-z]{3}$/.test(currency)) return undefined;
+  const amount = energyWh / 1000 * rate;
+  if (!Number.isFinite(amount)) return undefined;
+  return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
+}
+
+class TeslemetryGrid extends HTMLElement {
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#generation++; this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  async #showHistory() {
+    this.#details = true; this.#history = undefined;
+    const generation = ++this.#generation; this.#render();
+    let result;
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit:1000}); }
+    catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
+    if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#render();
+  }
+  #render() {
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const a = device?.available === true ? device.attributes : undefined;
+    const watts = a?.grid_power_w;
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+    const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
+    button.textContent = this.#details ? 'Back to grid' : 'Grid details';
+    button.addEventListener('click', () => {
+      if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
+      else void this.#showHistory();
+    });
+    if (!this.#details) return;
+    const date = typeof a?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.energy_totals_date) && !Number.isNaN(Date.parse(a.energy_totals_date)) && new Date(a.energy_totals_date).toISOString().startsWith(a.energy_totals_date) ? a.energy_totals_date : undefined;
+    const cost = a?.tariff_available === true && date ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
+    this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
+    this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
+    const target = this.shadowRoot.querySelector('.history');
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');
+    renderTariffBands(svg, this.#periods, points);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', values.map((v,i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
+  }
+}
+customElements.define('hc-teslemetry-grid', TeslemetryGrid);
+
+class TeslemetryBattery extends HTMLElement {
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
+  constructor() { super(); this.attachShadow({ mode: 'open' }); }
+  set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
+  connectedCallback() { this.#listen(); }
+  disconnectedCallback() { this.#generation++; this.#stop?.(); this.#stop = undefined; }
+  #listen() {
+    this.#stop?.();
+    this.#stop = this.#host?.devices.subscribe(() => this.#render());
+    this.#render();
+  }
+  async #showHistory() {
+    this.#details = true;
+    this.#history = undefined;
+    const generation = ++this.#generation;
+    this.#render();
+    let result;
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: 1000 }); }
+    catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
+    if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#render();
+  }
+  #render() {
+    const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
+    const device = this.#host?.devices.get('teslemetry_powerwall');
+    const charge = device?.available === true ? device.attributes?.charge_pct : undefined;
+    const reading = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${Number(charge.toFixed(1))}%` : 'Unavailable';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Battery</span><strong></strong><div class="history"></div><button type="button"></button></div>';
+    this.shadowRoot.querySelector('strong').textContent = reading;
+    const button = this.shadowRoot.querySelector('button');
+    if (hadFocus) button.focus();
+    button.textContent = this.#details ? 'Back to battery' : 'Battery details';
+    button.addEventListener('click', () => {
+      if (this.#details) { this.#generation++; this.#details = false; this.#render(); }
+      else void this.#showHistory();
+    });
+    if (!this.#details) return;
+    const target = this.shadowRoot.querySelector('.history');
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Battery charge history');
+    renderTariffBands(svg, this.#periods, points);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
+    svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
+  }
+}
+customElements.define('hc-teslemetry-battery', TeslemetryBattery);
+
+const combinedSeries = [
+  { name:'Solar', field:'solar_power_w', color:'#e8a021' },
+  { name:'Grid', field:'grid_power_w', color:'#5599e8' },
+  { name:'Battery', field:'battery_power_w', color:'#50b987' },
+  { name:'Home', field:'home_power_w', color:'#c78ce8' }
+];
+class TeslemetryCombined extends HTMLElement {
+  #host; #generation = 0;
+  constructor() { super(); this.attachShadow({mode:'open'}); }
+  set host(host) { this.#host=host; if(this.isConnected) void this.#load(); }
+  connectedCallback() { void this.#load(); }
+  disconnectedCallback() { this.#generation++; }
+  async #load() {
+    const generation=++this.#generation;
+    this.shadowRoot.innerHTML='<style>:host{display:block;color:var(--ink,#20242b);font:inherit}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}.title{font-weight:600}.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;margin:10px 0}.key:before{content:"";display:inline-block;width:10px;height:10px;background:var(--key);margin-right:5px;border-radius:50%}svg{width:100%;height:150px;display:block}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.note{font-size:12px;color:var(--ink-muted,#777);margin-top:6px}</style><div class="card"><div class="title">Energy comparison</div><div class="legend"></div><div class="graph">Loading history…</div><div class="note">Power in kW. Positive: grid import and battery discharge; negative: export and charging.</div></div>';
+    const legend=this.shadowRoot.querySelector('.legend');
+    for(const series of combinedSeries){const label=document.createElement('span');label.className='key';label.style.setProperty('--key',series.color);label.textContent=series.name;legend.append(label);}
+    const host=this.#host;
+    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit:1000});return r?.ok && Array.isArray(r.data) ? r.data.slice(0,1000):[];}catch{return [];}};
+    const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
+    if(generation!==this.#generation || !this.isConnected)return;
+    const series=all.slice(0,4).map(rows=>rows.filter(p=>typeof p?.value==='number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)));
+    const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    const target=this.shadowRoot.querySelector('.graph');target.textContent='';
+    if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
+    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(p=>p.value),min=Math.min(...values),max=Math.max(...values);
+    if(end===start){target.textContent='Not enough history yet';return;}
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 110');svg.setAttribute('role','img');svg.setAttribute('aria-label','Combined power history');
+    renderTariffBands(svg,all[4],points);
+    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
+    target.append(svg);
+    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min/1000).toFixed(2))}–${Number((max/1000).toFixed(2))} kW`;
+    const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
+    target.append(range,dates);
+  }
+}
+customElements.define('hc-teslemetry-combined', TeslemetryCombined);
