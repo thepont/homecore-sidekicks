@@ -330,7 +330,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
     while probe.messages.try_recv().is_ok() {}
     let password_file = fixture.root.join("mqtt-password");
     fs::write(&password_file, "fixture-password").unwrap();
-    let _process = Process(
+    let mut process = Process(
         Command::new(env!("CARGO_BIN_EXE_homecore-homekit"))
             .env("MQTT_HOST", "127.0.0.1")
             .env("MQTT_PORT", broker.port.to_string())
@@ -502,6 +502,29 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .unwrap();
+    let mut crash_probe = mqtt_broker::Probe::start(broker.port).await;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let msg = crash_probe.messages.recv().await.unwrap();
+            if msg.topic == smoke_availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("smoke detector should be online after broker restart");
+    process.0.kill().unwrap();
+    process.0.wait().unwrap();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let msg = crash_probe.messages.recv().await.unwrap();
+            if msg.topic == smoke_availability && msg.payload.as_ref() == b"offline" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("killed controller must mark smoke detector offline");
 }
 
 #[tokio::test]

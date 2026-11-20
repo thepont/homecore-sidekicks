@@ -64,6 +64,7 @@ async fn run() -> Result<(), &'static str> {
     let mut options = MqttOptions::new(format!("{plugin}-publisher"), host, port);
     options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(15));
+    let availability_options = options.clone();
     let (mqtt, mut events) = AsyncClient::new(options, 32);
     let (ready, mut connection) = watch::channel(false);
     let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(32);
@@ -108,7 +109,7 @@ async fn run() -> Result<(), &'static str> {
                 continue;
             };
             tokio::select! {
-            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx) => {
+            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx, Some(availability_options.clone())) => {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 _ = connection.changed() => {}

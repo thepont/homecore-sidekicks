@@ -378,8 +378,16 @@ pub async fn run_contact_publisher_with_interval(
     refresh: std::time::Duration,
 ) -> Result<(), &'static str> {
     let (_sender, mut commands) = tokio::sync::mpsc::channel(16);
-    run_sensor_publisher_with_commands(mqtt, plugin, bridge_id, state_dir, refresh, &mut commands)
-        .await
+    run_sensor_publisher_with_commands(
+        mqtt,
+        plugin,
+        bridge_id,
+        state_dir,
+        refresh,
+        &mut commands,
+        None,
+    )
+    .await
 }
 
 /// Publish sensor state and process validated homeCore commands.
@@ -390,6 +398,7 @@ pub async fn run_sensor_publisher_with_commands(
     state_dir: std::path::PathBuf,
     refresh: std::time::Duration,
     commands: &mut tokio::sync::mpsc::Receiver<(String, Value)>,
+    availability_options: Option<rumqttc::MqttOptions>,
 ) -> Result<(), &'static str> {
     if refresh < std::time::Duration::from_secs(1) || refresh > std::time::Duration::from_secs(3600)
     {
@@ -400,6 +409,15 @@ pub async fn run_sensor_publisher_with_commands(
         "homecore/devices/homekit_{}_",
         bridge_id.replace(':', "").to_ascii_lowercase()
     );
+    let mut guards = std::collections::HashMap::new();
+    if let Some(options) = &availability_options {
+        for (aid, _) in watch.current() {
+            guards.insert(
+                *aid,
+                AvailabilityGuard::start(options.clone(), &prefix, *aid).await?,
+            );
+        }
+    }
     for (aid, state) in watch.current() {
         if state.get("on").is_some() {
             mqtt.subscribe(format!("{prefix}{aid}/cmd"), rumqttc::QoS::AtLeastOnce)
@@ -419,8 +437,17 @@ pub async fn run_sensor_publisher_with_commands(
             }
         };
         if update.1.is_null() {
+            guards.remove(&update.0);
             contact_availability(&mqtt, &bridge_id, &[update], false).await?;
             continue;
+        }
+        if !guards.contains_key(&update.0) {
+            if let Some(options) = &availability_options {
+                guards.insert(
+                    update.0,
+                    AvailabilityGuard::start(options.clone(), &prefix, update.0).await?,
+                );
+            }
         }
         if update.1.get("on").is_some() {
             mqtt.subscribe(
@@ -435,6 +462,60 @@ pub async fn run_sensor_publisher_with_commands(
     }
     contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
+}
+
+struct AvailabilityGuard(tokio::task::JoinHandle<()>);
+
+impl AvailabilityGuard {
+    async fn start(
+        mut options: rumqttc::MqttOptions,
+        prefix: &str,
+        aid: u64,
+    ) -> Result<Self, &'static str> {
+        let topic = format!("{prefix}{aid}/availability");
+        options.set_client_id(format!("hc-availability-{}-{aid}", uuid::Uuid::new_v4()));
+        options.set_last_will(rumqttc::LastWill::new(
+            topic.clone(),
+            "offline",
+            rumqttc::QoS::AtLeastOnce,
+            true,
+        ));
+        let (client, mut events) = rumqttc::AsyncClient::new(options, 8);
+        let (ready, received) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut ready = Some(ready);
+            loop {
+                match events.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Incoming::ConnAck(_))) => {
+                        if client
+                            .publish(&topic, rumqttc::QoS::AtLeastOnce, true, "online")
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        if let Some(ready) = ready.take() {
+                            let _ = ready.send(());
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
+        });
+        match tokio::time::timeout(std::time::Duration::from_secs(10), received).await {
+            Ok(Ok(())) => Ok(Self(task)),
+            _ => {
+                task.abort();
+                Err("Cannot establish device availability")
+            }
+        }
+    }
+}
+impl Drop for AvailabilityGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 async fn contact_availability(
