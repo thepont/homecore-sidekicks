@@ -41,8 +41,8 @@ through `host.command` and keeps the reported display until the device echoes
 the requested value. Adapters must enforce command validity and interlocks
 themselves because commands may also come from outside the card.
 
-Mitsubishi CN105 is the first consumer. Its adapter publishes read-only
-readings today.
+Mitsubishi CN105 is the first consumer. Its adapter sends commands to each
+controller and advertises the controls supported by that unit.
 
 ## Tests
 

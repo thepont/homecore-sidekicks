@@ -1,6 +1,7 @@
 //! One MQTT identity per unit preserves retained discovery and per-device last wills.
 use crate::{
     config::{Config, Unit},
+    control::{Command, Controls, ReceivedCommand, MAX_COMMAND_BYTES},
     source::{self, Observation},
     ui,
 };
@@ -64,6 +65,9 @@ impl Publication {
             if let Some(info) = &value.info {
                 values.extend(info.values.clone());
                 attributes.extend(info.attributes.clone());
+            }
+            if let Some(controls) = Controls::from_snapshot(&value.state) {
+                controls.describe(&mut values, &mut attributes);
             }
             values.get("cn105_connected") == Some(&Value::Bool(true))
         } else {
@@ -176,11 +180,24 @@ async fn drive_mqtt(
     mut eventloop: EventLoop,
     ready_tx: watch::Sender<bool>,
     management: Option<(String, mpsc::Sender<Vec<u8>>)>,
+    device_commands: (String, mpsc::Sender<ReceivedCommand>),
 ) {
     loop {
         match eventloop.poll().await {
             Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                 ready_tx.send_replace(true);
+            }
+            Ok(Event::Incoming(Incoming::Publish(message)))
+                if message.topic == device_commands.0 =>
+            {
+                if !message.retain && !message.dup && message.payload.len() <= MAX_COMMAND_BYTES {
+                    if let Ok(command) = serde_json::from_slice::<Command>(&message.payload) {
+                        let _ = device_commands.1.try_send(ReceivedCommand {
+                            command,
+                            received: Instant::now(),
+                        });
+                    }
+                }
             }
             Ok(Event::Incoming(Incoming::Publish(message))) => {
                 if let Some((topic, requests)) = &management {
@@ -230,12 +247,25 @@ async fn run_unit(
     let command_topic = format!("homecore/plugins/{plugin}/manage/cmd");
     let response_topic = format!("homecore/plugins/{plugin}/manage/response");
     let (requests_tx, mut requests) = mpsc::channel(1);
+    let control_topic = format!("homecore/devices/{device}/cmd");
+    let (commands_tx, commands) = mpsc::channel(8);
     let management = assets
         .as_ref()
         .map(|_| (command_topic.clone(), requests_tx));
     let _tasks = Tasks(vec![
-        tokio::spawn(drive_mqtt(eventloop, ready_tx, management)),
-        tokio::spawn(source::run(unit.clone(), stale, source_tx)),
+        tokio::spawn(drive_mqtt(
+            eventloop,
+            ready_tx,
+            management,
+            (control_topic.clone(), commands_tx),
+        )),
+        tokio::spawn(source::run(
+            unit.clone(),
+            stale,
+            source_tx,
+            commands,
+            ready.clone(),
+        )),
     ]);
     let mut publisher = Publisher {
         mqtt,
@@ -255,6 +285,12 @@ async fn run_unit(
                 if changed.is_err() { return; }
                 let connected = *ready.borrow_and_update();
                 if connected {
+                    if !matches!(
+                        time::timeout(Duration::from_secs(2), publisher.mqtt.subscribe(&control_topic, QoS::AtLeastOnce)).await,
+                        Ok(Ok(()))
+                    ) {
+                        return;
+                    }
                     let serve_ui = if assets.is_some() && matches!(
                         time::timeout(Duration::from_secs(2), publisher.mqtt.subscribe(&command_topic, QoS::AtLeastOnce)).await,
                         Ok(Ok(()))
@@ -269,7 +305,8 @@ async fn run_unit(
                 if changed.is_err() { return; }
                 let snapshot = latest.borrow_and_update().clone();
                 let connected = snapshot.as_ref().is_some_and(|value| value.state.values.get("cn105_connected") == Some(&Value::Bool(true)));
-                if *ready.borrow() && (!connected || !publisher.available) {
+                let control_echo = snapshot.as_ref().is_some_and(|value| value.control_echo);
+                if *ready.borrow() && (!connected || !publisher.available || control_echo) {
                     let _ = publisher.publish(snapshot.as_ref(), stale).await;
                 }
             }
