@@ -244,6 +244,54 @@ impl TariffState {
     }
 }
 
+/// Keeps the last accepted timestamp for each totals topic across reconnects.
+#[derive(Default)]
+struct TotalsState {
+    energy_updated: Option<chrono::DateTime<chrono::FixedOffset>>,
+    connectors_updated: Option<chrono::DateTime<chrono::FixedOffset>>,
+    site_updated: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+impl TotalsState {
+    fn apply(
+        &mut self,
+        event: &str,
+        data: &str,
+        site: u64,
+        sender: &watch::Sender<Map<String, Value>>,
+    ) {
+        let (fields, newest) = match event {
+            "energy_totals" => (parse_event(data, site), &mut self.energy_updated),
+            "wall_connector_totals" => (
+                parse_connector_totals(data, site),
+                &mut self.connectors_updated,
+            ),
+            "site_info" => (parse_site_info(data, site), &mut self.site_updated),
+            _ => return,
+        };
+        let Some(fields) = fields else {
+            return;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            return;
+        };
+        let Some(created) = value
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        else {
+            return;
+        };
+        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        if created <= now + chrono::Duration::minutes(2)
+            && newest.is_none_or(|previous| created > previous)
+        {
+            *newest = Some(created);
+            sender.send_modify(|state| state.extend(fields));
+        }
+    }
+}
+
 pub async fn listen(
     base: String,
     site: u64,
@@ -273,9 +321,7 @@ pub async fn listen(
         Ok(client) => client,
         Err(_) => return,
     };
-    let mut latest = None;
-    let mut latest_connector = None;
-    let mut latest_site = None;
+    let mut totals = TotalsState::default();
     loop {
         let url = format!(
             "{}/sse?topics=energy_totals,wall_connector_totals,site_info,tariff_content_v2",
@@ -310,38 +356,7 @@ pub async fn listen(
                             if matches!(event.as_str(), "site_info" | "tariff_content_v2") {
                                 tariffs.send_modify(|state| state.apply(&event, &data, site));
                             }
-                            if event == "energy_totals"
-                                || event == "wall_connector_totals"
-                                || event == "site_info"
-                            {
-                                let (fields, newest) = if event == "energy_totals" {
-                                    (parse_event(&data, site), &mut latest)
-                                } else if event == "wall_connector_totals" {
-                                    (parse_connector_totals(&data, site), &mut latest_connector)
-                                } else {
-                                    (parse_site_info(&data, site), &mut latest_site)
-                                };
-                                if let Some(fields) = fields {
-                                    let created = serde_json::from_str::<Value>(&data)
-                                        .ok()
-                                        .and_then(|v| {
-                                            v.get("createdAt")?.as_str().map(str::to_owned)
-                                        })
-                                        .and_then(|v| {
-                                            chrono::DateTime::parse_from_rfc3339(&v).ok()
-                                        });
-                                    if let Some(created) = created {
-                                        let now: chrono::DateTime<chrono::Utc> =
-                                            std::time::SystemTime::now().into();
-                                        if created <= now + chrono::Duration::minutes(2)
-                                            && newest.is_none_or(|previous| created > previous)
-                                        {
-                                            *newest = Some(created);
-                                            sender.send_modify(|state| state.extend(fields));
-                                        }
-                                    }
-                                }
-                            }
+                            totals.apply(&event, &data, site, &sender);
                             event.clear();
                             data.clear();
                         } else if let Some(value) = line.strip_prefix("event:") {
