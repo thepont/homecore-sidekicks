@@ -1,0 +1,72 @@
+#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
+#[allow(dead_code)]
+mod mqtt_broker;
+use serde_json::{json, Value};
+use std::time::Duration;
+
+#[tokio::test]
+async fn unconfigured_service_advertises_admin_setup_and_rejects_missing_pairing_details() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let broker = mqtt_broker::Broker::start().await;
+            let mut probe = mqtt_broker::Probe::start(broker.port).await;
+            let root = std::env::temp_dir().join(format!("homekit-setup-{}", std::process::id()));
+            std::fs::create_dir(&root).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let task = tokio::task::spawn_local(homecore_homekit::setup::run(
+                "127.0.0.1".into(),
+                broker.port,
+                "fixture-user".into(),
+                "fixture-password".into(),
+                root.clone(),
+                std::path::PathBuf::from("ui"),
+            ));
+            let caps = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let p = probe.messages.recv().await.unwrap();
+                    if p.topic == "homecore/plugins/fixture-user/capabilities" {
+                        break serde_json::from_slice::<Value>(&p.payload).unwrap();
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert!(caps.get("ui").is_some());
+            for action in ["discover_accessories", "pair_accessory"] {
+                assert!(caps["actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a["id"] == action && a["requires_role"] == "admin"));
+            }
+            probe
+                .client
+                .publish(
+                    "homecore/plugins/fixture-user/manage/cmd",
+                    rumqttc::QoS::AtLeastOnce,
+                    false,
+                    json!({"action":"pair_accessory","request_id":"bad"}).to_string(),
+                )
+                .await
+                .unwrap();
+            let reply = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let p = probe.messages.recv().await.unwrap();
+                    if p.topic.contains("manage/") && !p.topic.ends_with("/cmd") {
+                        if let Ok(v) = serde_json::from_slice::<Value>(&p.payload) {
+                            if v["request_id"] == "bad" {
+                                break v;
+                            }
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(reply["status"], "error");
+            task.abort();
+            std::fs::remove_dir_all(root).unwrap();
+        })
+        .await;
+}

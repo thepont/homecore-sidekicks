@@ -1,0 +1,114 @@
+use plugin_sdk_rs::{types::Capabilities, AsyncActionFuture, PluginClient, PluginConfig};
+use serde_json::json;
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
+
+/// Serve authenticated homeCore management requests for an unconfigured controller.
+pub async fn run(
+    host: String,
+    port: u16,
+    id: String,
+    password: String,
+    state_dir: PathBuf,
+    ui: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = PluginClient::connect(PluginConfig {
+        broker_host: host,
+        broker_port: port,
+        plugin_id: id,
+        password,
+    })
+    .await?;
+    let caps: Capabilities = serde_json::from_value(json!({"spec":"1","plugin_id":"","actions":[
+        {"id":"discover_accessories","label":"Find HomeKit accessories","requires_role":"admin","timeout_ms":8000},
+        {"id":"pair_accessory","label":"Connect HomeKit accessory","requires_role":"admin","timeout_ms":45000,"params":{"id":{"type":"string"},"pin":{"type":"string"}}}
+    ]}))?;
+    let discoveries = Arc::new(Mutex::new(Vec::<hap_transport::DiscoveredAccessory>::new()));
+    let management = client
+        .enable_management(30, Some(env!("CARGO_PKG_VERSION").into()), None, None)
+        .await?
+        .with_capabilities(caps)
+        .with_ui_dir(ui, env!("CARGO_PKG_VERSION"))
+        .with_async_handler(move |command| {
+            let action = command.get("action")?.as_str()?;
+            if action != "discover_accessories" && action != "pair_accessory" {
+                return None;
+            }
+            let action = action.to_owned();
+            let params = command.clone();
+            let discoveries = discoveries.clone();
+            let state_dir = state_dir.clone();
+            Some(Box::pin(async move {
+                if action == "discover_accessories" {
+                    match hap_transport::discover(Duration::from_secs(3)).await {
+                        Ok(found) => {
+                            let found: Vec<_> = found
+                                .into_iter()
+                                .filter(|a| a.id.len() == 17 && a.name.len() <= 128)
+                                .take(100)
+                                .collect();
+                            let items: Vec<_> = found
+                                .iter()
+                                .map(|a| json!({"id":a.id,"name":a.name,"paired":a.paired}))
+                                .collect();
+                            *discoveries.lock().await = found;
+                            json!({"status":"ok","accessories":items})
+                        }
+                        Err(_) => json!({"status":"error","error":"Discovery failed"}),
+                    }
+                } else {
+                    let (Some(id), Some(pin)) = (
+                        params.get("id").and_then(|v| v.as_str()),
+                        params.get("pin").and_then(|v| v.as_str()),
+                    ) else {
+                        return json!({"status":"error","error":"Invalid pairing details"});
+                    };
+                    let found: Vec<_> = discoveries
+                        .lock()
+                        .await
+                        .iter()
+                        .filter(|a| a.id.eq_ignore_ascii_case(id) && !a.paired)
+                        .cloned()
+                        .collect();
+                    if found.len() != 1 {
+                        return json!({"status":"error","error":"Accessory unavailable"});
+                    }
+                    let accessory = found[0].clone();
+                    let pin = pin.to_owned();
+                    let result = tokio::task::spawn_blocking(move || {
+                        let runtime = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|_| "Cannot start pairing")?;
+                        runtime.block_on(async {
+                            tokio::time::timeout(
+                                Duration::from_secs(38),
+                                crate::pair_and_read(
+                                    hap_controller::Discovered::Ip(accessory),
+                                    &pin,
+                                    &state_dir,
+                                ),
+                            )
+                            .await
+                            .map_err(|_| {
+                                "Pairing confirmation was lost; accessory recovery may be needed"
+                            })?
+                        })
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(_)) => json!({"status":"ok"}),
+                        Ok(Err(error))
+                            if error.contains("recovery")
+                                || error.contains("confirmation was lost") =>
+                        {
+                            json!({"status":"recovery_required"})
+                        }
+                        _ => json!({"status":"error","error":"Pairing failed"}),
+                    }
+                }
+            }) as AsyncActionFuture)
+        });
+    client.run_managed(|_, _| {}, management).await?;
+    Ok(())
+}

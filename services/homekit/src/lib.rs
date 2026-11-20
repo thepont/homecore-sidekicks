@@ -1,4 +1,5 @@
 use serde_json::{json, Map, Value};
+pub mod setup;
 
 /// Publish a validated contact snapshot using homeCore's device protocol.
 pub async fn publish_contacts(
