@@ -432,9 +432,10 @@ class TeslemetryGrid extends HTMLElement {
       else void this.#showHistory();
     });
     if (!this.#details) return;
-    const cost = a?.tariff_available === true ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
+    const date = typeof a?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.energy_totals_date) && !Number.isNaN(Date.parse(a.energy_totals_date)) && new Date(a.energy_totals_date).toISOString().startsWith(a.energy_totals_date) ? a.energy_totals_date : undefined;
+    const cost = a?.tariff_available === true && date ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
-    this.shadowRoot.querySelector('.cost-note').textContent = cost ? 'Daily import at the current rate; excludes fees.' : '';
+    this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
