@@ -2,7 +2,7 @@
 # address and pinning the image digest from the running node's local registry.
 containers:
   - name: hisense
-    image: localhost:15000/homecore-hisense:4cf8c48
+    image: localhost:15000/homecore-hisense:74823bd
     env:
       - { name: HISENSE_IP, value: 192.0.2.50 }
       - { name: HISENSE_PORT, value: '18400' }
