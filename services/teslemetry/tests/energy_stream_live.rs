@@ -28,7 +28,7 @@ async fn real_stream_and_live_site_are_published_to_fake_broker() {
     let root = std::env::temp_dir().join(format!("energy-live-fixture-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
     fs::write(root.join("mqtt-password"), "fixture-password").unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_powerwall-bridge"))
+    let child = Command::new(env!("CARGO_BIN_EXE_teslemetry-bridge"))
         .env("TESLEMETRY_URL", "https://api.teslemetry.com")
         .env("TESLEMETRY_SITE_ID", site.trim())
         .env("TESLEMETRY_TOKEN_FILE", token)

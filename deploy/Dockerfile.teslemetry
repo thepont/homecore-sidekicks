@@ -1,0 +1,5 @@
+FROM scratch
+COPY runtime/ /
+COPY teslemetry-bridge /teslemetry-bridge
+USER 65532:65532
+ENTRYPOINT ["/teslemetry-bridge"]

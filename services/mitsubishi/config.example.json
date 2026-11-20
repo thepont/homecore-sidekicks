@@ -1,0 +1,16 @@
+{
+  "units": [
+    {
+      "id": "living_room",
+      "name": "Living room AC",
+      "url": "ws://192.0.2.10/ws"
+    },
+    {
+      "id": "bedroom",
+      "name": "Bedroom AC",
+      "url": "ws://192.0.2.11/ws"
+    }
+  ],
+  "publish_interval_secs": 5,
+  "stale_after_secs": 10
+}

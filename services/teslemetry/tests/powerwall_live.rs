@@ -9,7 +9,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         .trim()
         .parse()
         .unwrap();
-    let client = homecore_powerwall::http::blocking_client().unwrap();
+    let client = homecore_teslemetry::http::blocking_client().unwrap();
     let direct: serde_json::Value = client
         .get(format!(
             "https://api.teslemetry.com/api/1/energy_sites/{site}/live_status"
@@ -23,7 +23,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         .unwrap();
     let expected = direct["response"]["percentage_charged"].as_f64().unwrap();
     let source_power = direct["response"]["battery_power"].as_f64().unwrap();
-    let actual = homecore_powerwall::teslemetry::fetch_powerwall(
+    let actual = homecore_teslemetry::teslemetry::fetch_powerwall(
         &client,
         "https://api.teslemetry.com",
         site,
@@ -38,7 +38,7 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
         (actual.power_w - source_power).abs() < 500.0,
         "power readings differ by at least 500 W between samples"
     );
-    let (_, energy) = homecore_powerwall::teslemetry::fetch_energy(
+    let (_, energy) = homecore_teslemetry::teslemetry::fetch_energy(
         &client,
         "https://api.teslemetry.com",
         site,
@@ -58,4 +58,47 @@ fn powerwall_adapter_agrees_with_the_live_tesla_source() {
             "{target} differs between samples"
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "requires a private Teslemetry credential and network; read-only"]
+async fn async_energy_reader_agrees_with_live_source() {
+    let token = fs::read_to_string(env::var("TESLEMETRY_TOKEN_FILE").unwrap()).unwrap();
+    let site: u64 = fs::read_to_string(env::var("TESLEMETRY_SITE_ID_FILE").unwrap())
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let client = homecore_teslemetry::http::client().unwrap();
+    let direct: serde_json::Value = client
+        .get(format!(
+            "https://api.teslemetry.com/api/1/energy_sites/{site}/live_status"
+        ))
+        .bearer_auth(token.trim())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let (actual, _) = homecore_teslemetry::teslemetry::fetch_energy_async(
+        &client,
+        "https://api.teslemetry.com",
+        site,
+        token.trim(),
+    )
+    .await
+    .unwrap();
+    let charge = direct["response"]["percentage_charged"].as_f64().unwrap();
+    let power = direct["response"]["battery_power"].as_f64().unwrap();
+    assert!(
+        (actual.charge_pct - charge).abs() < 0.5,
+        "async charge readings differ"
+    );
+    assert!(
+        (actual.power_w - power).abs() < 1500.0,
+        "async power readings differ between samples"
+    );
 }
