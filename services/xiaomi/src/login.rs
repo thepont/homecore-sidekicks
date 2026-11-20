@@ -212,11 +212,15 @@ pub struct Gateway {
     pub name: String,
     pub model: String,
     pub address: String,
+    device_id: Option<String>,
     token: String,
 }
 impl Gateway {
     pub fn save_configuration(&self, store: &crate::store::Store) -> Result<(), &'static str> {
-        let config = crate::store::GatewayConfig::new(&self.address, &self.model, &self.token)?;
+        let mut config = crate::store::GatewayConfig::new(&self.address, &self.model, &self.token)?;
+        if let Some(id) = &self.device_id {
+            config = config.with_device_id(id)?;
+        }
         store.save_gateway(&config)
     }
     pub fn save_token(&self, store: &crate::store::Store) -> Result<(), &'static str> {
@@ -372,6 +376,7 @@ impl Provider {
                     name: name.to_owned(),
                     model: model.to_owned(),
                     address: address.to_string(),
+                    device_id: item.get("did").and_then(Value::as_str).map(str::to_owned),
                     token: token.to_owned(),
                 });
                 if gateways.len() > 64 {

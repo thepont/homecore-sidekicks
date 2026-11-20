@@ -93,6 +93,7 @@ pub struct GatewayConfig {
     address: String,
     model: String,
     token: String,
+    device_id: Option<String>,
 }
 impl GatewayConfig {
     pub fn new(address: &str, model: &str, token: &str) -> Result<Self, &'static str> {
@@ -111,6 +112,7 @@ impl GatewayConfig {
             address: address.into(),
             model: model.into(),
             token: token.into(),
+            device_id: None,
         })
     }
     pub fn address(&self) -> &str {
@@ -118,6 +120,21 @@ impl GatewayConfig {
     }
     pub fn model(&self) -> &str {
         &self.model
+    }
+    pub fn with_device_id(mut self, id: &str) -> Result<Self, &'static str> {
+        if id.is_empty()
+            || id.len() > 64
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            return Err("Invalid gateway identity");
+        }
+        self.device_id = Some(id.to_owned());
+        Ok(self)
+    }
+    pub fn device_id(&self) -> Option<&str> {
+        self.device_id.as_deref()
     }
     pub fn token(&self) -> &str {
         &self.token
@@ -151,7 +168,7 @@ impl Store {
             .custom_flags(libc::O_NOFOLLOW)
             .open(&tmp.0)
             .map_err(|_| "Cannot create secret")?;
-        let data = serde_json::json!({"address":config.address, "model":config.model, "token":config.token});
+        let data = serde_json::json!({"address":config.address, "model":config.model, "token":config.token, "device_id":config.device_id});
         serde_json::to_writer(&mut file, &data).map_err(|_| "Cannot write secret")?;
         file.sync_all().map_err(|_| "Cannot write secret")?;
         fs::rename(&tmp.0, destination).map_err(|_| "Cannot save secret")?;
@@ -185,10 +202,12 @@ impl Store {
                 .and_then(|v| v.as_str())
                 .ok_or("Invalid gateway configuration")
         };
-        Ok(Some(GatewayConfig::new(
-            field("address")?,
-            field("model")?,
-            field("token")?,
-        )?))
+        let mut config = GatewayConfig::new(field("address")?, field("model")?, field("token")?)?;
+        match value.get("device_id") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(id)) => config = config.with_device_id(id)?,
+            Some(_) => return Err("Invalid gateway identity"),
+        }
+        Ok(Some(config))
     }
 }
