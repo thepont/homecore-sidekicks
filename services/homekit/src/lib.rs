@@ -190,3 +190,81 @@ pub async fn pair_and_read(
     }
     contact_state(&json!({"services":services})).ok_or("Invalid contact reading")
 }
+
+/// Reconnect to a previously paired contact accessory.
+pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, &'static str> {
+    use hap_controller::{
+        CharacteristicType, HapController, JsonFileStore, PairingStore, ServiceType,
+    };
+    use std::os::unix::fs::PermissionsExt;
+    if id.len() != 17
+        || !id.bytes().enumerate().all(|(i, b)| {
+            if i % 3 == 2 {
+                b == b':'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+    {
+        return Err("Invalid pairing identity");
+    }
+    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err("Invalid pairing directory");
+    }
+    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
+    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let path = state_dir.join("pairing.json");
+    let metadata = std::fs::symlink_metadata(&path).map_err(|_| "Pairing store unavailable")?;
+    if !metadata.is_file()
+        || metadata.permissions().mode() & 0o077 != 0
+        || metadata.len() > 1024 * 1024
+    {
+        return Err("Invalid pairing store");
+    }
+    let store = JsonFileStore::new(path);
+    if store
+        .load_controller()
+        .await
+        .map_err(|_| "Cannot read HomeKit identity")?
+        .is_none()
+    {
+        return Err("HomeKit identity unavailable");
+    }
+    let controller = HapController::new(store)
+        .await
+        .map_err(|_| "Cannot initialize HomeKit controller")?;
+    let mut handle = controller
+        .connect(id)
+        .await
+        .map_err(|_| "Cannot reconnect to HomeKit accessory")?;
+    handle
+        .accessories()
+        .await
+        .map_err(|_| "Cannot read HomeKit accessories")?;
+    let (aid, iid) = handle
+        .find(
+            ServiceType::ContactSensor,
+            CharacteristicType::ContactSensorState,
+        )
+        .map_err(|_| "Contact sensor unavailable")?;
+    let contact = handle
+        .read(aid, iid)
+        .await
+        .map_err(|_| "Cannot read contact")?
+        .to_json();
+    let mut services = vec![json!({"type":"80","characteristics":[{"type":"6A","value":contact}]})];
+    if let Ok((battery_aid, battery_iid)) =
+        handle.find(ServiceType::Battery, CharacteristicType::BatteryLevel)
+    {
+        if battery_aid == aid {
+            let battery = handle
+                .read(battery_aid, battery_iid)
+                .await
+                .map_err(|_| "Cannot read battery")?
+                .to_json();
+            services.push(json!({"type":"96","characteristics":[{"type":"68","value":battery}]}));
+        }
+    }
+    contact_state(&json!({"services":services})).ok_or("Invalid contact reading")
+}

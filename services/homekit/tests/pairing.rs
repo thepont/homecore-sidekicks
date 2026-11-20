@@ -94,4 +94,8 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
     let stored: serde_json::Value =
         serde_json::from_slice(&fs::read(state_root.join("pairing.json")).unwrap()).unwrap();
     assert_ne!(stored["controller"]["id"], "hap-rust-controller");
+    let restored = homecore_homekit::read_saved("02:11:22:33:44:55", &state_root)
+        .await
+        .unwrap();
+    assert_eq!(restored, json!({"open":true,"battery_pct":69}));
 }
