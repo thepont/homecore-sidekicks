@@ -588,19 +588,26 @@ pub async fn watch_contacts_saved(
         .map_err(|_| "Cannot read HomeKit accessories")?
         .to_vec();
     let mut contacts = Vec::new();
+    let mut batteries = Vec::new();
     for accessory in accessories {
         for service in accessory.services {
-            if service.service_type == ServiceType::ContactSensor {
-                for characteristic in service.characteristics {
-                    if characteristic.char_type == CharacteristicType::ContactSensorState {
-                        contacts.push((accessory.aid, characteristic.iid));
-                    }
+            for characteristic in service.characteristics {
+                if service.service_type == ServiceType::ContactSensor
+                    && characteristic.char_type == CharacteristicType::ContactSensorState
+                {
+                    contacts.push((accessory.aid, characteristic.iid));
+                } else if service.service_type == ServiceType::Battery
+                    && characteristic.char_type == CharacteristicType::BatteryLevel
+                    && characteristic.perms.events
+                {
+                    batteries.push((accessory.aid, characteristic.iid));
                 }
             }
         }
     }
+    batteries.retain(|(aid, _)| contacts.iter().any(|(contact_aid, _)| contact_aid == aid));
     let mut events = Box::pin(handle.events());
-    for (aid, iid) in &contacts {
+    for (aid, iid) in contacts.iter().chain(&batteries) {
         handle
             .subscribe(*aid, *iid)
             .await
@@ -612,20 +619,27 @@ pub async fn watch_contacts_saved(
     let task = tokio::spawn(async move {
         let _lock = lock;
         while let Some(event) = events.next().await {
-            if !contacts.contains(&(event.aid, event.iid)) {
+            let is_contact = contacts.contains(&(event.aid, event.iid));
+            if !is_contact && !batteries.contains(&(event.aid, event.iid)) {
                 continue;
             }
-            let value = match handle.read(event.aid, event.iid).await {
+            let value_at_event = match handle.read(event.aid, event.iid).await {
                 Ok(value) => value.to_json(),
                 Err(_) => break,
             };
-            let open = match value.as_u64() {
-                Some(0) => false,
-                Some(1) => true,
-                _ => continue,
-            };
             if let Some((_, value)) = state.iter_mut().find(|(aid, _)| *aid == event.aid) {
-                value["open"] = json!(open);
+                if is_contact {
+                    value["open"] = match value_at_event.as_u64() {
+                        Some(0) => json!(false),
+                        Some(1) => json!(true),
+                        _ => continue,
+                    };
+                } else {
+                    value["battery_pct"] = match value_at_event.as_u64() {
+                        Some(n) if n <= 100 => json!(n),
+                        _ => continue,
+                    };
+                }
                 if send.try_send((event.aid, value.clone())).is_err() {
                     break;
                 }

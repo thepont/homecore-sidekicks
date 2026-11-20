@@ -199,6 +199,15 @@ async fn reads_each_contact_from_a_bridge_independently() {
         update,
         (readings[0].0, json!({"open":true,"battery_pct":69}))
     );
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "battery=50").unwrap();
+    let update = tokio::time::timeout(Duration::from_secs(5), watch.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        update,
+        (readings[0].0, json!({"open":true,"battery_pct":50}))
+    );
     drop(watch);
     let broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;

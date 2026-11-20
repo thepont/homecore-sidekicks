@@ -45,9 +45,12 @@ state.on('subscribe',()=>{
 require('readline').createInterface({input:process.stdin}).on('line',line=>{
   if(line==='close'){contactValue=0;state.updateValue(contactValue);}
   if(line==='open'){contactValue=1;state.updateValue(contactValue);}
+  if(line==='battery=50'){batteryValue=50;batteryState.updateValue(batteryValue);}
 });
 const battery = first.addService(Service.Battery, 'Fixture battery');
-battery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 69);
+let batteryValue=69;
+const batteryState=battery.getCharacteristic(Characteristic.BatteryLevel);
+batteryState.onGet(() => batteryValue);
 battery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);
 battery.getCharacteristic(Characteristic.StatusLowBattery).onGet(() => 0);
 if (bridgeMode) {
