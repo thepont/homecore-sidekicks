@@ -290,6 +290,9 @@ fn shipped_manifest_advertises_multiple_dashboard_cards() {
     assert!(slots
         .iter()
         .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-battery"));
+    assert!(slots
+        .iter()
+        .any(|s| s["slot"] == "dashboard.card" && s["element"] == "hc-teslemetry-combined"));
 }
 
 #[test]

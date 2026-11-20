@@ -40,6 +40,15 @@
         "compact",
         "standard"
       ]
+    },
+    {
+      "slot": "dashboard.card",
+      "element": "hc-teslemetry-combined",
+      "label": "Combined energy",
+      "forms": [
+        "large",
+        "standard"
+      ]
     }
   ]
 }

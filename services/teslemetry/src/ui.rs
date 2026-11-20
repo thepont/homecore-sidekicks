@@ -215,7 +215,7 @@ fn validate_manifest(m: &Value) -> Result<(), UiError> {
         return Err(UiError);
     }
     let slots = m["slots"].as_array().ok_or(UiError)?;
-    if slots.is_empty() || slots.len() > 4 {
+    if slots.is_empty() || slots.len() > 5 {
         return Err(UiError);
     }
     for (index, value) in slots.iter().enumerate() {
@@ -241,11 +241,15 @@ fn validate_manifest(m: &Value) -> Result<(), UiError> {
             }
             (
                 Some("dashboard.card"),
-                "hc-teslemetry-solar" | "hc-teslemetry-grid" | "hc-teslemetry-battery",
+                "hc-teslemetry-solar"
+                | "hc-teslemetry-grid"
+                | "hc-teslemetry-battery"
+                | "hc-teslemetry-combined",
             ) => {
                 let label = match element {
                     "hc-teslemetry-solar" => "Solar",
                     "hc-teslemetry-grid" => "Grid",
+                    "hc-teslemetry-combined" => "Combined energy",
                     _ => "Battery",
                 };
                 if slot

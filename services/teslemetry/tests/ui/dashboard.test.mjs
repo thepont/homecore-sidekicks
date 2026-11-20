@@ -172,3 +172,18 @@ test('repeated observations of the same tariff make one continuous band', async 
   const graph=page.getByRole('img',{name:'Grid power history'}); await graph.waitFor();
   assert.equal(await graph.locator('rect').count(),2);
 });
+
+test('combined graph compares solar, grid, battery and home power with tariff bands', async () => {
+  const manifest=JSON.parse(await readFile(new URL('manifest.json',ui),'utf8'));
+  assert.ok(manifest.slots.some(s=>s.slot==='dashboard.card' && s.element==='hc-teslemetry-combined'));
+  await page.evaluate(() => {
+    host.devices.history=async (_id,field)=>({ok:true,data:field==='tariff_buy_period'
+      ? [{at:'2026-11-20T01:00:00Z',value:'OFF_PEAK'}]
+      : [{at:'2026-11-20T01:00:00Z',value:500},{at:'2026-11-20T03:00:00Z',value:1500}]});
+    const c=document.createElement('hc-teslemetry-combined'); c.host=host; document.querySelector('main').replaceChildren(c);
+  });
+  const graph=page.getByRole('img',{name:'Combined power history'}); await graph.waitFor();
+  assert.equal(await graph.locator('polyline').count(),4);
+  assert.equal(await graph.getByText('OFF PEAK',{exact:true}).count(),1);
+  for(const label of ['Solar','Grid','Battery','Home']) assert.equal(await page.getByText(label,{exact:true}).count(),1);
+});

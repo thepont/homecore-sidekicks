@@ -102,6 +102,7 @@ async fn verify() {
         "hc-teslemetry-solar",
         "hc-teslemetry-grid",
         "hc-teslemetry-battery",
+        "hc-teslemetry-combined",
     ] {
         assert!(ui["slots"]
             .as_array()

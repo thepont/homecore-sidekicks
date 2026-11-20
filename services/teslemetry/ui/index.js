@@ -549,3 +549,41 @@ class TeslemetryBattery extends HTMLElement {
   }
 }
 customElements.define('hc-teslemetry-battery', TeslemetryBattery);
+
+const combinedSeries = [
+  { name:'Solar', field:'solar_power_w', color:'#e8a021' },
+  { name:'Grid', field:'grid_power_w', color:'#5599e8' },
+  { name:'Battery', field:'battery_power_w', color:'#50b987' },
+  { name:'Home', field:'home_power_w', color:'#c78ce8' }
+];
+class TeslemetryCombined extends HTMLElement {
+  #host; #generation = 0;
+  constructor() { super(); this.attachShadow({mode:'open'}); }
+  set host(host) { this.#host=host; if(this.isConnected) void this.#load(); }
+  connectedCallback() { void this.#load(); }
+  disconnectedCallback() { this.#generation++; }
+  async #load() {
+    const generation=++this.#generation;
+    this.shadowRoot.innerHTML='<style>:host{display:block;color:var(--ink,#20242b);font:inherit}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}.title{font-weight:600}.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;margin:10px 0}.key:before{content:"";display:inline-block;width:10px;height:10px;background:var(--key);margin-right:5px;border-radius:50%}svg{width:100%;height:150px;display:block}polyline{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.note{font-size:12px;color:var(--ink-muted,#777);margin-top:6px}</style><div class="card"><div class="title">Energy comparison</div><div class="legend"></div><div class="graph">Loading history…</div><div class="note">Power in kW. Positive: grid import and battery discharge; negative: export and charging.</div></div>';
+    const legend=this.shadowRoot.querySelector('.legend');
+    for(const series of combinedSeries){const label=document.createElement('span');label.className='key';label.style.setProperty('--key',series.color);label.textContent=series.name;legend.append(label);}
+    const host=this.#host;
+    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit:1000});return r?.ok && Array.isArray(r.data) ? r.data.slice(0,1000):[];}catch{return [];}};
+    const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
+    if(generation!==this.#generation || !this.isConnected)return;
+    const series=all.slice(0,4).map(rows=>rows.filter(p=>typeof p?.value==='number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)));
+    const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    const target=this.shadowRoot.querySelector('.graph');target.textContent='';
+    if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
+    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(p=>p.value),min=Math.min(...values),max=Math.max(...values);
+    if(end===start){target.textContent='Not enough history yet';return;}
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 110');svg.setAttribute('role','img');svg.setAttribute('aria-label','Combined power history');
+    renderTariffBands(svg,all[4],points);
+    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
+    target.append(svg);
+    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min/1000).toFixed(2))}–${Number((max/1000).toFixed(2))} kW`;
+    const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
+    target.append(range,dates);
+  }
+}
+customElements.define('hc-teslemetry-combined', TeslemetryCombined);
