@@ -38,3 +38,13 @@ fn accepts_checksummed_status_payload() {
     frame[14] ^= 1;
     assert!(parse_status_response(&frame).is_err());
 }
+
+#[test]
+fn power_command_uses_electrolux_power_frame() {
+    let frame =
+        homecore_electrolux::protocol::power_request(true).expect("power command supported");
+    assert_eq!(&frame[0..2], &[0x18, 0]);
+    assert_eq!(&frame[14..], br#"{"ac_pwr":1}"#);
+    let off = homecore_electrolux::protocol::power_request(false).unwrap();
+    assert_eq!(&off[14..], br#"{"ac_pwr":0}"#);
+}

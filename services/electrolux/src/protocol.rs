@@ -28,3 +28,31 @@ pub fn parse_status_response(frame: &[u8]) -> Result<Value, &'static str> {
         .ok_or("Invalid Electrolux response")?;
     serde_json::from_slice(payload).map_err(|_| "Invalid Electrolux response")
 }
+
+pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
+    let data: &[u8] = if on {
+        br#"{"ac_pwr":1}"#
+    } else {
+        br#"{"ac_pwr":0}"#
+    };
+    let mut frame = vec![
+        0x18,
+        0,
+        0xa5,
+        0xa5,
+        0x5a,
+        0x5a,
+        0,
+        0,
+        2,
+        0x0b,
+        data.len() as u8,
+        0,
+        0,
+        0,
+    ];
+    frame.extend_from_slice(data);
+    let sum = checksum(&frame[8..]);
+    frame[6..8].copy_from_slice(&sum.to_le_bytes());
+    Ok(frame)
+}
