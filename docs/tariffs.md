@@ -12,10 +12,14 @@ separate when displaying the values.
 
 Amounts come through in currency units per kWh. If a tariff supplies `AUD`, a
 value of `0.25` means 25 Australian cents per kWh and its schema unit is
-`AUD/kWh`. The checked tariff supplies no currency code. For that case,
-`tariff_currency` says `unspecified` and the unit is `currency/kWh`; a card should
-show that the currency was not supplied. The timezone alone does not establish
-the currency.
+`AUD/kWh`. A supplied currency code always wins.
+
+The checked tariff leaves the code out. The adapter uses Tesla's installation
+timezone and [IANA and Unicode CLDR data](../services/teslemetry/data/currency/README.md)
+to look up `Australia/Melbourne → AU → AUD`. The Powerwall card shows `AUD/kWh`
+and keeps the original amount. The device attributes record how the adapter
+determined the code. For an unmapped zone such as `UTC` or a region with several
+active currencies, the code remains `unspecified` and the unit is `currency/kWh`.
 
 ## Fields available to cards
 
@@ -24,7 +28,11 @@ the currency.
 - `tariff_buy_period` and `tariff_sell_period` identify the selected periods.
   A flat rate uses `ALL`.
 - `tariff_currency`, plus `tariff_name` and `tariff_provider` when supplied,
-  describe the source plan.
+  describe the plan.
+- `tariff_currency_source` is `tariff` for a supplied code, `site_timezone` for
+  an inferred code, or `unspecified` when neither is available.
+- `tariff_currency_region` gives the inferred territory, such as `AU`. It is
+  absent for a supplied or unknown currency.
 - `tariff_available` is true when a current buy price can be resolved.
 - `tariff_updated_at` dates the configuration. A fixed plan can keep the same
   timestamp for months.

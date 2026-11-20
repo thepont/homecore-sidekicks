@@ -806,7 +806,7 @@ async fn given_tariff_stream_then_homecore_receives_read_only_buy_and_sell_price
         ),
         (
             "tariff_content_v2",
-            json!({"site_id":42,"createdAt":now.to_rfc3339(),"tariff_content_v2":{"currency":"AUD","energy_charges":{"ALL":{"rates":{"ALL":0.237}}},"sell_tariff":{"energy_charges":{"ALL":{"rates":{"ALL":0.05301}}}}}}),
+            json!({"site_id":42,"createdAt":now.to_rfc3339(),"tariff_content_v2":{"energy_charges":{"ALL":{"rates":{"ALL":0.237}}},"sell_tariff":{"energy_charges":{"ALL":{"rates":{"ALL":0.05301}}}}}}),
         ),
     ];
     let app = Router::new()
@@ -850,6 +850,8 @@ async fn given_tariff_stream_then_homecore_receives_read_only_buy_and_sell_price
     assert_eq!(state["tariff_buy_price_per_kwh"], 0.237);
     assert_eq!(state["tariff_sell_price_per_kwh"], 0.05301);
     assert_eq!(state["tariff_currency"], "AUD");
+    assert_eq!(state["tariff_currency_source"], "site_timezone");
+    assert_eq!(state["tariff_currency_region"], "AU");
     assert_eq!(state["tariff_updated_at"], now.to_rfc3339());
     for name in ["tariff_buy_price_per_kwh", "tariff_sell_price_per_kwh"] {
         assert_eq!(schema["attributes"][name]["unit"], "AUD/kWh");
@@ -876,6 +878,9 @@ async fn given_tariff_stream_then_homecore_receives_read_only_buy_and_sell_price
     .expect("lost tariff stream must withdraw MQTT prices");
     assert!(unavailable.get("tariff_buy_price_per_kwh").is_none());
     assert!(unavailable.get("tariff_sell_price_per_kwh").is_none());
+    assert!(unavailable.get("tariff_currency").is_none());
+    assert!(unavailable.get("tariff_currency_source").is_none());
+    assert!(unavailable.get("tariff_currency_region").is_none());
     assert!(schema["attributes"]
         .get("tariff_buy_price_per_kwh")
         .is_none());
