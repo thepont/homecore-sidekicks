@@ -249,7 +249,7 @@ class TeslemetrySolar extends HTMLElement {
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
-    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : 'Not enough history yet'; return; }
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
@@ -311,7 +311,7 @@ class TeslemetryGrid extends HTMLElement {
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? 'Daily import at the current rate; excludes fees.' : '';
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
-    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : 'Not enough history yet'; return; }
+    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');

@@ -80,3 +80,12 @@ test('history graph positions readings by time and labels the estimate basis', a
   assert.equal(Number(points.split(' ')[1].split(',')[0]), 75);
   assert.equal(await page.getByText('Daily import at the current rate; excludes fees.', {exact:true}).count(), 1);
 });
+
+test('history errors are distinct from an empty history', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async () => ({ok:false, error:'offline'});
+    const c = document.createElement('hc-teslemetry-solar'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button', {name:'Solar details'}).click();
+  await page.getByText('History unavailable', {exact:true}).waitFor();
+});
