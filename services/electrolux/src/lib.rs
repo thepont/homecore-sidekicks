@@ -67,3 +67,4 @@ pub fn parse_status(value: &Value) -> Result<ClimateStatus, &'static str> {
 }
 
 pub mod protocol;
+pub mod transport;

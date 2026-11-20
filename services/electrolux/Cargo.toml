@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 serde_json = "=1.0.145"
+rbroadlink = "=0.4.2"
+packed_struct = "=0.10.1"
