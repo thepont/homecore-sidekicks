@@ -62,16 +62,7 @@ pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
 
 pub fn parse_connector_totals(data: &str, site: u64) -> Option<Map<String, Value>> {
     let data: Value = serde_json::from_str(data).ok()?;
-    let id = data.get("id")?;
-    let id = id.as_u64().or_else(|| id.as_str()?.parse().ok())?;
-    if id != site {
-        return None;
-    }
-    let date = chrono::NaiveDate::parse_from_str(data.get("date")?.as_str()?, "%Y-%m-%d").ok()?;
-    let today = chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).date_naive();
-    if (date - today).num_days().unsigned_abs() > 1 {
-        return None;
-    }
+    let date = site_date(&data, site)?;
     let totals = data.get("totals")?.as_object()?;
     if totals.len() > 16 {
         return None;
