@@ -1,0 +1,6 @@
+FROM scratch
+COPY runtime/ /
+COPY homecore-xiaomi /homecore-xiaomi
+COPY ui/ /ui/
+USER 1000:1000
+ENTRYPOINT ["/homecore-xiaomi"]
