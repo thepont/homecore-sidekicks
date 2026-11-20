@@ -745,6 +745,7 @@ dependencies = [
 name = "homecore-homekit"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "hap-controller",
  "hap-crypto",
  "hap-pairing",

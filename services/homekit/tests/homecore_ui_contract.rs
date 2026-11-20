@@ -94,6 +94,61 @@ async fn find_ui(core: &homecore::Core, plugin: &str) -> Option<Value> {
 }
 
 #[tokio::test]
+#[ignore = "requires Docker and HOMEKIT_TEST_ARCHIVE"]
+async fn installs_the_signed_homekit_package_and_serves_its_setup_page() {
+    let id = "plugin.homekit";
+    let archive = std::env::var_os("HOMEKIT_TEST_ARCHIVE").expect("set HOMEKIT_TEST_ARCHIVE");
+    let core = homecore::Core::start_with_registry(homecore::RegistryPackage {
+        archive: std::path::Path::new(&archive),
+        id,
+        version: env!("CARGO_PKG_VERSION"),
+    })
+    .await;
+    let response = core
+        .post("/plugins/install")
+        .json(&serde_json::json!({"id":id}))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_success(),
+        "install failed with {}",
+        response.status()
+    );
+    let entry = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Some(entry) = find_ui(&core, id).await {
+                break entry;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("installed package offers HomeKit setup");
+    assert_eq!(entry["slots"][0]["element"], "hc-homekit-setup");
+    let path = format!(
+        "/plugins/{id}/ui/{}/index.js",
+        entry["build"].as_str().unwrap()
+    );
+    assert_eq!(
+        core.anonymous_get(&path).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let bundle = core
+        .get(&path)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/index.js");
+    assert_eq!(bundle.as_ref(), std::fs::read(expected).unwrap());
+}
+
+#[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
 async fn authenticated_homecore_offers_the_unconfigured_setup_screen() {
     let core = homecore::Core::start().await;

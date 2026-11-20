@@ -1,0 +1,12 @@
+License notices for the Rust dependencies included in this package.
+
+{{#each licenses}}
+========================================================================
+{{name}} ({{id}})
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

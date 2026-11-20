@@ -2,6 +2,7 @@
 name = "homecore-homekit"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 hap-controller = "=3.3.0"
@@ -22,5 +23,6 @@ uuid = { version = "=1.29.3", features = ["v4"] }
 hap-transport = { path = "vendor/hap-transport" }
 
 [dev-dependencies]
+base64 = "=0.23.1"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 ring = "=0.17.14"

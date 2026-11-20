@@ -1,0 +1,6 @@
+id = "plugin.homekit"
+name = "HomeKit Sensors"
+version = "0.1.0"
+binary = "homecore-homekit"
+default_config = "config.default.toml"
+ui = "ui"

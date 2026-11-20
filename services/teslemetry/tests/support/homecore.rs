@@ -7,6 +7,13 @@ use tokio::task::JoinHandle;
 
 const IMAGE: &str = "ghcr.io/homecore-io/hc-core@sha256:cb336921beffbb0751737cb21f8586bd3418ee10dd2c2126e8a2cd060884664f";
 
+#[allow(dead_code)]
+pub struct RegistryPackage<'a> {
+    pub archive: &'a std::path::Path,
+    pub id: &'a str,
+    pub version: &'a str,
+}
+
 pub struct Core {
     pub root: PathBuf,
     pub mqtt_port: u16,
@@ -38,6 +45,15 @@ impl Core {
     }
 
     pub async fn start_for_plugin(plugin: &str) -> Self {
+        Self::start_fixture(Some(plugin), None).await
+    }
+
+    #[allow(dead_code)]
+    pub async fn start_with_registry(package: RegistryPackage<'_>) -> Self {
+        Self::start_fixture(None, Some(package)).await
+    }
+
+    async fn start_fixture(plugin: Option<&str>, package: Option<RegistryPackage<'_>>) -> Self {
         let name = format!("homecore-card-contract-{}", random_id());
         let root = std::env::temp_dir().join(&name);
         fs::create_dir(&root).unwrap();
@@ -58,6 +74,12 @@ impl Core {
         fs::create_dir_all(home.join("config")).unwrap();
         let password = random_id();
         fs::write(core.root.join("mqtt-password"), &password).unwrap();
+        let client = plugin
+            .map(|id| format!("[[broker.clients]]\nid = \"{id}\"\npassword = \"{password}\"\n"))
+            .unwrap_or_default();
+        let registry = package
+            .map(|package| write_registry(&home, package))
+            .unwrap_or_default();
         fs::write(
             home.join("config/homecore.toml"),
             format!(
@@ -72,9 +94,8 @@ v5_port = 0
 [[broker.clients]]
 id = "internal.core"
 password = "{password}"
-[[broker.clients]]
-id = "{plugin}"
-password = "{password}"
+{client}
+{registry}
 [auth]
 token_expiry_hours = 1
 [logging]
@@ -149,9 +170,62 @@ level = "error"
         self.anonymous_get(path).bearer_auth(&self.token)
     }
 
+    #[allow(dead_code)]
+    pub fn post(&self, path: &str) -> RequestBuilder {
+        self.http
+            .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+    }
+
     pub fn anonymous_get(&self, path: &str) -> RequestBuilder {
         self.http.get(format!("{}{path}", self.base))
     }
+}
+
+fn write_registry(home: &std::path::Path, package: RegistryPackage<'_>) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use ring::{
+        digest::{digest, SHA256},
+        signature::{Ed25519KeyPair, KeyPair},
+    };
+
+    let dir = home.join("fixture-registry");
+    fs::create_dir(&dir).unwrap();
+    let artifact = fs::read(package.archive).unwrap();
+    let size = artifact.len();
+    let hash: String = digest(&SHA256, &artifact)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    fs::write(dir.join("plugin.tar.zst"), artifact).unwrap();
+    let index = json!({
+        "schema": "1",
+        "plugins": [{
+            "id": package.id, "name": package.id,
+            "versions": [{
+                "version": package.version,
+                "artifacts": [{
+                    "os": "linux", "arch": "x86_64", "runtime": "native",
+                    "url": "file:///homecore/fixture-registry/plugin.tar.zst",
+                    "sha256": hash, "size": size
+                }]
+            }]
+        }]
+    })
+    .to_string();
+    let key = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+    let key = Ed25519KeyPair::from_pkcs8(key.as_ref()).unwrap();
+    fs::write(dir.join("index.json"), &index).unwrap();
+    fs::write(
+        dir.join("index.json.sig"),
+        STANDARD.encode(key.sign(index.as_bytes())),
+    )
+    .unwrap();
+    format!(
+        "[registry]\nurl = \"file:///homecore/fixture-registry/index.json\"\npublic_key = \"{}\"\n",
+        STANDARD.encode(key.public_key())
+    )
 }
 
 fn docker(args: &[&str]) -> String {
