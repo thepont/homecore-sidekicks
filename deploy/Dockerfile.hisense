@@ -1,0 +1,4 @@
+FROM scratch
+COPY services/hisense/target/container-release/release/homecore-hisense /hisense-tv
+USER 65532:65532
+ENTRYPOINT ["/hisense-tv"]
