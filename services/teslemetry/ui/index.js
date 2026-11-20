@@ -349,7 +349,9 @@ function renderTariffBands(svg, records, points) {
     rect.setAttribute('x', x); rect.setAttribute('y', '0'); rect.setAttribute('width', width); rect.setAttribute('height', '100');
     rect.setAttribute('fill', i % 2 ? '#8b7ad0' : '#e4ae47'); rect.setAttribute('fill-opacity', '0.18');
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', x + 3); label.setAttribute('y', '10'); label.setAttribute('fill', 'currentColor'); label.setAttribute('font-size', '8');
+    label.setAttribute('x', x > 180 ? Math.min(297, x + width - 3) : x + 3);
+    if (x > 180) label.setAttribute('text-anchor', 'end');
+    label.setAttribute('y', '10'); label.setAttribute('fill', 'currentColor'); label.setAttribute('font-size', '8');
     label.textContent = periods[i].value.replaceAll('_', ' ');
     svg.append(rect, label);
   }

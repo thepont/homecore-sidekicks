@@ -187,3 +187,16 @@ test('combined graph compares solar, grid, battery and home power with tariff ba
   assert.equal(await graph.getByText('OFF PEAK',{exact:true}).count(),1);
   for(const label of ['Solar','Grid','Battery','Home']) assert.equal(await page.getByText(label,{exact:true}).count(),1);
 });
+
+test('a tariff label near the end of the graph remains readable inside the chart', async () => {
+  await page.evaluate(() => {
+    host.devices.history=async (_id,field)=>({ok:true,data:field==='tariff_buy_period'
+      ? [{at:'2026-11-20T02:55:00Z',value:'SUPER_OFF_PEAK'}]
+      : [{at:'2026-11-20T01:00:00Z',value:500},{at:'2026-11-20T03:00:00Z',value:1500}]});
+    const c=document.createElement('hc-teslemetry-grid'); c.host=host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Grid details'}).click();
+  const graph=page.getByRole('img',{name:'Grid power history'});await graph.waitFor();
+  const fits=await graph.evaluate(svg=>{const text=svg.querySelector('text').getBoundingClientRect(), bounds=svg.getBoundingClientRect();return text.left>=bounds.left && text.right<=bounds.right;});
+  assert.equal(fits,true);
+});
