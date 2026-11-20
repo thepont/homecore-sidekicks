@@ -24,7 +24,7 @@ async fn unconfigured_plugin_exposes_admin_setup_actions() {
                 "fixture-user".into(),
                 "fixture-password".into(),
                 setup,
-                "services/xiaomi/ui".into(),
+                "ui".into(),
             ));
             let caps = tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
@@ -36,6 +36,10 @@ async fn unconfigured_plugin_exposes_admin_setup_actions() {
             })
             .await
             .unwrap();
+            assert!(
+                caps.get("ui").is_some(),
+                "the setup page must be offered to homeCore"
+            );
             assert!(caps["actions"]
                 .as_array()
                 .unwrap()
@@ -73,4 +77,35 @@ async fn unconfigured_plugin_exposes_admin_setup_actions() {
             fs::remove_dir_all(root).unwrap();
         })
         .await;
+}
+
+#[tokio::test]
+async fn service_process_registers_without_xiaomi_credentials() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let root = std::env::temp_dir().join(format!("xiaomi-process-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("mqtt-password"), "fixture-password").unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_homecore-xiaomi"))
+        .env("MQTT_HOST", "127.0.0.1")
+        .env("MQTT_PORT", broker.port.to_string())
+        .env("MQTT_USERNAME", "fixture-user")
+        .env("MQTT_PASSWORD_FILE", root.join("mqtt-password"))
+        .env("XIAOMI_STATE_DIR", &root)
+        .env("XIAOMI_UI_DIR", "ui")
+        .spawn()
+        .unwrap();
+    let found = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let p = probe.messages.recv().await.unwrap();
+            if p.topic == "homecore/plugins/fixture-user/capabilities" {
+                break true;
+            }
+        }
+    })
+    .await;
+    let _ = child.kill();
+    let _ = child.wait();
+    fs::remove_dir_all(root).unwrap();
+    assert_eq!(found.unwrap(), true);
 }
