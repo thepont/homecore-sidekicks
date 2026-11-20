@@ -21,6 +21,7 @@ test('starting sign-in shows the QR returned by the integration',async()=>{
   try {
     const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
     await page.evaluate(()=>{window.calls=[];const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>{calls.push(name);return name==='begin_sign_in'?{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}:{ok:true,data:{status:'ok',setup_status:'waiting'}}}};document.querySelector('main').append(el)});
+    await page.getByLabel('Mi Home region').selectOption('cn');
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),1);
     assert.equal((await page.evaluate(()=>calls)).filter(x=>x==='begin_sign_in').length,1);
@@ -32,6 +33,7 @@ test('completed setup clears the QR and shows the connection status',async()=>{
   try {
     const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
     await page.evaluate(()=>{const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>name==='begin_sign_in'?{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}:{ok:true,data:{status:'ok',setup_status:'connected'}}};document.querySelector('main').append(el)});
+    await page.getByLabel('Mi Home region').selectOption('cn');
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     await page.getByText('Xiaomi connected',{exact:true}).waitFor({timeout:5000});
     assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),0);
@@ -43,6 +45,7 @@ test('a saved gateway is shown as awaiting verification',async()=>{
   try {
     const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
     await page.evaluate(()=>{let started=false;const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>name==='begin_sign_in'?(started=true,{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}):{ok:true,data:{status:'ok',setup_status:started?'gateway_saved':'unconfigured'}}};document.querySelector('main').append(el)});
+    await page.getByLabel('Mi Home region').selectOption('cn');
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     await page.getByText('Gateway saved. Connection needs verification.',{exact:true}).waitFor({timeout:5000});
     assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),0);
@@ -67,5 +70,16 @@ test('the selected Mi Home region is sent when sign-in starts',async()=>{
     await page.getByLabel('Mi Home region').selectOption('sg',{timeout:1500});
     await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
     assert.deepEqual(await page.evaluate(()=>window.sent),{region:'sg'});
+  } finally {await browser.close();}
+});
+
+test('setup asks for a region before starting sign-in',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{window.begun=false;const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>{if(name==='begin_sign_in')window.begun=true;return {ok:true,data:{status:'ok',setup_status:'unconfigured'}}}};document.querySelector('main').append(el)});
+    await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
+    assert.equal(await page.getByText('Choose your Mi Home region first.',{exact:true}).count(),1);
+    assert.equal(await page.evaluate(()=>window.begun),false);
   } finally {await browser.close();}
 });

@@ -21,6 +21,10 @@ class XiaomiSetup extends HTMLElement {
   }
   async #begin() {
     if(!this.#host?.me?.can('plugins:write'))return;
+    if(!this.shadowRoot.querySelector('#region').value) {
+      this.shadowRoot.querySelector('.status').textContent='Choose your Mi Home region first.';
+      this.shadowRoot.querySelector('#region').focus();return;
+    }
     const generation=++this.#generation, button=this.shadowRoot.querySelector('button'),status=this.shadowRoot.querySelector('.status');
     button.disabled=true;status.textContent='Preparing sign-in…';
     let result;try{result=await this.#host.action('begin_sign_in',{region:this.shadowRoot.querySelector('#region').value});}catch{result=undefined;}
