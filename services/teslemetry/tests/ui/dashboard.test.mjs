@@ -144,3 +144,31 @@ test('battery offers the same detail and history interaction as the other energy
   await page.getByRole('button',{name:'Back to battery'}).click();
   assert.equal(await page.getByRole('button',{name:'Battery details'}).count(), 1);
 });
+
+test('tariff periods appear as shaded bands on the power graph', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async (_id, field) => ({ok:true,data:field === 'tariff_buy_period' ? [
+      {at:'2026-11-20T01:00:00Z',value:'OFF_PEAK'}, {at:'2026-11-20T02:00:00Z',value:'PEAK'}
+    ] : [{at:'2026-11-20T01:00:00Z',value:500}, {at:'2026-11-20T03:00:00Z',value:1500}]});
+    const c = document.createElement('hc-teslemetry-grid'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Grid details'}).click();
+  const graph=page.getByRole('img',{name:'Grid power history'});
+  await graph.waitFor();
+  assert.equal(await graph.getByText('OFF PEAK',{exact:true}).count(), 1);
+  assert.equal(await graph.getByText('PEAK',{exact:true}).count(), 1);
+  assert.equal(await graph.locator('rect').count(), 2);
+});
+
+test('repeated observations of the same tariff make one continuous band', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async (_id, field) => ({ok:true,data:field === 'tariff_buy_period' ? [
+      {at:'2026-11-20T01:00:00Z',value:'OFF_PEAK'}, {at:'2026-11-20T02:00:00Z',value:'OFF_PEAK'},
+      {at:'2026-11-20T03:00:00Z',value:'PEAK'}
+    ] : [{at:'2026-11-20T01:00:00Z',value:500}, {at:'2026-11-20T04:00:00Z',value:1500}]});
+    const c=document.createElement('hc-teslemetry-grid'); c.host=host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Grid details'}).click();
+  const graph=page.getByRole('img',{name:'Grid power history'}); await graph.waitFor();
+  assert.equal(await graph.locator('rect').count(),2);
+});

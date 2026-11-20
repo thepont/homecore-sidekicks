@@ -327,8 +327,36 @@ class TeslemetryCard extends HTMLElement {
 
 customElements.define('hc-teslemetry-card', TeslemetryCard);
 
+// Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
+async function readTariffPeriods(host) {
+  try {
+    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit:1000});
+    return result?.ok && Array.isArray(result.data) ? result.data.slice(0,1000) : [];
+  } catch { return []; }
+}
+function renderTariffBands(svg, records, points) {
+  const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
+  if (end <= start) return;
+  const periods = records.filter(p => typeof p?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(p.value) && Number.isFinite(Date.parse(p.at)))
+    .sort((a,b) => Date.parse(a.at) - Date.parse(b.at))
+    .filter((p, i, all) => i === 0 || p.value !== all[i - 1].value);
+  for (let i = 0; i < periods.length; i++) {
+    const from = Math.max(start, Date.parse(periods[i].at));
+    const until = Math.min(end, i + 1 < periods.length ? Date.parse(periods[i + 1].at) : end);
+    if (until <= from) continue;
+    const x = (from - start) * 300 / (end - start), width = (until - from) * 300 / (end - start);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', '0'); rect.setAttribute('width', width); rect.setAttribute('height', '100');
+    rect.setAttribute('fill', i % 2 ? '#8b7ad0' : '#e4ae47'); rect.setAttribute('fill-opacity', '0.18');
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x + 3); label.setAttribute('y', '10'); label.setAttribute('fill', 'currentColor'); label.setAttribute('font-size', '8');
+    label.textContent = periods[i].value.replaceAll('_', ' ');
+    svg.append(rect, label);
+  }
+}
+
 class TeslemetrySolar extends HTMLElement {
-  #host; #stop; #details = false; #history; #generation = 0;
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
   set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
   connectedCallback() { this.#listen(); }
@@ -346,7 +374,9 @@ class TeslemetrySolar extends HTMLElement {
     let result;
     try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: 1000 }); }
     catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
     this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
     this.#render();
   }
@@ -372,6 +402,7 @@ class TeslemetrySolar extends HTMLElement {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
     svg.setAttribute('aria-label', 'Solar power history');
+    renderTariffBands(svg, this.#periods, points);
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
@@ -396,7 +427,7 @@ function estimateEnergyCost(energyWh, rate, currency) {
 }
 
 class TeslemetryGrid extends HTMLElement {
-  #host; #stop; #details = false; #history; #generation = 0;
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
   set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
   connectedCallback() { this.#listen(); }
@@ -412,7 +443,9 @@ class TeslemetryGrid extends HTMLElement {
     let result;
     try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit:1000}); }
     catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
     this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
     this.#render();
   }
@@ -442,6 +475,7 @@ class TeslemetryGrid extends HTMLElement {
     const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');
+    renderTariffBands(svg, this.#periods, points);
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     line.setAttribute('points', values.map((v,i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
@@ -456,7 +490,7 @@ class TeslemetryGrid extends HTMLElement {
 customElements.define('hc-teslemetry-grid', TeslemetryGrid);
 
 class TeslemetryBattery extends HTMLElement {
-  #host; #stop; #details = false; #history; #generation = 0;
+  #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
   set host(host) { this.#stop?.(); this.#host = host; if (this.isConnected) this.#listen(); }
   connectedCallback() { this.#listen(); }
@@ -474,7 +508,9 @@ class TeslemetryBattery extends HTMLElement {
     let result;
     try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: 1000 }); }
     catch { result = undefined; }
+    const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
+    this.#periods = periods;
     this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
     this.#render();
   }
@@ -500,6 +536,7 @@ class TeslemetryBattery extends HTMLElement {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
     svg.setAttribute('aria-label', 'Battery charge history');
+    renderTariffBands(svg, this.#periods, points);
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
