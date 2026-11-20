@@ -101,6 +101,13 @@ async fn poll_powerwall(
         match reading {
             Ok((value, mut readings)) => {
                 readings.extend(totals.borrow().clone());
+                if !readings
+                    .keys()
+                    .any(|key| key.starts_with("wall_connector_"))
+                {
+                    readings.remove("wall_connectors_energy_wh");
+                    readings.remove("wall_connectors_energy_date");
+                }
                 readings.insert("charge_pct".into(), value.charge_pct.into());
                 readings.insert("battery_power_w".into(), value.power_w.into());
                 let mut attributes = serde_json::Map::new();

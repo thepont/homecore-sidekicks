@@ -353,7 +353,7 @@ async fn given_wall_connector_totals_then_homecore_receives_charged_energy_witho
         json!({"id":"42","date":now.format("%Y-%m-%d").to_string(),"createdAt":now.to_rfc3339(),"totals":{"private-fixture-din":5400}})
     );
     let app = Router::new().route("/sse", get(move || { let event=event.clone(); async move { ([("content-type", "text/event-stream")], event) }}))
-        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}})) }));
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190,"wall_connectors":[{"wall_connector_power":0}]}})) }));
     let (url, server) = support::serve(app).await;
     let _owned = start_adapter(&url, broker.port, "charger-totals-fixture", Some("1"));
     let state = tokio::time::timeout(Duration::from_secs(5), async {
@@ -408,5 +408,40 @@ async fn given_site_configuration_stream_then_homecore_receives_read_only_site_s
     assert_eq!(state["site_storm_watch_enabled"], true);
     assert_eq!(state["site_battery_count"], 1);
     assert_eq!(state["site_grid_services_enabled"], false);
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_no_wall_connector_then_charger_total_is_not_shown() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let event = format!(
+        "event: wall_connector_totals\ndata: {}\n\n",
+        json!({"id":"42","date":now.format("%Y-%m-%d").to_string(),"createdAt":now.to_rfc3339(),"totals":{}})
+    );
+    let app = Router::new().route("/sse", get(move || {let event=event.clone(); async move { ([("content-type", "text/event-stream")],event) }}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async { Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190,"wall_connectors":[]}})) }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "no-charger-fixture", Some("1"));
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut states = 0;
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                states += 1;
+                if states == 2 {
+                    return serde_json::from_slice::<Value>(&message.payload).unwrap();
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("two readings must arrive");
+    assert!(
+        result.get("wall_connectors_energy_wh").is_none(),
+        "no charger must not produce a charger sensor"
+    );
     server.abort();
 }
