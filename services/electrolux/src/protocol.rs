@@ -6,12 +6,16 @@ fn checksum(data: &[u8]) -> u16 {
         .fold(0xc0adu16, |sum, byte| sum.wrapping_add(u16::from(*byte)))
 }
 
-pub fn status_request() -> Vec<u8> {
-    let mut frame = vec![0x0e, 0, 0xa5, 0xa5, 0x5a, 0x5a, 0, 0, 1, 0x0b, 2, 0, 0, 0];
-    frame.extend_from_slice(b"{}");
+fn finish_frame(mut frame: Vec<u8>) -> Vec<u8> {
     let sum = checksum(&frame[8..]);
     frame[6..8].copy_from_slice(&sum.to_le_bytes());
     frame
+}
+
+pub fn status_request() -> Vec<u8> {
+    let mut frame = vec![0x0e, 0, 0xa5, 0xa5, 0x5a, 0x5a, 0, 0, 1, 0x0b, 2, 0, 0, 0];
+    frame.extend_from_slice(b"{}");
+    finish_frame(frame)
 }
 
 pub fn parse_status_response(frame: &[u8]) -> Result<Value, &'static str> {
@@ -47,9 +51,7 @@ fn control_frame(command: u8, data: &[u8]) -> Vec<u8> {
         0,
     ];
     frame.extend_from_slice(data);
-    let sum = checksum(&frame[8..]);
-    frame[6..8].copy_from_slice(&sum.to_le_bytes());
-    frame
+    finish_frame(frame)
 }
 
 pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
