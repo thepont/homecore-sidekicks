@@ -1,0 +1,28 @@
+# Fragment only: merge into the current pod spec after replacing the example
+# address and pinning the image digest from the running node's local registry.
+containers:
+  - name: hisense
+    image: localhost:15000/homecore-hisense:4cf8c48
+    env:
+      - { name: HISENSE_IP, value: 192.0.2.50 }
+      - { name: HISENSE_PORT, value: '18400' }
+      - { name: HISENSE_POLL_SECS, value: '15' }
+      - { name: MQTT_HOST, value: 127.0.0.1 }
+      - { name: MQTT_PORT, value: '1883' }
+      - { name: MQTT_USERNAME, value: plugin.hisense }
+      - { name: MQTT_PASSWORD_FILE, value: /hisense/mqtt-password }
+    volumeMounts:
+      - { name: hisense-mqtt, mountPath: /hisense, readOnly: true }
+    resources:
+      requests: { cpu: 5m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 48Mi }
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: { drop: [ALL] }
+      seccompProfile: { type: RuntimeDefault }
+volumes:
+  - name: hisense-mqtt
+    secret: { secretName: homecore-hisense }
