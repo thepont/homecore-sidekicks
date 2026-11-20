@@ -86,10 +86,31 @@ impl Publication {
     }
 }
 
+struct UnitIdentity {
+    plugin_id: String,
+    device_id: String,
+}
+
+impl UnitIdentity {
+    fn new(unit_id: &str) -> Self {
+        Self {
+            plugin_id: format!("plugin.mitsubishi.{unit_id}"),
+            device_id: format!("mitsubishi_{unit_id}"),
+        }
+    }
+
+    fn plugin_topic(&self, suffix: &str) -> String {
+        format!("homecore/plugins/{}/{suffix}", self.plugin_id)
+    }
+
+    fn device_topic(&self, suffix: &str) -> String {
+        format!("homecore/devices/{}/{suffix}", self.device_id)
+    }
+}
+
 struct Publisher {
     mqtt: AsyncClient,
-    plugin: String,
-    device: String,
+    identity: UnitIdentity,
     schema: Option<Value>,
     available: bool,
 }
@@ -111,14 +132,14 @@ impl Publisher {
         assets: Option<&UiAssets>,
     ) -> Result<(), &'static str> {
         self.schema = None;
-        self.send(format!("homecore/plugins/{}/register", self.plugin), true, json!({
-            "device_id":self.device,"plugin_id":self.plugin,"name":unit.name,"device_type":"sensor"
+        self.send(self.identity.plugin_topic("register"), true, json!({
+            "device_id":self.identity.device_id,"plugin_id":self.identity.plugin_id,"name":unit.name,"device_type":"sensor"
         }).to_string()).await?;
         self.send(
-            format!("homecore/plugins/{}/capabilities", self.plugin),
+            self.identity.plugin_topic("capabilities"),
             true,
             json!({
-                "spec":"1","plugin_id":self.plugin,"actions":[],
+                "spec":"1","plugin_id":self.identity.plugin_id,"actions":[],
                 "ui":assets.map(UiAssets::descriptor)
             })
             .to_string(),
@@ -128,7 +149,7 @@ impl Publisher {
 
     async fn heartbeat(&self, started: Instant) -> Result<(), &'static str> {
         self.send(
-            format!("homecore/plugins/{}/heartbeat", self.plugin),
+            self.identity.plugin_topic("heartbeat"),
             false,
             json!({
                 "version":env!("CARGO_PKG_VERSION"),"protocol_version":"0.1.5",
@@ -152,7 +173,7 @@ impl Publisher {
         } = Publication::from_observation(observation);
         if self.schema.as_ref() != Some(&schema) {
             self.send(
-                format!("homecore/devices/{}/schema", self.device),
+                self.identity.device_topic("schema"),
                 true,
                 schema.to_string(),
             )
@@ -160,13 +181,13 @@ impl Publisher {
             self.schema = Some(schema);
         }
         self.send(
-            format!("homecore/devices/{}/state", self.device),
+            self.identity.device_topic("state"),
             true,
             Value::Object(values).to_string(),
         )
         .await?;
         self.send(
-            format!("homecore/devices/{}/availability", self.device),
+            self.identity.device_topic("availability"),
             true,
             if available { "online" } else { "offline" }.into(),
         )
@@ -226,16 +247,15 @@ async fn run_unit(
     stale_secs: u64,
     assets: Option<Arc<UiAssets>>,
 ) {
-    let plugin = format!("plugin.mitsubishi.{}", unit.id);
-    let device = format!("mitsubishi_{}", unit.id);
-    let mut options = MqttOptions::new(plugin.clone(), broker.host, broker.port);
+    let identity = UnitIdentity::new(&unit.id);
+    let mut options = MqttOptions::new(identity.plugin_id.clone(), broker.host, broker.port);
     options.set_credentials(broker.username, broker.password);
     options.set_keep_alive(Duration::from_secs(15));
     // A 128 KiB UI chunk grows to about 171 KiB in the base64 MQTT response.
     options.set_max_packet_size(4096, 192 * 1024);
     options.set_inflight(2);
     options.set_last_will(LastWill::new(
-        format!("homecore/devices/{device}/availability"),
+        identity.device_topic("availability"),
         "offline",
         QoS::AtLeastOnce,
         true,
@@ -244,10 +264,10 @@ async fn run_unit(
     let (ready_tx, mut ready) = watch::channel(false);
     let (source_tx, mut latest) = watch::channel(None);
     let stale = Duration::from_secs(stale_secs);
-    let command_topic = format!("homecore/plugins/{plugin}/manage/cmd");
-    let response_topic = format!("homecore/plugins/{plugin}/manage/response");
+    let command_topic = identity.plugin_topic("manage/cmd");
+    let response_topic = identity.plugin_topic("manage/response");
     let (requests_tx, mut requests) = mpsc::channel(1);
-    let control_topic = format!("homecore/devices/{device}/cmd");
+    let control_topic = identity.device_topic("cmd");
     let (commands_tx, commands) = mpsc::channel(8);
     let management = assets
         .as_ref()
@@ -269,8 +289,7 @@ async fn run_unit(
     ]);
     let mut publisher = Publisher {
         mqtt,
-        plugin,
-        device,
+        identity,
         schema: None,
         available: false,
     };
