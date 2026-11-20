@@ -1,13 +1,13 @@
 # HomeCore AC card
 
-This is a shared HomeCore `device.card` bundle. Serve `manifest.json` and
+This is a shared HomeCore `device.card` and `device.panel` bundle. Serve `manifest.json` and
 `index.js` from each AC plugin's UI directory. The bundle has no brand or
 device IDs, build step, external asset requests, or browser access to the
 controller. The HomeCore host supplies the plugin's device, permissions,
 commands, display units and theme. The manifest opts in to standard and large
 cards. Compact cards use HomeCore's own rendering.
 
-A plugin should advertise this slot for AC devices. For a mixed-device plugin,
+A plugin should advertise these slots for AC devices. For a mixed-device plugin,
 include a `device_types` filter in its own manifest.
 
 ## Device contract
@@ -31,7 +31,9 @@ the person’s display units. Targets retain the adapter’s precision.
 The card suppresses retained readings when HomeCore reports a device offline.
 Off can still show a current room reading. Off, Dry and Fan only omit
 temperature targets. The Airflow row goes below the mode controls and adapts to
-the fields the device supports. The device name opens the HomeCore device panel.
+the fields the device supports. Tap **Open controls** on the room temperature
+readout or tap the device name to open the same controls with a larger dial
+in HomeCore’s device sheet.
 
 Controls require command permission and schema attributes marked
 `writable: true`. Mode and airflow controls use schema `options` (strings or

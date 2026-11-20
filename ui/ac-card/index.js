@@ -85,6 +85,8 @@ const style = `
   *{box-sizing:border-box}
   h3,p,dl,dd{margin:0}
   [hidden]{display:none!important}
+  :host(hc-ac-panel){--ac-dial-size:236px}
+  :host(hc-ac-panel) .card{padding:0;border:0;background:transparent}
   .card{background:var(--ac-surface);border:1px solid var(--ac-line);
     border-radius:var(--radius,17px);padding:15px;min-width:0;text-align:center}
   button,select{font:inherit;color:inherit;background:var(--ac-surface);
@@ -97,8 +99,14 @@ const style = `
   .name:not(:disabled):hover{text-decoration:underline}
   .name:disabled{opacity:1}
   .room{padding:8px 8px 10px;margin:8px 0 10px;border-radius:12px;background:var(--ac-wash)}
+  .readout{width:100%}
+  button.readout{border:0;background:none;padding:0;min-height:44px;border-radius:6px}
+  button.readout:disabled{opacity:1}
+  .room-label,.open-label{display:block}
+  .open-label{margin-block-start:5px;color:var(--ac-accent);font-weight:620;font-size:12px;
+    text-decoration:underline;text-underline-offset:2px}
   .room-label,small,dt,.mode-note{color:var(--ac-muted);font-size:12px}
-  .dial{width:min(124px,100%);aspect-ratio:220 / 155;margin:0 auto 3px}
+  .dial{width:min(var(--ac-dial-size,124px),100%);aspect-ratio:220 / 155;margin:0 auto 3px}
   .dial[data-editable]{touch-action:none;user-select:none;cursor:grab}
   .dial[data-dragging]{cursor:grabbing}
   .dial svg{display:block;width:100%;height:100%;overflow:visible}
@@ -142,7 +150,7 @@ const style = `
   .diagnostics dd{text-align:right}
   @container (max-width:225px){.card{padding:9px}}
   @media (any-pointer:coarse) {
-    .dial:has(.target-dot[role="slider"]){width:min(152px,100%)}
+    .dial:has(.target-dot[role="slider"]){width:min(var(--ac-dial-size,152px),100%)}
     .target-dot[role="slider"]{r:8}
   }
   @media(forced-colors:active){.airflow-field select{appearance:auto;background:var(--ac-surface);padding-inline:3px}}
@@ -155,10 +163,12 @@ const targetRow = (key, label, name) => `
     <button type="button" data-step="1" aria-label="Raise ${name.toLowerCase()}">+</button>
   </div>`;
 
-const template = `
+const template = panel => {
+  const readoutTag = panel ? 'div' : 'button';
+  return `
   <style>${style}</style>
   <section class="card">
-    <button class="name" type="button"></button>
+    ${panel ? '' : '<button class="name" type="button" aria-haspopup="dialog"></button>'}
     <div class="room">
       <div class="dial">
         <svg viewBox="0 0 220 155" role="group" aria-label="Temperature dial" aria-hidden="true">
@@ -167,9 +177,12 @@ const template = `
           <circle class="room-dot" r="5" aria-hidden="true"></circle>
         </svg>
       </div>
-      <div class="room-label">Room temperature</div>
-      <strong class="reading"></strong>
-      <span class="activity"></span>
+      <${readoutTag} class="readout"${panel ? '' : ' type="button" aria-haspopup="dialog"'}>
+        <span class="room-label">Room temperature</span>
+        <strong class="reading"></strong>
+        <span class="activity"></span>
+        ${panel ? '' : '<span class="open-label">Open controls</span>'}
+      </${readoutTag}>
     </div>
     ${targetRow('single', 'Target', 'Target')}
     ${targetRow('heat', 'Heat to', 'Heating target')}
@@ -196,6 +209,7 @@ const template = `
         `<dt data-diagnostic="${key}">${label}</dt><dd data-diagnostic="${key}"></dd>`).join('')}</dl>
     </details>
   </section>`;
+};
 
 // Keep the inputs typed before running any display or command rules.
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -371,10 +385,11 @@ class AcCard extends HTMLElement {
 
   #mount() {
     const root = this.shadowRoot;
-    root.innerHTML = template;
+    root.innerHTML = template(this.localName === 'hc-ac-panel');
     const get = selector => root.querySelector(selector);
     this.#view = {
-      card: get('.card'), name: get('.name'), reading: get('.reading'), activity: get('.activity'),
+      card: get('.card'), name: get('.name'), readout: get('.readout'), openLabel: get('.open-label'),
+      reading: get('.reading'), activity: get('.activity'),
       dial: get('.dial'), svg: get('.dial svg'), track: get('.track'), range: get('.range'), room: get('.room-dot'), low: get('.low'), high: get('.high'),
       modeGrid: get('.modes'), modeButtons: [...root.querySelectorAll('[data-mode]')], mode: get('.current-mode'),
       targets: [...root.querySelectorAll('[data-target]')].map(row => ({
@@ -388,7 +403,11 @@ class AcCard extends HTMLElement {
       diagnostics: get('.diagnostics'), feedback: get('.feedback')
     };
     this.#listenDial();
-    this.#view.name.addEventListener('click', () => this.#host?.ui?.openDevice(this.#deviceId));
+    if (this.#view.name) {
+      const open = () => this.#host?.ui?.openDevice(this.#deviceId);
+      this.#view.name.addEventListener('click', open);
+      this.#view.readout.addEventListener('click', open);
+    }
     root.addEventListener('click', event => {
       const command = this.#commands.get(event.target.closest('button'));
       if (command) void this.#send(...command);
@@ -478,9 +497,16 @@ class AcCard extends HTMLElement {
 
     const view = this.#view;
     view.card.classList.toggle('offline', !available);
-    const name = device && this.#host.devices.label(device);
-    view.name.textContent = typeof name === 'string' && name ? name.slice(0, 256) : 'Air conditioner';
-    view.name.disabled = !device || typeof this.#host.ui?.openDevice !== 'function';
+    if (view.name) {
+      const label = device && this.#host.devices.label(device);
+      const name = typeof label === 'string' && label ? label.slice(0, 256) : 'Air conditioner';
+      const canOpen = !!device && typeof this.#host.ui?.openDevice === 'function';
+      view.name.textContent = name;
+      view.name.disabled = !canOpen;
+      view.readout.disabled = !canOpen;
+      view.readout.setAttribute('aria-label', `Open controls for ${name}`);
+      show(view.openLabel, canOpen);
+    }
     view.reading.textContent = this.#roomReading(available ? room : undefined);
     view.activity.textContent = !device ? 'Waiting for device' : !available ? 'Unavailable' :
       activity ?? (room === undefined ? 'Waiting for readings' : '');
@@ -755,3 +781,4 @@ class AcCard extends HTMLElement {
 }
 
 if (!customElements.get('hc-ac-card')) customElements.define('hc-ac-card', AcCard);
+if (!customElements.get('hc-ac-panel')) customElements.define('hc-ac-panel', class extends AcCard {});

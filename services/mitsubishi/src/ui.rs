@@ -8,13 +8,14 @@ pub(crate) fn assets() -> Option<UiAssets> {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok()?.parent().map(|p| p.join("ui")))?;
     match UiAssets::load(&dir, env!("CARGO_PKG_VERSION"), |slots| {
-        let expected = json!({
+        let card = json!({
             "slot": "device.card", "element": "hc-ac-card", "forms": ["standard", "large"]
         });
-        if slots == [expected] {
-            Ok(())
-        } else {
-            Err(UiError)
+        let panel = json!({"slot": "device.panel", "element": "hc-ac-panel"});
+        match slots {
+            [only] if *only == card => Ok(()),
+            [first, second] if *first == card && *second == panel => Ok(()),
+            _ => Err(UiError),
         }
     }) {
         Ok(assets) => Some(assets),

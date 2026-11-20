@@ -6,6 +6,10 @@
       "slot": "device.card",
       "element": "hc-ac-card",
       "forms": ["standard", "large"]
+    },
+    {
+      "slot": "device.panel",
+      "element": "hc-ac-panel"
     }
   ]
 }

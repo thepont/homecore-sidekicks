@@ -596,6 +596,10 @@ async fn both_units_advertise_and_serve_the_same_ac_card_without_controller_comm
         assert_eq!(ui["host_api"], 1);
         assert_eq!(ui["slots"][0]["element"], "hc-ac-card");
         assert_eq!(ui["slots"][0]["slot"], "device.card");
+        assert_eq!(
+            ui["slots"][1],
+            json!({"slot":"device.panel","element":"hc-ac-panel"})
+        );
         let entry = ui["entry"].as_str().unwrap();
         builds.push(ui["build"].as_str().unwrap().to_owned());
 

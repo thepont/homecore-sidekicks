@@ -23,7 +23,7 @@ async function preparePage(page) {
     '<main style="max-width:420px;margin:auto"></main>');
   await page.addScriptTag({ type: 'module', content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
-    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5 } = {}) => {
+    window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5, panelFixture = false } = {}) => {
       const listeners = new Set();
       const units = new Set();
       const opened = [];
@@ -79,7 +79,25 @@ async function preparePage(page) {
           sent.push([id, body]);
           return fail ? { ok: false } : { ok: true };
         },
-        ui: { openDevice: id => opened.push(id) }
+        ui: {
+          openDevice(id) {
+            opened.push(id);
+            if (!panelFixture) return;
+            const dialog = document.createElement('dialog');
+            dialog.style.width = 'min(342px, 90vw)';
+            dialog.setAttribute('aria-label', device.name_override);
+            const close = document.createElement('button');
+            close.textContent = 'Close';
+            close.addEventListener('click', () => dialog.close());
+            const panel = document.createElement('hc-ac-panel');
+            panel.host = host;
+            panel.deviceId = id;
+            dialog.append(close, panel);
+            dialog.addEventListener('close', () => dialog.remove());
+            document.body.append(dialog);
+            dialog.showModal();
+          }
+        }
       };
       window.update = next => {
         device = { ...device, ...next, attributes: { ...device.attributes, ...next.attributes } };
@@ -340,6 +358,43 @@ test('a finger can start away from the dot on a narrow, scrollable mobile card',
     await drag();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     assert.deepEqual(await phone.evaluate(() => sent), [['ac_1', { setpoint: 27 }]]);
+  } finally {
+    await context.close();
+  }
+});
+
+test('tapping the room reading opens the same controls with a larger dial', async () => {
+  const manifest = JSON.parse(await readFile(new URL('manifest.json', ui), 'utf8'));
+  assert.deepEqual(manifest.slots.find(slot => slot.slot === 'device.panel'),
+    { slot: 'device.panel', element: 'hc-ac-panel' });
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true
+  });
+  try {
+    const phone = await context.newPage();
+    phone.setDefaultTimeout(2500);
+    await preparePage(phone);
+    await phone.evaluate(() => {
+      document.querySelector('main').style.width = '174px';
+      mountAc({ writable: true, mode: 'cool', temperatureUnit: '°C', panelFixture: true });
+    });
+    const card = phone.locator('hc-ac-card');
+    await card.getByRole('slider', { name: 'Target temperature' }).waitFor();
+    const tileDial = await card.locator('.dial').boundingBox();
+    await card.getByRole('button', { name: 'Open controls for Study AC' }).getByText('25°C').tap();
+    const dialog = phone.getByRole('dialog', { name: 'Study AC' });
+    const panel = dialog.locator('hc-ac-panel');
+    await panel.getByRole('slider', { name: 'Target temperature' }).waitFor();
+    const expandedDial = await panel.locator('.dial').boundingBox();
+    assert(expandedDial.width >= 224 && expandedDial.width >= 1.5 * tileDial.width);
+    assert.equal(await panel.getByRole('button', { name: /Open controls/ }).count(), 0);
+    assert.deepEqual(await phone.evaluate(() => opened), ['ac_1']);
+    assert.deepEqual(await phone.evaluate(() => sent), []);
+    await panel.getByRole('button', { name: 'Raise target', exact: true }).tap();
+    assert.deepEqual(await phone.evaluate(() => sent), [['ac_1', { setpoint: 22.5 }]]);
+    await dialog.getByRole('button', { name: 'Close' }).tap();
+    await phone.locator('hc-ac-panel').waitFor({ state: 'detached' });
+    assert.deepEqual(await phone.evaluate(() => subscriptions()), [1, 1]);
   } finally {
     await context.close();
   }

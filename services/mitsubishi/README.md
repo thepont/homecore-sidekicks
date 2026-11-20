@@ -200,6 +200,9 @@ with the same IDs against the same broker: their MQTT client identities collide.
 
 The bridge uses each unit’s existing HomeCore sensor identity. The shared
 card supplies controls on standard and large cards on Home and room pages.
+Tap **Open controls** on the room temperature reading to use the larger dial
+in the HomeCore device sheet.
+
 The container serves the two asset files from `/ui`. In a local checkout set
 `HC_PLUGIN_UI_DIR="$PWD/ui/ac-card"` when starting the bridge. Missing or
 invalid assets leave the device available with HomeCore’s default card.
