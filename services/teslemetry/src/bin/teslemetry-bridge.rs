@@ -139,6 +139,28 @@ fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> se
     json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
 }
 
+async fn publish_powerwall_readings(
+    mqtt: &AsyncClient,
+    readings: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), rumqttc::ClientError> {
+    mqtt.publish(
+        "homecore/devices/teslemetry_powerwall/schema",
+        QoS::AtLeastOnce,
+        true,
+        powerwall_schema(&readings).to_string(),
+    )
+    .await?;
+    mqtt.publish(
+        "homecore/devices/teslemetry_powerwall/state",
+        QoS::AtLeastOnce,
+        true,
+        serde_json::Value::Object(readings).to_string(),
+    )
+    .await?;
+    mqtt.publish(AVAILABILITY_TOPIC, QoS::AtLeastOnce, true, "online")
+        .await
+}
+
 async fn poll_powerwall(
     mqtt: AsyncClient,
     base: String,
@@ -177,22 +199,7 @@ async fn poll_powerwall(
                 }
                 readings.insert("charge_pct".into(), value.charge_pct.into());
                 readings.insert("battery_power_w".into(), value.power_w.into());
-                mqtt.publish(
-                    "homecore/devices/teslemetry_powerwall/schema",
-                    QoS::AtLeastOnce,
-                    true,
-                    powerwall_schema(&readings).to_string(),
-                )
-                .await?;
-                mqtt.publish(
-                    "homecore/devices/teslemetry_powerwall/state",
-                    QoS::AtLeastOnce,
-                    true,
-                    serde_json::Value::Object(readings).to_string(),
-                )
-                .await?;
-                mqtt.publish(AVAILABILITY_TOPIC, QoS::AtLeastOnce, true, "online")
-                    .await?;
+                publish_powerwall_readings(&mqtt, readings).await?;
             }
             Err(_) => {
                 eprintln!("Powerwall reading unavailable");
