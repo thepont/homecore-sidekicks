@@ -8,6 +8,8 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
+#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
+mod mqtt_broker;
 
 struct Fixture {
     child: Child,
@@ -197,4 +199,45 @@ async fn reads_each_contact_from_a_bridge_independently() {
         update,
         (readings[0].0, json!({"open":true,"battery_pct":69}))
     );
+    drop(watch);
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let publisher = tokio::spawn(homecore_homekit::run_contact_publisher(
+        probe.client.clone(),
+        "plugin.homekit".to_owned(),
+        "02:11:22:33:44:55".to_owned(),
+        state_root.clone(),
+    ));
+    let topic = format!(
+        "homecore/devices/homekit_021122334455_{}/state",
+        readings[0].0
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == topic
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
+                    == true
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "close").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == topic
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
+                    == false
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    publisher.abort();
 }

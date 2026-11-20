@@ -37,8 +37,9 @@ const contact = first.addService(Service.ContactSensor, 'Fixture contact');
 let contactValue=1;
 const state=contact.getCharacteristic(Characteristic.ContactSensorState);
 state.onGet(()=>contactValue);
+let raced=false;
 state.on('subscribe',()=>{
-  if (process.env.HAP_RACE === '1') contactValue=0;
+  if (process.env.HAP_RACE === '1' && !raced) { contactValue=0; raced=true; }
   console.log('SUBSCRIBED');
 });
 require('readline').createInterface({input:process.stdin}).on('line',line=>{

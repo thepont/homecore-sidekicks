@@ -86,6 +86,21 @@ pub async fn publish_contacts(
     Ok(())
 }
 
+/// Publish a saved bridge's initial snapshot and subsequent contact changes.
+pub async fn run_contact_publisher(
+    mqtt: rumqttc::AsyncClient,
+    plugin: String,
+    bridge_id: String,
+    state_dir: std::path::PathBuf,
+) -> Result<(), &'static str> {
+    let mut watch = watch_contacts_saved(&bridge_id, &state_dir).await?;
+    publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    while watch.next().await.is_some() {
+        publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    }
+    Err("HomeKit contact stream stopped")
+}
+
 struct PairingTemp(std::path::PathBuf);
 impl Drop for PairingTemp {
     fn drop(&mut self) {
