@@ -483,7 +483,7 @@ class AcCard extends HTMLElement {
     if (!this.isConnected || !this.#view) return;
     const device = this.#deviceId ? this.#host?.devices.get(this.#deviceId) : undefined;
     const model = climateOf(device);
-    const { available, mode, activity, room } = model;
+    const { available, activity, room } = model;
     if (available !== this.#available) {
       this.#available = available;
       if (available) void this.#loadSchema();
@@ -512,6 +512,22 @@ class AcCard extends HTMLElement {
       activity ?? (room === undefined ? 'Waiting for readings' : '');
     this.#renderTargets(model, schema);
 
+    this.#renderModes(model, schema);
+    this.#renderAirflow(model, schema);
+    const readings = diagnostics.filter(({ key }) => available && model.diagnostics[key] !== undefined);
+    view.diagnostics.hidden = readings.length === 0;
+    for (const { key, unit } of diagnostics) {
+      const value = available ? model.diagnostics[key] : undefined;
+      const [label, output] = view.diagnostics.querySelectorAll(`[data-diagnostic="${key}"]`);
+      show(label, value !== undefined);
+      show(output, value !== undefined);
+      output.textContent = this.#format(value, unit);
+    }
+    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
+  }
+
+  #renderModes({ available, mode, activity }, schema) {
+    const view = this.#view;
     const writableModes = schema?.hvac_mode.writable ? new Set(schema.hvac_mode.options.map(option => option.value)) : new Set();
     let hasModeButtons = false;
     for (const button of view.modeButtons) {
@@ -526,18 +542,6 @@ class AcCard extends HTMLElement {
     show(view.modeGrid, hasModeButtons);
     show(view.mode, available && !!mode && !writableModes.has(mode) && modes[mode] !== activity);
     view.mode.textContent = mode ? `Mode · ${modes[mode]}` : '';
-
-    this.#renderAirflow(model, schema);
-    const readings = diagnostics.filter(({ key }) => available && model.diagnostics[key] !== undefined);
-    view.diagnostics.hidden = readings.length === 0;
-    for (const { key, unit } of diagnostics) {
-      const value = available ? model.diagnostics[key] : undefined;
-      const [label, output] = view.diagnostics.querySelectorAll(`[data-diagnostic="${key}"]`);
-      show(label, value !== undefined);
-      show(output, value !== undefined);
-      output.textContent = this.#format(value, unit);
-    }
-    if (view.feedback.textContent !== this.#message) view.feedback.textContent = this.#message;
   }
 
   #listenDial() {
