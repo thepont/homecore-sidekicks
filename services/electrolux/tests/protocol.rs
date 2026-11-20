@@ -108,3 +108,32 @@ fn swing_command_maps_boolean_to_vertical_direction() {
         assert_eq!(&frame[14..], payload);
     }
 }
+
+#[test]
+fn control_frames_keep_the_existing_wire_format() {
+    let frames = [
+        (
+            homecore_electrolux::protocol::power_request(true).unwrap(),
+            b"\x18\x00\xa5\xa5\x5a\x5a\xe9\xc4\x02\x0b\x0c\x00\x00\x00{\"ac_pwr\":1}".as_slice(),
+        ),
+        (
+            homecore_electrolux::protocol::temperature_request(24).unwrap(),
+            b"\x17\x00\xa5\xa5\x5a\x5a\x57\xc4\x02\x0b\x0b\x00\x00\x00{\"temp\":24}".as_slice(),
+        ),
+        (
+            homecore_electrolux::protocol::mode_request("heat").unwrap(),
+            b"\x19\x00\xa5\xa5\x5a\x5a\x36\xc5\x02\x0b\x0d\x00\x00\x00{\"ac_mode\":1}".as_slice(),
+        ),
+        (
+            homecore_electrolux::protocol::fan_request("high").unwrap(),
+            b"\x19\x00\xa5\xa5\x5a\x5a\x3e\xc5\x02\x0b\x0d\x00\x00\x00{\"ac_mark\":3}".as_slice(),
+        ),
+        (
+            homecore_electrolux::protocol::swing_request(true).unwrap(),
+            b"\x19\x00\xa5\xa5\x5a\x5a\x46\xc5\x02\x0b\x0d\x00\x00\x00{\"ac_vdir\":1}".as_slice(),
+        ),
+    ];
+    for (actual, expected) in frames {
+        assert_eq!(actual, expected);
+    }
+}
