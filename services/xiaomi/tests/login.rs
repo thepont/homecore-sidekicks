@@ -176,3 +176,66 @@ async fn pending_qr_can_be_retrieved_from_another_setup_page() {
     server.abort();
     std::fs::remove_dir(root).unwrap();
 }
+
+#[tokio::test]
+async fn failed_sign_in_again_preserves_the_existing_gateway() {
+    use homecore_xiaomi::{
+        setup::Setup,
+        store::{GatewayConfig, Store},
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/longPolling/loginUrl",
+            get(|State(base): State<String>| async move {
+                Json(json!({"qr":format!("{base}/qr"),"lp":format!("{base}/poll"),"timeout":120}))
+            }),
+        )
+        .route(
+            "/qr",
+            get(|| async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "image/png")
+                    .body(Body::from(vec![137, 80, 78, 71, 13, 10, 26, 10]))
+                    .unwrap()
+            }),
+        )
+        .route(
+            "/poll",
+            get(|| async { Json(json!({"error":"cancelled"})) }),
+        )
+        .with_state(base.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let root = std::env::temp_dir().join(format!("xiaomi-reauth-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let store = Store::new(&root);
+    store
+        .save_gateway(
+            &GatewayConfig::new(
+                "192.168.1.12",
+                "lumi.gateway.mgl03",
+                "0123456789abcdef0123456789abcdef",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let setup = Setup::new(Provider::new(&base).unwrap(), store, "cn");
+    assert_eq!(setup.status().await, "gateway_saved");
+    setup.begin().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while setup.status().await == "waiting" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(setup.status().await, "error");
+    assert_eq!(
+        Store::new(&root).load_gateway().unwrap().unwrap().address(),
+        "192.168.1.12"
+    );
+    server.abort();
+    std::fs::remove_file(root.join("gateway.json")).unwrap();
+    std::fs::remove_dir(root).unwrap();
+}

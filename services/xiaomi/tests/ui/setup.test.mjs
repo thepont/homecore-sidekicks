@@ -114,3 +114,16 @@ test('reopening on another device resumes an active QR sign-in',async()=>{
     assert.equal(await page.getByText('Scan this code with Mi Home.',{exact:true}).count(),1);
   } finally {await browser.close();}
 });
+
+test('a saved setup can be signed in again with a selected region',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{window.beginCount=0;const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async name=>name==='begin_sign_in'?(window.beginCount++,{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}):{ok:true,data:{status:'ok',setup_status:'gateway_saved'}}};document.querySelector('main').append(el)});
+    await page.getByText('Gateway saved. Connection needs verification.',{exact:true}).waitFor({timeout:2000});
+    await page.getByLabel('Mi Home region').selectOption('cn');
+    await page.getByRole('button',{name:'Sign in again'}).click({timeout:2000});
+    assert.equal(await page.evaluate(()=>window.beginCount),1);
+    assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),1);
+  } finally {await browser.close();}
+});

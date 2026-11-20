@@ -23,7 +23,7 @@ class XiaomiSetup extends HTMLElement {
       this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
     }
     if(result.data?.setup_status==='gateway_saved') {
-      this.shadowRoot.querySelector('button').hidden=true;
+      this.shadowRoot.querySelector('button').textContent='Sign in again';
       this.shadowRoot.querySelector('.status').textContent='Gateway saved. Connection needs verification.';
     }
   }
@@ -51,7 +51,7 @@ class XiaomiSetup extends HTMLElement {
     if(generation!==this.#generation || !this.isConnected)return;
     const status=this.shadowRoot.querySelector('.status'), button=this.shadowRoot.querySelector('button');
     if(result?.ok && result.data?.setup_status==='gateway_saved') {
-      this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Gateway saved. Connection needs verification.';return;
+      this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;button.textContent='Sign in again';status.textContent='Gateway saved. Connection needs verification.';return;
     }
     if(result?.ok && result.data?.setup_status==='connected') {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
