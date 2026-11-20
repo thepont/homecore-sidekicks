@@ -87,6 +87,103 @@ async fn given_powerwall_reading_when_polled_then_homecore_gets_read_only_state(
 
 #[tokio::test]
 #[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn powerwall_publishes_schema_on_change_and_replays_it_after_broker_restart() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    const SCHEMA: &str = "homecore/devices/teslemetry_powerwall/schema";
+    const STATE: &str = "homecore/devices/teslemetry_powerwall/state";
+    const REGISTER: &str = "homecore/plugins/plugin.teslemetry-powerwall/register";
+    let mut broker = mqtt_broker::Broker::start().await;
+    let port = broker.port;
+    let mut probe = mqtt_broker::Probe::start(port).await;
+    let polls = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route("/api/1/energy_sites/42/live_status", get(move || {
+        let polls = polls.clone();
+        async move {
+            let poll = polls.fetch_add(1, Ordering::SeqCst);
+            if poll >= 4 {
+                // Reconnect has to replay the schema while the source is quiet.
+                std::future::pending::<()>().await;
+            }
+            let mut result = json!({"response": {
+                "timestamp": chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),
+                "percentage_charged": 65.2, "battery_power": -1190 + poll as i64, "solar_power": 2412
+            }});
+            if poll == 2 {
+                result["response"]["wall_connectors"] = json!([{"wall_connector_power": 3120}]);
+            }
+            Json(result)
+        }
+    }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, port, "schema-replay-fixture", Some("1"));
+
+    let mut schemas = Vec::new();
+    for (poll, schema_count) in [2, 2, 3, 4].into_iter().enumerate() {
+        let reading = tokio::time::timeout(Duration::from_secs(4), async {
+            loop {
+                let message = probe.messages.recv().await.expect("MQTT probe closed");
+                if message.topic == SCHEMA {
+                    schemas.push(serde_json::from_slice::<Value>(&message.payload).unwrap());
+                }
+                if message.topic == STATE {
+                    break serde_json::from_slice::<Value>(&message.payload).unwrap();
+                }
+            }
+        })
+        .await
+        .expect("each live poll must publish its reading");
+        assert_eq!(reading["battery_power_w"], -1190.0 + poll as f64);
+        assert_eq!(
+            schemas.len(),
+            schema_count,
+            "unexpected schema count after poll {}",
+            poll + 1
+        );
+    }
+    assert_eq!(
+        schemas[2]["attributes"]["wall_connector_1_power_w"]["unit"],
+        "W"
+    );
+    assert!(schemas[3]["attributes"]
+        .get("wall_connector_1_power_w")
+        .is_none());
+
+    drop(probe);
+    broker.restart().await;
+    assert_eq!(broker.port, port);
+    let mut probe = mqtt_broker::Probe::start(port).await;
+    let replay = tokio::time::timeout(Duration::from_secs(6), async {
+        let mut registration = None;
+        let mut schema = None;
+        loop {
+            let message = probe.messages.recv().await.expect("MQTT probe closed");
+            match message.topic.as_str() {
+                REGISTER => {
+                    registration = Some(serde_json::from_slice::<Value>(&message.payload).unwrap())
+                }
+                SCHEMA => schema = Some(serde_json::from_slice::<Value>(&message.payload).unwrap()),
+                _ => (),
+            }
+            if let (Some(registration), Some(schema)) = (&registration, &schema) {
+                return (registration.clone(), schema.clone());
+            }
+        }
+    })
+    .await
+    .expect(
+        "reconnected broker must receive registration and the latest schema before another reading",
+    );
+    assert_eq!(replay.0["device_id"], "teslemetry_powerwall");
+    assert_eq!(replay.1, schemas[3]);
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
 async fn given_source_failure_after_success_when_polled_then_homecore_marks_it_offline() {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
