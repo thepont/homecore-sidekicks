@@ -277,6 +277,22 @@ class TeslemetryCard extends HTMLElement {
     return descriptions;
   }
 
+  #renderConnection(node, watts) {
+    const magnitude = watts === undefined ? undefined : Math.abs(watts) / 1000;
+    const kw = magnitude === undefined ? undefined : Number(magnitude.toFixed(magnitude < 0.1 ? 3 : 2));
+    const power = this.#format(kw, 'kW');
+    const direction = watts === undefined ? 'No reading'
+      : watts === 0 ? 'Idle' : watts > 0 ? node.positive : node.negative;
+    const description = watts === undefined ? 'No reading' : `${direction} · ${power}`;
+    if (node.mini) node.mini.textContent = description;
+    if (node.value) node.value.textContent = power;
+    node.direction.textContent = node.key === 'battery' ? description : direction;
+    node.flow.toggleAttribute('hidden', watts === undefined || watts === 0);
+    node.flow.setAttribute('d', node.paths[watts < 0 ? 1 : 0]);
+    if (node.key === 'battery') this.#view.compactPower.textContent = description;
+    return description;
+  }
+
   #render() {
     if (!this.#view) return;
     const device = this.#deviceId ? this.#host?.devices.get(this.#deviceId) : undefined;
@@ -301,18 +317,7 @@ class TeslemetryCard extends HTMLElement {
     let known = charge === undefined ? 0 : 1;
     for (const node of view.nodes) {
       const watts = number(node.field);
-      const magnitude = watts === undefined ? undefined : Math.abs(watts) / 1000;
-      const kw = magnitude === undefined ? undefined : Number(magnitude.toFixed(magnitude < 0.1 ? 3 : 2));
-      const power = this.#format(kw, 'kW');
-      const direction = watts === undefined ? 'No reading'
-        : watts === 0 ? 'Idle' : watts > 0 ? node.positive : node.negative;
-      const description = watts === undefined ? 'No reading' : `${direction} · ${power}`;
-      if (node.mini) node.mini.textContent = description;
-      if (node.value) node.value.textContent = power;
-      node.direction.textContent = node.key === 'battery' ? description : direction;
-      node.flow.toggleAttribute('hidden', watts === undefined || watts === 0);
-      node.flow.setAttribute('d', node.paths[watts < 0 ? 1 : 0]);
-      if (node.key === 'battery') view.compactPower.textContent = description;
+      const description = this.#renderConnection(node, watts);
       if (watts !== undefined) known += 1;
       summary.push(`${node.label}: ${description}.`);
     }
