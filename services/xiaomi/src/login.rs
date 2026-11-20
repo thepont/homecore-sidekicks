@@ -81,8 +81,7 @@ impl Provider {
             .error_for_status()
             .map_err(|_| "Xiaomi sign-in unavailable")?;
         let data = bounded(response, 65536).await?;
-        let data = data.strip_prefix(b"&&&START&&&").unwrap_or(&data);
-        let body: Value = serde_json::from_slice(data).map_err(|_| "Invalid provider response")?;
+        let body = provider_json(&data)?;
         let qr = self.allowed(
             body.get("qr")
                 .and_then(Value::as_str)
@@ -132,6 +131,11 @@ async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8
     Ok(bytes)
 }
 
+fn provider_json(data: &[u8]) -> Result<Value, &'static str> {
+    let data = data.strip_prefix(b"&&&START&&&").unwrap_or(data);
+    serde_json::from_slice(data).map_err(|_| "Invalid provider response")
+}
+
 /// Cloud credentials remain inside the service; they are never returned to the setup page.
 pub struct Authentication {
     user_id: String,
@@ -155,8 +159,7 @@ impl Provider {
             .error_for_status()
             .map_err(|_| "Waiting for Xiaomi sign-in failed")?;
         let data = bounded(response, 65536).await?;
-        let data = data.strip_prefix(b"&&&START&&&").unwrap_or(&data);
-        let body: Value = serde_json::from_slice(data).map_err(|_| "Invalid provider response")?;
+        let body = provider_json(&data)?;
         let user_id = match body.get("userId") {
             Some(Value::String(s))
                 if !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_digit()) =>
