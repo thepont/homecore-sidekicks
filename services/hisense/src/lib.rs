@@ -126,6 +126,10 @@ pub struct Broker {
     pub password: String,
 }
 
+fn subscription_accepted(codes: &[rumqttc::SubscribeReasonCode]) -> bool {
+    matches!(codes, [rumqttc::SubscribeReasonCode::Success(_)])
+}
+
 const PLUGIN: &str = "plugin.hisense";
 const DEVICE: &str = "hisense_living_room";
 
@@ -177,8 +181,8 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                         ready_tx.send_replace(false);
                     }
                 }
-                Ok(Event::Incoming(Incoming::SubAck(_))) => {
-                    ready_tx.send_replace(true);
+                Ok(Event::Incoming(Incoming::SubAck(ack))) => {
+                    ready_tx.send_replace(subscription_accepted(&ack.return_codes));
                 }
                 Ok(Event::Incoming(Incoming::Publish(message)))
                     if message.topic == command_topic && !message.retain && !message.dup =>
@@ -343,5 +347,19 @@ impl Hisense {
             return Err("TV rejected command");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod subscription_tests {
+    use super::subscription_accepted;
+    use rumqttc::{QoS, SubscribeReasonCode};
+    #[test]
+    fn only_a_granted_command_subscription_is_ready() {
+        assert!(subscription_accepted(&[SubscribeReasonCode::Success(
+            QoS::AtLeastOnce
+        )]));
+        assert!(!subscription_accepted(&[SubscribeReasonCode::Failure]));
+        assert!(!subscription_accepted(&[]));
     }
 }
