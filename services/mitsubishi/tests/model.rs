@@ -85,6 +85,28 @@ fn controller_snapshot_exposes_current_climate_with_read_only_units() {
 }
 
 #[test]
+fn attribute_kinds_preserve_homecore_types_independently_of_json_number_shape() {
+    let snapshot = state(json!({
+        "type":"state", "connected":true, "power":false,
+        "room":21, "target":23.5, "uptime":37, "mode":"heat",
+        "resetReason":"POWER_ON"
+    }));
+    for (key, value, kind) in [
+        ("cn105_connected", json!(true), "bool"),
+        ("power", json!(false), "bool"),
+        ("temperature", json!(21), "float"),
+        ("setpoint", json!(23.5), "float"),
+        ("uptime", json!(37), "integer"),
+        ("operation_mode", json!("heat"), "string"),
+        ("hvac_mode", json!("off"), "string"),
+        ("reset_reason", json!("POWER_ON"), "string"),
+    ] {
+        assert_eq!(snapshot.values[key], value, "{key}");
+        assert_eq!(snapshot.attributes[key]["kind"], kind, "{key}");
+    }
+}
+
+#[test]
 fn stale_sensors_and_missing_measurements_do_not_publish_old_values_or_zeroes() {
     let snapshot = state(json!({
         "type":"state","connected":true,"outsideTemp":null,"runtime":null,"errorCode":null,
