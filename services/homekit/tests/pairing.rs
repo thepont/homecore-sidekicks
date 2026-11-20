@@ -142,14 +142,16 @@ async fn reads_each_contact_from_a_bridge_independently() {
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
         .env("HAP_STORE_DIR", fixture_root)
         .env("HAP_BRIDGE", "1")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let output = child.stdout.take().unwrap();
-    let _fixture = Fixture { child, root };
+    let mut fixture = Fixture { child, root };
     let mut line = String::new();
-    BufReader::new(output).read_line(&mut line).unwrap();
+    let mut output = BufReader::new(output);
+    output.read_line(&mut line).unwrap();
     let port = line
         .trim()
         .strip_prefix("PORT=")
@@ -180,4 +182,17 @@ async fn reads_each_contact_from_a_bridge_independently() {
     assert_ne!(readings[0].0, readings[1].0);
     assert_eq!(readings[0].1, json!({"open":true,"battery_pct":69}));
     assert_eq!(readings[1].1, json!({"open":false}));
+    let mut watch = homecore_homekit::watch_contacts_saved("02:11:22:33:44:55", &state_root)
+        .await
+        .unwrap();
+    assert_eq!(watch.current(), &readings);
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "close").unwrap();
+    let update = tokio::time::timeout(Duration::from_secs(5), watch.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        update,
+        (readings[0].0, json!({"open":false,"battery_pct":69}))
+    );
 }

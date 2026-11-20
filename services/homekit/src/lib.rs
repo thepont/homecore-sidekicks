@@ -449,3 +449,88 @@ pub async fn watch_saved(
         task,
     })
 }
+
+pub struct ContactsWatch {
+    current: Vec<(u64, Value)>,
+    updates: tokio::sync::mpsc::Receiver<(u64, Value)>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl ContactsWatch {
+    pub fn current(&self) -> &Vec<(u64, Value)> {
+        &self.current
+    }
+    pub async fn next(&mut self) -> Option<(u64, Value)> {
+        let update = self.updates.recv().await?;
+        if let Some((_, state)) = self.current.iter_mut().find(|(aid, _)| *aid == update.0) {
+            *state = update.1.clone();
+        }
+        Some(update)
+    }
+}
+impl Drop for ContactsWatch {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Watch contact notifications for all contacts attached to a saved bridge.
+pub async fn watch_contacts_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<ContactsWatch, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    use tokio_stream::StreamExt;
+    let (lock, mut handle) = connect_saved(id, state_dir).await?;
+    let current = read_contacts(&mut handle).await?;
+    let accessories = handle
+        .accessories()
+        .await
+        .map_err(|_| "Cannot read HomeKit accessories")?
+        .to_vec();
+    let mut contacts = Vec::new();
+    for accessory in accessories {
+        for service in accessory.services {
+            if service.service_type == ServiceType::ContactSensor {
+                for characteristic in service.characteristics {
+                    if characteristic.char_type == CharacteristicType::ContactSensorState {
+                        contacts.push((accessory.aid, characteristic.iid));
+                    }
+                }
+            }
+        }
+    }
+    let mut events = Box::pin(handle.events());
+    for (aid, iid) in &contacts {
+        handle
+            .subscribe(*aid, *iid)
+            .await
+            .map_err(|_| "Cannot subscribe to contact")?;
+    }
+    let (send, updates) = tokio::sync::mpsc::channel(32);
+    let mut state = current.clone();
+    let task = tokio::spawn(async move {
+        let _lock = lock;
+        let _handle = handle;
+        while let Some(event) = events.next().await {
+            if !contacts.contains(&(event.aid, event.iid)) {
+                continue;
+            }
+            let open = match event.value.to_json().as_u64() {
+                Some(0) => false,
+                Some(1) => true,
+                _ => continue,
+            };
+            if let Some((_, value)) = state.iter_mut().find(|(aid, _)| *aid == event.aid) {
+                value["open"] = json!(open);
+                if send.try_send((event.aid, value.clone())).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    Ok(ContactsWatch {
+        current,
+        updates,
+        task,
+    })
+}
