@@ -361,6 +361,18 @@ function dialPointer(svg, event) {
     angle: (degrees - dialGeometry.start + 720) % 360, pixelsPerUnit: Math.hypot(screen.a, screen.b) };
 }
 
+function updateAirflowOptions({ select, reading, values }, choices, reported) {
+  const options = choices.map(({ value, label }) => [value, label ?? lookup(values, value) ?? value]);
+  const hasReportedOption = options.some(([value]) => value === reported);
+  if (!hasReportedOption) options.unshift(['', reading.textContent]);
+  const serialized = JSON.stringify(options);
+  if (select.dataset.options !== serialized) {
+    select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+    select.dataset.options = serialized;
+  }
+  select.value = hasReportedOption ? reported : '';
+}
+
 class AcCard extends HTMLElement {
   #host;
   #deviceId;
@@ -746,12 +758,12 @@ class AcCard extends HTMLElement {
   #renderAirflow({ available, mode, reported, unsupportedAirflow }, schema) {
     let hasAirflow = false;
     let canAdjustAirflow = false;
-    for (const { key, row, select, reading, values } of this.#view.fields) {
+    for (const field of this.#view.fields) {
+      const { key, row, select, reading, values } = field;
       const spec = schema?.[key];
       const supported = !unsupportedAirflow.has(key);
       const writable = supported && spec?.writable && spec.options.length > 0;
       const raw = reported[key];
-      const optionLabel = option => option.label ?? lookup(values, option.value) ?? option.value;
       const visible = supported && (writable || (raw !== undefined && raw !== 'unknown'));
       show(row, visible);
       hasAirflow ||= visible;
@@ -760,14 +772,7 @@ class AcCard extends HTMLElement {
       reading.textContent = available ? spec?.options.find(option => option.value === raw)?.label ??
         lookup(values, raw) ?? raw ?? '—' : '—';
       if (!writable) continue;
-      const options = spec.options.map(option => [option.value, optionLabel(option)]);
-      if (!options.some(([value]) => value === raw)) options.unshift(['', reading.textContent]);
-      const serialized = JSON.stringify(options);
-      if (select.dataset.options !== serialized) {
-        select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
-        select.dataset.options = serialized;
-      }
-      select.value = options.some(([value]) => value === raw) ? raw : '';
+      updateAirflowOptions(field, spec.options, raw);
       select.disabled = mode === 'off' || mode === undefined || !!this.#pending;
       canAdjustAirflow = true;
       if (!select.disabled) {
