@@ -2,6 +2,7 @@
 #[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
 mod mqtt_broker;
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
 use rumqttc::Publish;
 use serde_json::{json, Value};
@@ -165,6 +166,10 @@ fn start_adapter_with_staleness(port: u16, first: &Source, second: &Source, stal
         .env("MQTT_HOST", "127.0.0.1")
         .env("MQTT_PORT", port.to_string())
         .env("MQTT_USERNAME", "fixture-user")
+        .env(
+            "HC_PLUGIN_UI_DIR",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../ui/ac-card"),
+        )
         .env("MQTT_PASSWORD_FILE", root.join("mqtt-password"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -567,4 +572,61 @@ async fn metadata_and_logs_do_not_keep_readings_fresh_or_cross_connection_lifeti
     let schema: Value = serde_json::from_slice(&schema.payload).unwrap();
     assert!(schema["attributes"].get("firmware").is_none());
     session.assert_read_only().await;
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn both_units_advertise_and_serve_the_same_ac_card_without_controller_commands() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut first = Source::start(snapshot(24.2, 22.5, "cool")).await;
+    let mut second = Source::start(snapshot(18.3, 20.5, "heat")).await;
+    let _adapter = start_adapter(broker.port, &first, &second);
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    state(&mut probe, "room_a", 24.2).await;
+    state(&mut probe, "room_b", 18.3).await;
+    let mut builds = Vec::new();
+    for (id, request_id) in [
+        ("room_a", "123e4567-e89b-42d3-a456-426614174001"),
+        ("room_b", "123e4567-e89b-42d3-a456-426614174002"),
+    ] {
+        let prefix = format!("homecore/plugins/plugin.mitsubishi.{id}");
+        let manifest = retained(broker.port, &format!("{prefix}/capabilities")).await;
+        let manifest: Value = serde_json::from_slice(&manifest.payload).unwrap();
+        let ui = &manifest["ui"];
+        assert_eq!(ui["host_api"], 1);
+        assert_eq!(ui["slots"][0]["element"], "hc-ac-card");
+        assert_eq!(ui["slots"][0]["slot"], "device.card");
+        let entry = ui["entry"].as_str().unwrap();
+        builds.push(ui["build"].as_str().unwrap().to_owned());
+
+        probe
+            .client
+            .publish(
+                format!("{prefix}/manage/cmd"),
+                rumqttc::QoS::AtLeastOnce,
+                false,
+                json!({"action":"ui_file","request_id":request_id,"file":entry}).to_string(),
+            )
+            .await
+            .unwrap();
+        let reply = until(
+            &mut probe,
+            &format!("{prefix}/manage/response"),
+            |payload| {
+                serde_json::from_slice::<Value>(payload)
+                    .is_ok_and(|reply| reply["request_id"] == request_id)
+            },
+        )
+        .await;
+        let reply: Value = serde_json::from_slice(&reply.payload).unwrap();
+        assert_eq!(reply["status"], "ok");
+        assert_eq!(reply["done"], true);
+        assert_eq!(
+            STANDARD.decode(reply["data"].as_str().unwrap()).unwrap(),
+            include_bytes!("../../../ui/ac-card/index.js")
+        );
+    }
+    assert_eq!(builds[0], builds[1]);
+    first.connected().await.assert_read_only().await;
+    second.connected().await.assert_read_only().await;
 }

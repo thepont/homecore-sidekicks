@@ -79,9 +79,9 @@ reach a pod's loopback broker through the host's `127.0.0.1`.
 
 [Dockerfile.mitsubishi](../../deploy/Dockerfile.mitsubishi) uses the same scratch
 runtime approach as the existing Teslemetry image. It takes the **repository
-root** as its build context and copies only the release executable and a staged
-tree of its shared libraries. It does not compile Rust inside Docker or require
-a Node runtime.
+root** as its build context and copies the release executable, a staged
+tree of its shared libraries, and the [shared AC card](../../ui/ac-card/README.md).
+It does not compile Rust inside Docker or require a Node runtime.
 
 On the Linux build host, build the release binary, then stage its runtime
 libraries. These Bash commands operate only on ignored build output:
@@ -100,6 +100,7 @@ ldd services/mitsubishi/target/release/mitsubishi-bridge \
 tar -cf - deploy/Dockerfile.mitsubishi \
   services/mitsubishi/target/release/mitsubishi-bridge \
   services/mitsubishi/target/container-runtime \
+  ui/ac-card/manifest.json ui/ac-card/index.js \
   | docker build -f deploy/Dockerfile.mitsubishi -t homecore-mitsubishi:0.1.0 -
 ```
 
@@ -190,14 +191,22 @@ with the same IDs against the same broker: their MQTT client identities collide.
 | Topic suffix | Prefix | Content |
 | --- | --- | --- |
 | `register` | `homecore/plugins/plugin.mitsubishi.living_room/` | Device name, IDs and sensor type; retained. |
-| `capabilities` | Same plugin prefix | Empty action list; retained. |
+| `capabilities` | Same plugin prefix | Empty action list and the AC card descriptor when assets are available; retained. |
+| `manage/cmd`, `manage/response` | Same plugin prefix | HomeCore requests and replies for the shared card bundle. |
 | `heartbeat` | Same plugin prefix | Adapter version and uptime, every 30 seconds. |
 | `schema` | `homecore/devices/mitsubishi_living_room/` | Available attribute types and units; all `writable:false`; retained. |
 | `state` | Same device prefix | Latest permitted telemetry; retained. |
 | `availability` | Same device prefix | `online` or `offline`; retained. |
 
 The bridge registers a sensor rather than a thermostat because it implements
-no setpoint, mode or power commands. It does not subscribe to control topics.
+no setpoint, mode or power commands. It does not subscribe to device control topics.
+
+On Home and room pages, standard and large cards show the room reading, mode,
+targets, supported airflow settings and optional diagnostics. The AC card is
+read-only for this adapter. The container serves its two asset files from
+`/ui`. In a local checkout set `HC_PLUGIN_UI_DIR="$PWD/ui/ac-card"` when starting
+the bridge. Missing or invalid assets leave telemetry available with HomeCore's
+default card.
 
 ## Readings and diagnostics
 
@@ -213,6 +222,7 @@ is Fahrenheit.
 | `mode`, `fan` | `operation_mode`, `fan_mode` | Source mode and fan setting. |
 | Power, mode and activity combined | `hvac_mode`, `hvac_action` | Derived display states; an off AC is `off` even if its remembered source mode is `cool`. Transitional states do not claim active heating/cooling. |
 | `vane`, `wideVane` | `vertical_vane`, `horizontal_vane` | Source vane settings. |
+| `vaneConfig` | `has_vertical_vane`, `has_horizontal_vane` | Optional read-only capability flags. |
 | `subMode`, `stage`, `autoSubMode` | `sub_mode`, `stage`, `auto_sub_mode` | Operating detail. |
 | `outsideTemp`, `heatThresh`, `coolThresh` | `outside_temperature`, `heating_setpoint`, `cooling_setpoint` | °C; optional. |
 | `compressorHz`, `runtime`, `errorCode` | `compressor_frequency`, `runtime`, `fault`, `error_code` | Hz, operating hours, explicit fault state and raw fault code. These are not electrical watts or energy. |
