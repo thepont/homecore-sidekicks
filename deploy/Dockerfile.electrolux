@@ -1,0 +1,5 @@
+FROM scratch
+COPY services/electrolux/target/container-runtime/ /
+COPY services/electrolux/target/release/electrolux-bridge /electrolux-bridge
+USER 65532:65532
+ENTRYPOINT ["/electrolux-bridge"]
