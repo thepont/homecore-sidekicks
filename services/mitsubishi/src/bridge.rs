@@ -290,12 +290,13 @@ async fn run_unit(
         )),
     ]);
     let _sensors = Tasks(
-        (0..5)
-            .map(|slot| {
+        sensors::SENSORS
+            .into_iter()
+            .map(|kind| {
                 tokio::spawn(sensors::run(
                     unit.clone(),
                     broker.clone(),
-                    slot,
+                    kind,
                     latest.clone(),
                     Duration::from_secs(publish_secs),
                     stale,

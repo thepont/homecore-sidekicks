@@ -14,28 +14,39 @@ struct Published {
     available: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum SensorKind {
+    Ble(usize),
+    Link,
+}
+
+pub(crate) const SENSORS: [SensorKind; 5] = [
+    SensorKind::Ble(0),
+    SensorKind::Ble(1),
+    SensorKind::Ble(2),
+    SensorKind::Ble(3),
+    SensorKind::Link,
+];
+
 pub(crate) async fn run(
     unit: Unit,
     broker: Broker,
-    slot: usize,
+    kind: SensorKind,
     mut latest: watch::Receiver<Option<Observation>>,
     interval: Duration,
     stale: Duration,
 ) {
-    let is_link = slot == 4;
-    let suffix = if is_link {
-        "link".to_string()
-    } else {
-        format!("ble_{slot}")
+    let suffix = match kind {
+        SensorKind::Link => "link".to_string(),
+        SensorKind::Ble(slot) => format!("ble_{slot}"),
     };
     let prefix = format!("{suffix}_");
     loop {
-        let discovered = latest.borrow().as_ref().is_some_and(|v| {
-            if is_link {
+        let discovered = latest.borrow().as_ref().is_some_and(|v| match kind {
+            SensorKind::Link => {
                 v.state.values.get("link_sensor_present") == Some(&Value::Bool(true))
-            } else {
-                v.state.values.contains_key(&format!("{prefix}available"))
             }
+            SensorKind::Ble(_) => v.state.values.contains_key(&format!("{prefix}available")),
         });
         if discovered {
             break;
@@ -46,10 +57,9 @@ pub(crate) async fn run(
     }
     let plugin = format!("plugin.mitsubishi.{}.{suffix}", unit.id);
     let device = format!("mitsubishi_{}_{suffix}", unit.id);
-    let name = if is_link {
-        format!("{} Link sensor", unit.name)
-    } else {
-        format!("{} sensor {}", unit.name, slot + 1)
+    let name = match kind {
+        SensorKind::Link => format!("{} Link sensor", unit.name),
+        SensorKind::Ble(slot) => format!("{} sensor {}", unit.name, slot + 1),
     };
     let mut opts = MqttOptions::new(plugin.clone(), broker.host, broker.port);
     opts.set_credentials(broker.username, broker.password);
@@ -75,7 +85,7 @@ pub(crate) async fn run(
                     if send(&mqtt, format!("homecore/plugins/{plugin}/register"), registration.to_string()).await.is_err() { connected = false; }
                     if connected {
                         let observation = latest.borrow().clone();
-                        publish(&mqtt, &device, &prefix, observation.as_ref(), stale, &mut published).await;
+                        publish(&mqtt, &device, &prefix, kind, observation.as_ref(), stale, &mut published).await;
                     }
                 }
                 Ok(_) => {},
@@ -84,11 +94,11 @@ pub(crate) async fn run(
             changed = latest.changed() => {
                 if changed.is_err() { return; }
                 let observation = latest.borrow_and_update().clone();
-                if connected { publish(&mqtt, &device, &prefix, observation.as_ref(), stale, &mut published).await; }
+                if connected { publish(&mqtt, &device, &prefix, kind, observation.as_ref(), stale, &mut published).await; }
             }
             _ = tick.tick(), if connected => {
                 let observation = latest.borrow().clone();
-                publish(&mqtt, &device, &prefix, observation.as_ref(), stale, &mut published).await;
+                publish(&mqtt, &device, &prefix, kind, observation.as_ref(), stale, &mut published).await;
             }
         }
     }
@@ -108,6 +118,7 @@ async fn publish(
     mqtt: &AsyncClient,
     device: &str,
     prefix: &str,
+    kind: SensorKind,
     observation: Option<&Observation>,
     stale: Duration,
     previous: &mut Option<Published>,
@@ -116,12 +127,13 @@ async fn publish(
         v.received.elapsed() < stale
             && v.state.values.get("cn105_connected") == Some(&Value::Bool(true))
     });
-    let available = observation.is_some_and(|v| {
-        if prefix == "link_" {
+    let available = observation.is_some_and(|v| match kind {
+        SensorKind::Link => {
             v.state.values.get("link_sensor_present") == Some(&Value::Bool(true))
                 && v.state.values.get("link_active") == Some(&Value::Bool(true))
                 && v.state.values.get("link_stale") == Some(&Value::Bool(false))
-        } else {
+        }
+        SensorKind::Ble(_) => {
             v.state.values.get(&format!("{prefix}available")) == Some(&Value::Bool(true))
         }
     });
