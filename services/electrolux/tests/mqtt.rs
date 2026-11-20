@@ -480,6 +480,25 @@ async fn electrolux_advertises_and_serves_the_shared_ac_card() {
         .unwrap()
         .iter()
         .any(|x| x["element"] == "hc-ac-card"));
+    let schema = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(m) = probe.messages.recv().await {
+            if m.topic == "homecore/devices/electrolux_living_room/schema" {
+                return serde_json::from_slice::<serde_json::Value>(&m.payload).unwrap();
+            }
+        }
+        panic!("probe closed")
+    })
+    .await
+    .expect("climate schema");
+    assert_eq!(schema["attributes"]["setpoint"]["step"], 1);
+    assert!(schema["attributes"]["hvac_mode"]["options"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("heat")));
+    assert!(schema["attributes"]["fan_mode"]["options"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("quiet")));
     let request = serde_json::json!({"action":"ui_file","request_id":"12345678-1234-4234-8234-123456789abc","file":"index.js","offset":0,"max":131072});
     probe
         .client
