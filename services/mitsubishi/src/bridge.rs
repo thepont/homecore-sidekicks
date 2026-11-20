@@ -44,6 +44,40 @@ pub async fn run(config: Config, broker: Broker) -> Result<(), &'static str> {
     Err("Mitsubishi unit worker stopped")
 }
 
+struct Publication {
+    values: Map<String, Value>,
+    schema: Value,
+    available: bool,
+}
+
+impl Publication {
+    fn from_observation(observation: Option<&Observation>) -> Self {
+        let mut values = Map::new();
+        let mut attributes = Map::new();
+        let available = if let Some(value) = observation {
+            values.extend(value.state.values.clone());
+            attributes.extend(value.state.attributes.clone());
+            if let Some(info) = &value.info {
+                values.extend(info.values.clone());
+                attributes.extend(info.attributes.clone());
+            }
+            values.get("cn105_connected") == Some(&Value::Bool(true))
+        } else {
+            false
+        };
+        let primary: Vec<_> = ["temperature", "setpoint", "hvac_mode"]
+            .into_iter()
+            .filter(|key| attributes.contains_key(*key))
+            .collect();
+        let schema = json!({"attributes":attributes,"primary":primary});
+        Self {
+            values,
+            schema,
+            available,
+        }
+    }
+}
+
 struct Publisher {
     mqtt: AsyncClient,
     plugin: String,
@@ -95,24 +129,11 @@ impl Publisher {
         stale: Duration,
     ) -> Result<(), &'static str> {
         let observation = observation.filter(|value| value.received.elapsed() < stale);
-        let mut values = Map::new();
-        let mut attributes = Map::new();
-        let available = if let Some(value) = observation {
-            values.extend(value.state.values.clone());
-            attributes.extend(value.state.attributes.clone());
-            if let Some(info) = &value.info {
-                values.extend(info.values.clone());
-                attributes.extend(info.attributes.clone());
-            }
-            values.get("cn105_connected") == Some(&Value::Bool(true))
-        } else {
-            false
-        };
-        let primary: Vec<_> = ["temperature", "setpoint", "hvac_mode"]
-            .into_iter()
-            .filter(|key| attributes.contains_key(*key))
-            .collect();
-        let schema = json!({"attributes":attributes,"primary":primary});
+        let Publication {
+            values,
+            schema,
+            available,
+        } = Publication::from_observation(observation);
         if self.schema.as_ref() != Some(&schema) {
             self.send(
                 format!("homecore/devices/{}/schema", self.device),
