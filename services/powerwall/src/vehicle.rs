@@ -302,6 +302,63 @@ fn apply_observation(
     true
 }
 
+async fn publish_vehicle_state(
+    mqtt: &AsyncClient,
+    id: &str,
+    availability: &str,
+    state: &Map<String, Value>,
+    latest: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    let schema = vehicle_schema(state);
+    if mqtt
+        .publish(
+            format!("homecore/devices/{id}/schema"),
+            QoS::AtLeastOnce,
+            true,
+            schema.to_string(),
+        )
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    if mqtt
+        .publish(
+            format!("homecore/devices/{id}/state"),
+            QoS::AtLeastOnce,
+            true,
+            Value::Object(state.clone()).to_string(),
+        )
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let fresh = now.signed_duration_since(latest).num_seconds() <= 300;
+    let asleep = state
+        .get("vehicle_state")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s != "online");
+    if mqtt
+        .publish(
+            availability,
+            QoS::AtLeastOnce,
+            true,
+            if fresh && !asleep {
+                "online"
+            } else {
+                "offline"
+            },
+        )
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    true
+}
+
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
     let id = device_id(&vin);
     let availability = format!("homecore/devices/{id}/availability");
@@ -393,54 +450,14 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
                                                 previous.max(observed)
                                             },
                                         ));
-                                        let schema = vehicle_schema(&state);
-                                        if mqtt
-                                            .publish(
-                                                format!("homecore/devices/{id}/schema"),
-                                                QoS::AtLeastOnce,
-                                                true,
-                                                schema.to_string(),
-                                            )
-                                            .await
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
-                                        if mqtt
-                                            .publish(
-                                                format!("homecore/devices/{id}/state"),
-                                                QoS::AtLeastOnce,
-                                                true,
-                                                Value::Object(state.clone()).to_string(),
-                                            )
-                                            .await
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
-                                        let now: chrono::DateTime<chrono::Utc> =
-                                            std::time::SystemTime::now().into();
-                                        let fresh = now
-                                            .signed_duration_since(latest.unwrap())
-                                            .num_seconds()
-                                            <= 300;
-                                        let asleep = state
-                                            .get("vehicle_state")
-                                            .and_then(Value::as_str)
-                                            .is_some_and(|s| s != "online");
-                                        if mqtt
-                                            .publish(
-                                                &availability,
-                                                QoS::AtLeastOnce,
-                                                true,
-                                                if fresh && !asleep {
-                                                    "online"
-                                                } else {
-                                                    "offline"
-                                                },
-                                            )
-                                            .await
-                                            .is_err()
+                                        if !publish_vehicle_state(
+                                            &mqtt,
+                                            &id,
+                                            &availability,
+                                            &state,
+                                            latest.unwrap(),
+                                        )
+                                        .await
                                         {
                                             return;
                                         }
