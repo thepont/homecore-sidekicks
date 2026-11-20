@@ -61,3 +61,11 @@ browser.
 ```sh
 node --test ui/ac-card/tests/card.test.mjs
 ```
+
+## Shared package
+
+This directory is the private `@homecore/ac-card` package. Its `index.js` and
+`manifest.json` are the same runtime files consumed by Mitsubishi and Electrolux;
+there is no separate copy or browser build. Run `npm pack --dry-run` here to
+inspect the package contents. Each adapter includes those two files in its
+image and exposes them through its own homeCore plugin identity.

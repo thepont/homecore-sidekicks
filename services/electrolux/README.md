@@ -35,3 +35,19 @@ The MQTT tests require Docker and the pinned Mosquitto image named in `tests/sup
 
 The Electrolux frame follows the installed [Electrolux Climate component](https://github.com/jnctech/ElectroluxClimateComponent), and the bridge uses pinned `rbroadlink` for Broadlink packet encryption. Its dependency audit currently reports unmaintained transitive `chrono` and `gcc` crates. Review those dependencies before deployment.
 
+## Shared AC card
+
+The adapter serves the shared [`@homecore/ac-card`](../../ui/ac-card/README.md)
+bundle as a device card and panel. The card displays the reported room
+reading, operating mode and target, and offers permitted temperature, mode,
+fan and vertical-swing controls. Its UI uses the published schema's options
+and one-degree step; an offline device or a user without command permission
+cannot issue changes through the card. A requested change remains pending
+until the controller reports the new value.
+
+The card's `vertical_vane` values `swing` and `off` map to the existing
+boolean `swing` command and reading; both interfaces remain available. The
+shared card does not currently offer the Electrolux-specific `heat_cool` mode,
+which remains available through the adapter API. Real-device control for the
+new card has not been exercised; the card and simulated-device contracts are
+tested separately.
