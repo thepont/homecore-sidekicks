@@ -185,6 +185,24 @@ async fn reads_each_contact_from_a_bridge_independently() {
     assert_ne!(readings[0].0, readings[1].0);
     assert_eq!(readings[0].1, json!({"open":true,"battery_pct":69}));
     assert_eq!(readings[1].1, json!({"open":false}));
+    let invited_root = fixture.root.join("invited-controller");
+    fs::create_dir(&invited_root).unwrap();
+    fs::set_permissions(&invited_root, fs::Permissions::from_mode(0o700)).unwrap();
+    homecore_homekit::invite_controller("02:11:22:33:44:55", &state_root, &invited_root)
+        .await
+        .unwrap();
+    assert_eq!(
+        homecore_homekit::read_contacts_saved("02:11:22:33:44:55", &invited_root)
+            .await
+            .unwrap(),
+        readings
+    );
+    assert_eq!(
+        homecore_homekit::read_contacts_saved("02:11:22:33:44:55", &state_root)
+            .await
+            .unwrap(),
+        readings
+    );
     let mut watch = homecore_homekit::watch_contacts_saved("02:11:22:33:44:55", &state_root)
         .await
         .unwrap();

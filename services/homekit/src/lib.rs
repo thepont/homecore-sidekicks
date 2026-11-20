@@ -299,6 +299,90 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
     read_contact(&mut handle).await
 }
 
+/// Invite a separate, non-admin controller using an existing administrator pairing.
+pub async fn invite_controller(
+    id: &str,
+    admin_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<(), &'static str> {
+    use hap_controller::{JsonFileStore, PairingStore};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let (_admin_lock, admin_handle) = connect_saved(id, admin_dir).await?;
+    drop(admin_handle);
+    let admin_meta = std::fs::metadata(admin_dir).map_err(|_| "Invalid pairing directory")?;
+    let meta = std::fs::symlink_metadata(target_dir).map_err(|_| "Invalid target directory")?;
+    if !meta.is_dir()
+        || meta.permissions().mode() & 0o077 != 0
+        || (meta.dev() == admin_meta.dev() && meta.ino() == admin_meta.ino())
+    {
+        return Err("Invalid target directory");
+    }
+    let target_lock = std::fs::File::open(target_dir).map_err(|_| "Invalid target directory")?;
+    target_lock
+        .try_lock()
+        .map_err(|_| "Target pairing in progress")?;
+    let path = target_dir.join("pairing.json");
+    let temp = path.with_extension("json.tmp");
+    if path.exists() {
+        return Err("Target pairing already exists");
+    }
+    let create_tmp = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)
+            .map(|_| ())
+            .map_err(|_| "Cannot secure target pairing store")
+    };
+    create_tmp()?;
+    let _temporary = PairingTemp(temp.clone());
+    let admin_store = JsonFileStore::new(admin_dir.join("pairing.json"));
+    let admin_key = admin_store
+        .load_controller()
+        .await
+        .map_err(|_| "Cannot read HomeKit identity")?
+        .ok_or("HomeKit identity unavailable")?;
+    let pairing = admin_store
+        .load_pairings()
+        .await
+        .map_err(|_| "Cannot read pairing")?
+        .into_iter()
+        .find(|p| p.pairing.pairing_id.eq_ignore_ascii_case(id))
+        .ok_or("Pairing unavailable")?;
+    let mut key = hap_crypto::ControllerKeypair::generate(String::new());
+    key.id = format!(
+        "homecore-{}",
+        key.ltpk()[..16]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let target = JsonFileStore::new(&path);
+    target
+        .save_controller(&key)
+        .await
+        .map_err(|_| "Cannot save target identity")?;
+    create_tmp()?;
+    target
+        .save_pairing(&pairing)
+        .await
+        .map_err(|_| "Cannot save target pairing")?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut session = hap_pairing::connect(&pairing, &admin_key).await?;
+        hap_pairing::PairingsAdmin::new(&mut session)
+            .add(&key.id, key.ltpk(), false)
+            .await
+    })
+    .await;
+    if !matches!(result, Ok(Ok(()))) {
+        return Err(
+            "Invitation failed or its confirmation was lost; target credentials were retained",
+        );
+    }
+    Ok(())
+}
+
 /// Read each bridged contact independently, keyed by its accessory ID.
 pub async fn read_contacts_saved(
     id: &str,
