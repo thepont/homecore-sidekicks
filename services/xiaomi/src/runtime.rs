@@ -20,7 +20,7 @@ pub async fn run(
     .await?;
     let caps: Capabilities = serde_json::from_value(
         json!({"spec":"1", "plugin_id":"", "actions":[
-            {"id":"begin_sign_in", "label":"Sign in with Mi Home", "requires_role":"admin", "timeout_ms":25000},
+        {"id":"begin_sign_in", "label":"Sign in with Mi Home", "requires_role":"admin", "timeout_ms":25000, "params":{"region":{"type":"string", "enum":["cn","de","i2","ru","sg","us"]}}},
             {"id":"sign_in_status", "label":"Check Xiaomi setup", "requires_role":"admin", "timeout_ms":5000}
         ]}),
     )?;
@@ -36,8 +36,9 @@ pub async fn run(
             }
             let action = action.to_owned();
             let setup = setup.clone();
+            let params = command.clone();
             Some(Box::pin(async move {
-                actions::dispatch(&setup, &action)
+                actions::dispatch_with_params(&setup, &action, &params)
                     .await
                     .unwrap_or_else(|| json!({"status":"error"}))
             }) as AsyncActionFuture)

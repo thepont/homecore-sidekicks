@@ -27,6 +27,12 @@ impl Setup {
         *self.state.lock().await
     }
     pub async fn begin(&self) -> Result<String, &'static str> {
+        self.begin_with_region(&self.region).await
+    }
+    pub async fn begin_with_region(&self, region: &str) -> Result<String, &'static str> {
+        if !matches!(region, "cn" | "de" | "i2" | "ru" | "sg" | "us") {
+            return Err("Invalid Xiaomi region");
+        }
         let mut state = self.state.lock().await;
         if *state == "waiting" {
             return Err("Sign-in already in progress");
@@ -34,7 +40,8 @@ impl Setup {
         let challenge = self.provider.begin().await?;
         let qr = challenge.qr_png.clone();
         *state = "waiting";
-        let setup = self.clone();
+        let mut setup = self.clone();
+        setup.region = region.to_owned();
         tokio::spawn(async move {
             let expiry = challenge.expires_after;
             let result = tokio::time::timeout(expiry, async {

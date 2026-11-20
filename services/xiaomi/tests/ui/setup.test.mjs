@@ -58,3 +58,14 @@ test('reopening setup restores the saved gateway state',async()=>{
     assert.equal(await page.getByRole('button',{name:'Sign in with Mi Home'}).count(),0);
   } finally {await browser.close();}
 });
+
+test('the selected Mi Home region is sent when sign-in starts',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{window.sent=null;const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async(name,params)=>{if(name==='begin_sign_in')window.sent=params;return name==='begin_sign_in'?{ok:true,data:{qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}:{ok:true,data:{status:'ok',setup_status:'unconfigured'}}}};document.querySelector('main').append(el)});
+    await page.getByLabel('Mi Home region').selectOption('sg',{timeout:1500});
+    await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
+    assert.deepEqual(await page.evaluate(()=>window.sent),{region:'sg'});
+  } finally {await browser.close();}
+});

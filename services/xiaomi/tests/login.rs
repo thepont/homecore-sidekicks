@@ -100,6 +100,15 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
         .unwrap();
     assert_eq!(reply["status"], "ok");
     assert_eq!(reply["setup_status"], "unconfigured");
+    let invalid = homecore_xiaomi::actions::dispatch_with_params(
+        &setup,
+        "begin_sign_in",
+        &json!({"region":"invalid"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(invalid["status"], "error");
+    assert_eq!(setup.status().await, "unconfigured");
     let reply = homecore_xiaomi::actions::dispatch(&setup, "begin_sign_in")
         .await
         .unwrap();
