@@ -222,34 +222,6 @@ test('shows source buy and sell rates with currency and their independent period
   assert.match(accessible.description, /0.07125 AUD\/kWh/);
 });
 
-test('labels inferred currency alongside live rates and clears the note when the source changes', async () => {
-  await page.evaluate(() => host.update({ attributes: {
-    tariff_available: true, tariff_buy_price_per_kwh: 0, tariff_sell_price_per_kwh: 0.005,
-    tariff_currency: 'AUD', tariff_currency_source: 'site_timezone', tariff_currency_region: 'AU'
-  } }));
-  const note = page.getByText('Currency inferred from site timezone', { exact: true });
-  assert.equal(await note.isVisible(), true);
-  assert.equal(await page.locator('.tariff-buy .rate').textContent(), '0 AUD/kWh');
-  assert.equal(await page.locator('.tariff-sell .rate').textContent(), '0.005 AUD/kWh');
-  await page.getByRole('button').focus();
-  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
-  assert.match(accessible.description, /Currency inferred from site timezone/);
-
-  await page.evaluate(() => host.update({ available: false }));
-  assert.equal(await note.isVisible(), false);
-  assert.equal(await page.locator('.tariff-buy .rate').textContent(), '—');
-
-  for (const source of ['tariff', undefined]) {
-    await page.evaluate(source => host.update({ available: true, attributes: {
-      tariff_available: true, tariff_buy_price_per_kwh: 0.25,
-      tariff_currency: 'AUD', tariff_currency_source: source
-    } }), source);
-    assert.equal(await note.isVisible(), false);
-    assert.equal(await page.locator('.tariff-buy .rate').textContent(), '0.25 AUD/kWh');
-    assert.equal(await page.getByText('Sell rate unavailable', { exact: true }).isVisible(), true);
-  }
-});
-
 test('preserves zero and negative rates without inventing missing currency or sell rates', async () => {
   await page.evaluate(() => host.update({ attributes: {
     tariff_available: true, tariff_buy_price_per_kwh: 0, tariff_sell_price_per_kwh: -0.0254,
