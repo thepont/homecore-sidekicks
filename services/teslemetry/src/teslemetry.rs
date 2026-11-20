@@ -9,7 +9,7 @@ pub fn load_kw(status: &Value) -> Result<f64, &'static str> {
     Ok(watts / 1000.0)
 }
 
-fn validate_status_request(base: &str, site: u64, token: &str) -> Result<(), &'static str> {
+fn status_url(base: &str, site: u64, token: &str) -> Result<String, &'static str> {
     let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
     if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
         || !url.username().is_empty()
@@ -24,7 +24,10 @@ fn validate_status_request(base: &str, site: u64, token: &str) -> Result<(), &'s
     {
         return Err("Invalid Teslemetry configuration");
     }
-    Ok(())
+    Ok(format!(
+        "{}/api/1/energy_sites/{site}/live_status",
+        base.trim_end_matches('/')
+    ))
 }
 
 fn fetch_status(
@@ -33,12 +36,9 @@ fn fetch_status(
     site: u64,
     token: &str,
 ) -> Result<Value, &'static str> {
-    validate_status_request(base, site, token)?;
+    let url = status_url(base, site, token)?;
     let response = client
-        .get(format!(
-            "{}/api/1/energy_sites/{site}/live_status",
-            base.trim_end_matches('/')
-        ))
+        .get(url)
         .bearer_auth(token)
         .send()
         .and_then(|response| response.error_for_status())
@@ -119,12 +119,9 @@ pub async fn fetch_energy_async(
     site: u64,
     token: &str,
 ) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
-    validate_status_request(base, site, token)?;
+    let url = status_url(base, site, token)?;
     let mut response = client
-        .get(format!(
-            "{}/api/1/energy_sites/{site}/live_status",
-            base.trim_end_matches('/')
-        ))
+        .get(url)
         .bearer_auth(token)
         .send()
         .await
