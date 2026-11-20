@@ -1,0 +1,23 @@
+[package]
+name = "homecore-xiaomi"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+
+[dependencies]
+base64 = "=0.23.1"
+ring = "=0.17.14"
+libc = "=0.2.191"
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls", "cookies"] }
+serde_json = "=1.0.145"
+tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
+rumqttc = { version = "=0.25.1", default-features = false }
+rc4 = { version = "=0.2.0", features = ["zeroize"] }
+plugin-sdk-rs = { git = "https://github.com/homeCore-io/homeCore.git", rev = "40a9c649e33bd61d8cbb343eebf20b61bd624ca3", version = "0.6.5" }
+
+[dev-dependencies]
+axum = "=0.8.8"
