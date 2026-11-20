@@ -100,3 +100,14 @@ test('a live update keeps keyboard focus on the solar detail control', async () 
   await page.evaluate(() => notify());
   assert.equal(await button.evaluate(e => e.getRootNode().activeElement === e), true);
 });
+
+test('history graph gives units and the time span', async () => {
+  await page.evaluate(() => {
+    host.devices.history = async () => ({ok:true,data:[{at:'2026-11-20T01:00:00Z',value:1000},{at:'2026-11-20T02:00:00Z',value:2400}]});
+    const c = document.createElement('hc-teslemetry-solar'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  await page.getByRole('button',{name:'Solar details'}).click();
+  await page.getByRole('img',{name:/solar power history/i}).waitFor();
+  assert.equal(await page.getByText('1–2.4 kW', {exact:true}).count(), 1);
+  assert.equal(await page.getByText(/20 Nov/).count() > 0, true);
+});

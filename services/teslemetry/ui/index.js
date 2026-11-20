@@ -259,6 +259,12 @@ class TeslemetrySolar extends HTMLElement {
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
   }
 }
 customElements.define('hc-teslemetry-solar', TeslemetrySolar);
@@ -322,6 +328,12 @@ class TeslemetryGrid extends HTMLElement {
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     line.setAttribute('points', values.map((v,i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
     svg.append(line); target.append(svg);
+    const range = document.createElement('div');
+    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+    const dates = document.createElement('div');
+    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+    target.append(range, dates);
   }
 }
 customElements.define('hc-teslemetry-grid', TeslemetryGrid);
