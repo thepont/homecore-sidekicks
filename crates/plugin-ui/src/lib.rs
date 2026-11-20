@@ -8,6 +8,8 @@
 //! Files are deployed immutably; changed bytes are refused until restart gives
 //! the bundle a new build address. No file handle or asset-body cache is kept.
 
+pub mod ac_card;
+
 use base64::Engine;
 use ring::digest::{Context, Digest, SHA256};
 use serde_json::{json, Value};
@@ -23,6 +25,13 @@ pub const MAX_REQUEST_BYTES: usize = 4096;
 pub const MAX_CHUNK_BYTES: usize = 128 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024;
 const MAX_ASSET_BYTES: u64 = 512 * 1024;
+
+/// Resolve the installed UI directory, with an override for packaged services.
+pub fn installed_ui_dir() -> Option<PathBuf> {
+    std::env::var_os("HC_PLUGIN_UI_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok()?.parent().map(|p| p.join("ui")))
+}
 
 #[derive(Debug)]
 pub struct UiError;
