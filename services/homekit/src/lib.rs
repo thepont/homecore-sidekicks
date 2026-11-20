@@ -452,17 +452,15 @@ async fn read_contacts(
             for characteristic in &service.characteristics {
                 if service.service_type == ServiceType::ContactSensor
                     && characteristic.char_type == CharacteristicType::ContactSensorState
+                    && contact.replace(characteristic.iid).is_some()
                 {
-                    if contact.replace(characteristic.iid).is_some() {
-                        return Err("Ambiguous contact sensor");
-                    }
+                    return Err("Ambiguous contact sensor");
                 }
                 if service.service_type == ServiceType::Battery
                     && characteristic.char_type == CharacteristicType::BatteryLevel
+                    && battery.replace(characteristic.iid).is_some()
                 {
-                    if battery.replace(characteristic.iid).is_some() {
-                        return Err("Ambiguous battery sensor");
-                    }
+                    return Err("Ambiguous battery sensor");
                 }
             }
         }
