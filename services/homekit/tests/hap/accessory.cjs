@@ -75,6 +75,17 @@ if (bridgeMode) {
   const second = new Accessory('Second contact', uuid.generate('homecore.fixture.second'));
   second.addService(Service.ContactSensor, 'Second contact').getCharacteristic(Characteristic.ContactSensorState).onGet(() => 0);
   accessory.addBridgedAccessory(second);
+  const climate = new Accessory('Climate sensor', uuid.generate('homecore.fixture.climate'));
+  climate.addService(Service.TemperatureSensor, 'Temperature').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => 21.5);
+  climate.addService(Service.HumiditySensor, 'Humidity').getCharacteristic(Characteristic.CurrentRelativeHumidity).onGet(() => 42);
+  const climateBattery = climate.addService(Service.Battery, 'Climate battery');
+  climateBattery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 83);
+  climateBattery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);
+  climateBattery.getCharacteristic(Characteristic.StatusLowBattery).onGet(() => 0);
+  accessory.addBridgedAccessory(climate);
+  const offline = new Accessory('Offline climate sensor', uuid.generate('homecore.fixture.offline-climate'));
+  offline.addService(Service.TemperatureSensor, 'Offline temperature').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => {throw new Error('unavailable');});
+  accessory.addBridgedAccessory(offline);
 }
 accessory.on('listening',port=>{boundPort=port;console.log(`PORT=${port}`)});
 accessory.publish({username:'02:11:22:33:44:55',pincode:'123-45-678',category:Categories.SENSOR,port:Number(process.env.HAP_PORT||0),bind:'127.0.0.1',addIdentifyingMaterial:false}).catch(()=>process.exit(1));

@@ -539,6 +539,68 @@ pub async fn read_contacts_saved(
     read_contacts(&mut handle).await
 }
 
+/// Read supported sensor states from a saved bridge.
+pub async fn read_sensors_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    let (_lock, mut handle) = connect_saved(id, state_dir).await?;
+    let mut readings = read_contacts(&mut handle).await?;
+    let accessories = handle
+        .accessories()
+        .await
+        .map_err(|_| "Cannot read HomeKit accessories")?
+        .to_vec();
+    'accessory: for accessory in accessories {
+        let mut temperature = None;
+        let mut humidity = None;
+        let mut battery = None;
+        for service in accessory.services {
+            for characteristic in service.characteristics {
+                let target = match (&service.service_type, &characteristic.char_type) {
+                    (ServiceType::TemperatureSensor, CharacteristicType::CurrentTemperature) => {
+                        &mut temperature
+                    }
+                    (ServiceType::HumiditySensor, CharacteristicType::CurrentRelativeHumidity) => {
+                        &mut humidity
+                    }
+                    (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut battery,
+                    _ => continue,
+                };
+                if target.replace(characteristic.iid).is_some() {
+                    return Err("Ambiguous sensor characteristic");
+                }
+            }
+        }
+        if temperature.is_none() && humidity.is_none() {
+            continue;
+        }
+        let mut state = Map::new();
+        for (name, iid, min, max) in [
+            ("temperature", temperature, -100.0, 100.0),
+            ("humidity", humidity, 0.0, 100.0),
+            ("battery_pct", battery, 0.0, 100.0),
+        ] {
+            if let Some(iid) = iid {
+                let value = match handle.read(accessory.aid, iid).await {
+                    Ok(value) => value.to_json(),
+                    Err(_) => continue 'accessory,
+                };
+                if value
+                    .as_f64()
+                    .is_none_or(|v| !v.is_finite() || v < min || v > max)
+                {
+                    return Err("Invalid sensor reading");
+                }
+                state.insert(name.to_owned(), value);
+            }
+        }
+        readings.push((accessory.aid, Value::Object(state)));
+    }
+    Ok(readings)
+}
+
 async fn read_contacts(
     handle: &mut hap_controller::AccessoryHandle,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
