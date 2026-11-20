@@ -1,6 +1,7 @@
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
+  #recovery=false;
   constructor(){super();this.attachShadow({mode:'open'});}
   set host(value){this.#host=value;this.#generation++;if(this.isConnected)this.#render();}
   connectedCallback(){this.#render();}
@@ -25,7 +26,7 @@ class HomeKitSetup extends HTMLElement {
     this.shadowRoot.querySelector('#accessory').addEventListener('change',()=>this.#update());
     this.shadowRoot.querySelector('#connect').addEventListener('click',()=>void this.#connect());
   }
-  #update(){this.shadowRoot.querySelector('#connect').disabled=!this.#host?.me?.can('plugins:write') || !this.shadowRoot.querySelector('#accessory').value;}
+  #update(){this.shadowRoot.querySelector('#connect').disabled=this.#recovery || !this.#host?.me?.can('plugins:write') || !this.shadowRoot.querySelector('#accessory').value;}
   async #discover(){
     if(!this.#host?.me?.can('plugins:write'))return;
     const generation=++this.#generation,button=this.shadowRoot.querySelector('#discover'),status=this.shadowRoot.querySelector('.status');
@@ -56,7 +57,11 @@ class HomeKitSetup extends HTMLElement {
     let result;try{result=await this.#host.action('pair_accessory',{id,pin:pin.value});}catch{}
     pin.value='';
     if(generation!==this.#generation || !this.isConnected)return;
-    status.textContent=result?.ok&&result.data?.status==='ok'?'Accessory connected.':'Could not connect the accessory. Check its setup code and try again.';
+    if(result?.ok && result.data?.status==='recovery_required'){
+      this.#recovery=true;status.textContent='Pairing could not be confirmed. The accessory may need recovery before another attempt.';
+    } else {
+      status.textContent=result?.ok&&result.data?.status==='ok'?'Accessory connected.':'Could not connect the accessory. Check its setup code and try again.';
+    }
     this.#update();
   }
 }

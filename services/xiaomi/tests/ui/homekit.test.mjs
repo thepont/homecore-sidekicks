@@ -52,3 +52,18 @@ test('a viewer cannot start setup',async()=>{
     assert.equal(await page.getByRole('button',{name:'Find accessories'}).isDisabled(),true);
   } finally {await browser.close();}
 });
+
+test('an uncertain pairing warns before another attempt',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');
+    await page.addScriptTag({content:await readFile(source,'utf8')});
+    await page.evaluate(()=>{const el=document.createElement('hc-homekit-setup');el.host={me:{can:()=>true},action:async name=>name==='discover_accessories'?{ok:true,data:{accessories:[{id:'02:11:22:33:44:55',name:'Test hub',paired:false}]}}:{ok:true,data:{status:'recovery_required'}}};document.querySelector('main').append(el)});
+    await page.getByRole('button',{name:'Find accessories'}).click();
+    await page.getByLabel('Accessory').selectOption('02:11:22:33:44:55');
+    await page.getByLabel('HomeKit setup code').fill('123-45-678');
+    await page.getByRole('button',{name:'Connect'}).click();
+    assert.equal(await page.getByText('Pairing could not be confirmed. The accessory may need recovery before another attempt.',{exact:true}).count(),1);
+    assert.equal(await page.getByRole('button',{name:'Connect'}).isDisabled(),true);
+  } finally {await browser.close();}
+});
