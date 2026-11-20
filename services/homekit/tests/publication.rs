@@ -1,4 +1,5 @@
 #[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
+#[allow(dead_code)]
 mod mqtt_broker;
 
 use serde_json::{json, Value};
