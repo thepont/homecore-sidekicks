@@ -788,3 +788,97 @@ async fn given_oversized_energy_response_then_adapter_reports_unavailable() {
     );
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_tariff_stream_then_homecore_receives_read_only_buy_and_sell_prices() {
+    use axum::response::{sse::Event, IntoResponse, Sse};
+    use futures_util::{stream, StreamExt};
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let close = std::sync::Arc::new(tokio::sync::Notify::new());
+    let disconnect = close.clone();
+    let frames = vec![
+        (
+            "site_info",
+            json!({"site_id":42,"createdAt":now.to_rfc3339(),"site_info":{"installation_time_zone":"Australia/Melbourne"}}),
+        ),
+        (
+            "tariff_content_v2",
+            json!({"site_id":42,"createdAt":now.to_rfc3339(),"tariff_content_v2":{"currency":"AUD","energy_charges":{"ALL":{"rates":{"ALL":0.237}}},"sell_tariff":{"energy_charges":{"ALL":{"rates":{"ALL":0.05301}}}}}}),
+        ),
+    ];
+    let app = Router::new()
+        .route("/sse", get(move |axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>| {
+            let frames = frames.clone();
+            let close = close.clone();
+            async move {
+                if !query.get("topics").is_some_and(|value| value.split(',').any(|topic| topic == "tariff_content_v2")) {
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+                let events = stream::iter(frames.into_iter().map(|(kind, data)| Ok::<_, std::convert::Infallible>(Event::default().event(kind).data(data.to_string()))))
+                    .chain(stream::once(async move {
+                        close.notified().await;
+                        Ok(Event::default().comment("fixture connection closed"))
+                    }));
+                Sse::new(events).into_response()
+            }
+        }))
+        .route("/api/1/energy_sites/42/live_status", get(|| async {
+            Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":61.8,"battery_power":-723}}))
+        }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "tariff-prices-fixture", Some("1"));
+    let (state, schema) = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut schema = None;
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/schema" {
+                schema = Some(serde_json::from_slice::<Value>(&message.payload).unwrap());
+            }
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                let value: Value = serde_json::from_slice(&message.payload).unwrap();
+                if value["tariff_available"] == true {
+                    return (value, schema.expect("schema before state"));
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("current tariff prices must reach homeCore");
+    assert_eq!(state["tariff_buy_price_per_kwh"], 0.237);
+    assert_eq!(state["tariff_sell_price_per_kwh"], 0.05301);
+    assert_eq!(state["tariff_currency"], "AUD");
+    assert_eq!(state["tariff_updated_at"], now.to_rfc3339());
+    for name in ["tariff_buy_price_per_kwh", "tariff_sell_price_per_kwh"] {
+        assert_eq!(schema["attributes"][name]["unit"], "AUD/kWh");
+        assert_eq!(schema["attributes"][name]["writable"], false);
+    }
+    assert_eq!(state["charge_pct"], 61.8);
+    disconnect.notify_one();
+    let (unavailable, schema) = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut schema = Value::Null;
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/schema" {
+                schema = serde_json::from_slice(&message.payload).unwrap();
+            }
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                let value: Value = serde_json::from_slice(&message.payload).unwrap();
+                if value["tariff_available"] == false {
+                    return (value, schema);
+                }
+            }
+        }
+        panic!("state stream closed")
+    })
+    .await
+    .expect("lost tariff stream must withdraw MQTT prices");
+    assert!(unavailable.get("tariff_buy_price_per_kwh").is_none());
+    assert!(unavailable.get("tariff_sell_price_per_kwh").is_none());
+    assert!(schema["attributes"]
+        .get("tariff_buy_price_per_kwh")
+        .is_none());
+    assert_eq!(unavailable["charge_pct"], 61.8);
+    server.abort();
+}

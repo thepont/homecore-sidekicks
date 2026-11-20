@@ -160,11 +160,96 @@ pub fn parse_site_info(data: &str, site: u64) -> Option<Map<String, Value>> {
     }
 }
 
+/// Tariff and timezone snapshots from the site-scoped SSE connection.
+#[derive(Clone, Debug, Default)]
+pub struct TariffState {
+    tariff: Option<crate::tariff::Tariff>,
+    zone: Option<chrono_tz::Tz>,
+    tariff_updated: Option<chrono::DateTime<chrono::FixedOffset>>,
+    site_updated: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+impl TariffState {
+    fn apply(&mut self, kind: &str, data: &str, site: u64) {
+        if !matches!(kind, "site_info" | "tariff_content_v2") {
+            return;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            return;
+        };
+        let Some(id) = value.get("site_id") else {
+            return;
+        };
+        if id.as_u64().or_else(|| id.as_str()?.parse().ok()) != Some(site) {
+            return;
+        }
+        let Some(observed) = value
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        else {
+            return;
+        };
+        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        if observed > now + chrono::Duration::minutes(2) {
+            return;
+        }
+        if kind == "site_info" {
+            if self
+                .site_updated
+                .is_some_and(|previous| observed < previous)
+            {
+                return;
+            }
+            self.site_updated = Some(observed);
+            self.zone = value
+                .get("site_info")
+                .and_then(|info| info.get("installation_time_zone"))
+                .and_then(Value::as_str)
+                .and_then(|zone| zone.parse().ok());
+        } else {
+            if self
+                .tariff_updated
+                .is_some_and(|previous| observed < previous)
+            {
+                return;
+            }
+            self.tariff_updated = Some(observed);
+            self.tariff = value
+                .get("tariff_content_v2")
+                .and_then(crate::tariff::parse);
+        }
+    }
+
+    fn disconnected(&mut self) {
+        self.tariff = None;
+        self.zone = None;
+    }
+
+    /// Re-evaluate the schedule at publication time, even without a new event.
+    pub fn readings(&self, now: chrono::DateTime<chrono::Utc>) -> Map<String, Value> {
+        let mut fields = Map::new();
+        let Some(updated) = self.tariff_updated else {
+            return fields;
+        };
+        fields.insert("tariff_available".into(), false.into());
+        fields.insert("tariff_updated_at".into(), updated.to_rfc3339().into());
+        if let (Some(tariff), Some(zone)) = (&self.tariff, self.zone) {
+            if let Some(prices) = tariff.readings(zone, now) {
+                fields.extend(prices);
+                fields.insert("tariff_available".into(), true.into());
+            }
+        }
+        fields
+    }
+}
+
 pub async fn listen(
     base: String,
     site: u64,
     token: String,
     sender: watch::Sender<Map<String, Value>>,
+    tariffs: watch::Sender<TariffState>,
 ) {
     let Ok(url) = reqwest::Url::parse(&base) else {
         return;
@@ -193,7 +278,7 @@ pub async fn listen(
     let mut latest_site = None;
     loop {
         let url = format!(
-            "{}/sse?topics=energy_totals,wall_connector_totals,site_info",
+            "{}/sse?topics=energy_totals,wall_connector_totals,site_info,tariff_content_v2",
             base.trim_end_matches('/')
         );
         if let Ok(response) = client.get(url).bearer_auth(&token).send().await {
@@ -222,6 +307,9 @@ pub async fn listen(
                         };
                         let line = line.strip_suffix('\r').unwrap_or(line);
                         if line.is_empty() {
+                            if matches!(event.as_str(), "site_info" | "tariff_content_v2") {
+                                tariffs.send_modify(|state| state.apply(&event, &data, site));
+                            }
                             if event == "energy_totals"
                                 || event == "wall_connector_totals"
                                 || event == "site_info"
@@ -273,6 +361,7 @@ pub async fn listen(
                 }
             }
         }
+        tariffs.send_modify(TariffState::disconnected);
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

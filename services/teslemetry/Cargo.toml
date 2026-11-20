@@ -15,6 +15,7 @@ tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "
 rumqttc = { version = "=0.25.1", default-features = false }
 chrono = { version = "=0.4.44", default-features = false, features = ["std"] }
 ring = "=0.17.14"
+chrono-tz = "=0.10.4"
 
 [dev-dependencies]
 axum = "=0.8.8"
