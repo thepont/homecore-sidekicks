@@ -94,10 +94,14 @@ impl Client {
 }
 
 impl Client {
-    pub fn set_power(&mut self, on: bool) -> Result<(), &'static str> {
-        let response = self.exchange::<Query>(&protocol::power_request(on)?)?;
+    fn send_control(&self, request: Vec<u8>) -> Result<(), &'static str> {
+        let response = self.exchange::<Query>(&request)?;
         protocol::parse_status_response(&response)?;
         Ok(())
+    }
+
+    pub fn set_power(&mut self, on: bool) -> Result<(), &'static str> {
+        self.send_control(protocol::power_request(on)?)
     }
 }
 
