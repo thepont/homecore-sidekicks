@@ -231,6 +231,33 @@ async fn retained(port: u16, topic: &str) -> Publish {
     .unwrap_or_else(|_| panic!("expected retained MQTT publication on {topic}"))
 }
 
+async fn retained_specific(port: u16, topic: &str) -> Publish {
+    let mut options = rumqttc::MqttOptions::new(
+        format!("sensor-probe-{}", topic.replace('/', "_")),
+        "127.0.0.1",
+        port,
+    );
+    options.set_credentials("fixture-user", "fixture-password");
+    let (client, mut events) = rumqttc::AsyncClient::new(options, 8);
+    client
+        .subscribe(topic, rumqttc::QoS::AtLeastOnce)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let rumqttc::Event::Incoming(rumqttc::Incoming::Publish(message)) =
+                events.poll().await.unwrap()
+            {
+                if message.topic == topic {
+                    return message;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("targeted retained publication: {topic}"))
+}
+
 #[tokio::test]
 #[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
 async fn two_controllers_publish_independent_read_only_climate_devices() {
@@ -256,7 +283,7 @@ async fn two_controllers_publish_independent_read_only_climate_devices() {
         assert_eq!(registration["device_id"], format!("mitsubishi_{id}"));
         assert_eq!(registration["plugin_id"], format!("plugin.mitsubishi.{id}"));
         assert_eq!(registration["name"], name);
-        assert_eq!(registration["device_type"], "sensor");
+        assert_eq!(registration["device_type"], "thermostat");
         let schema = retained(
             broker.port,
             &format!("homecore/devices/mitsubishi_{id}/schema"),
@@ -840,4 +867,168 @@ async fn invalid_unsupported_and_offline_commands_do_not_reach_controllers() {
         a.read_command().await,
         json!({"cmd":"set","heatThresh":21.5})
     );
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn paired_sensors_are_independent_devices_and_withdraw_stale_readings() {
+    let mut broker = mqtt_broker::Broker::start().await;
+    let mut data = snapshot(22.0, 23.0, "heat");
+    data["bleEnabled"] = json!(true);
+    data["hasLinkSensor"] = json!(true);
+    data["linkActive"] = json!(true);
+    data["linkStale"] = json!(false);
+    data["linkTemp"] = json!(19.5);
+    data["bleSensors"] = json!([
+        {"i":0,"active":true,"stale":false,"temp":21.5,"hum":61,"batt":90},
+        {"i":2,"active":true,"stale":false,"temp":20.5,"hum":58,"batt":75}
+    ]);
+    let mut first = Source::start(data.clone()).await;
+    let second = Source::start(snapshot(18.0, 21.0, "heat")).await;
+    let adapter = start_adapter(broker.port, &first, &second);
+    let _first_session = first.connected().await;
+    for (slot, temperature) in [(0, 21.5), (2, 20.5)] {
+        let plugin = format!("plugin.mitsubishi.room_a.ble_{slot}");
+        let id = format!("mitsubishi_room_a_ble_{slot}");
+        let registration: Value = serde_json::from_slice(
+            &retained_specific(broker.port, &format!("homecore/plugins/{plugin}/register"))
+                .await
+                .payload,
+        )
+        .unwrap();
+        assert_eq!(registration["device_id"], id);
+        assert_eq!(registration["device_type"], "temperature_sensor");
+        assert_eq!(registration["parent_device_id"], "mitsubishi_room_a");
+        let values: Value = serde_json::from_slice(
+            &retained_specific(broker.port, &format!("homecore/devices/{id}/state"))
+                .await
+                .payload,
+        )
+        .unwrap();
+        assert_eq!(values["temperature"], temperature);
+        let schema: Value = serde_json::from_slice(
+            &retained_specific(broker.port, &format!("homecore/devices/{id}/schema"))
+                .await
+                .payload,
+        )
+        .unwrap();
+        assert_eq!(schema["attributes"]["temperature"]["unit"], "°C");
+        assert_eq!(schema["attributes"]["temperature"]["writable"], false);
+    }
+    let link: Value = serde_json::from_slice(
+        &retained_specific(broker.port, "homecore/devices/mitsubishi_room_a_link/state")
+            .await
+            .payload,
+    )
+    .unwrap();
+    assert_eq!(link["temperature"], 19.5);
+    broker.restart().await;
+    let replay = retained_specific(
+        broker.port,
+        "homecore/plugins/plugin.mitsubishi.room_a.ble_0/register",
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&replay.payload).unwrap()["device_type"],
+        "temperature_sensor"
+    );
+    data["bleSensors"][0]["stale"] = json!(true);
+    first.snapshot.send_replace(Some(data.clone()));
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    until(
+        &mut probe,
+        "homecore/devices/mitsubishi_room_a_ble_0/availability",
+        |v| v == b"offline",
+    )
+    .await;
+    let values: Value = serde_json::from_slice(
+        &retained(
+            broker.port,
+            "homecore/devices/mitsubishi_room_a_ble_0/state",
+        )
+        .await
+        .payload,
+    )
+    .unwrap();
+    assert!(values.get("temperature").is_none());
+    data["bleSensors"][0]["stale"] = json!(false);
+    first.snapshot.send_replace(Some(data));
+    until(
+        &mut probe,
+        "homecore/devices/mitsubishi_room_a_ble_0/availability",
+        |v| v == b"online",
+    )
+    .await;
+    drop(adapter);
+    until(
+        &mut probe,
+        "homecore/devices/mitsubishi_room_a_ble_2/availability",
+        |v| v == b"offline",
+    )
+    .await;
+}
+
+#[path = "support/homecore.rs"]
+mod homecore;
+
+#[tokio::test]
+#[ignore = "requires Docker and pinned homeCore image"]
+async fn paired_sensor_is_registered_with_real_homecore() {
+    let core = homecore::Core::start().await;
+    let mut data = snapshot(22.0, 23.0, "heat");
+    data["bleEnabled"] = json!(true);
+    data["bleSensors"] =
+        json!([{"i":0,"active":true,"stale":false,"temp":21.5,"hum":61,"batt":90}]);
+    let mut source = Source::start(data.clone()).await;
+    let config = core.root.join("mitsubishi-config.json");
+    std::fs::write(&config, json!({"units":[{"id":"room_a","name":"Room A AC","url":source.url}],"publish_interval_secs":1,"stale_after_secs":2}).to_string()).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_mitsubishi-bridge"))
+        .env("MITSUBISHI_CONFIG_FILE", &config)
+        .env("MQTT_HOST", "127.0.0.1")
+        .env("MQTT_PORT", core.mqtt_port.to_string())
+        .env("MQTT_USERNAME", "plugin.mitsubishi.room_a")
+        .env("MQTT_PASSWORD_FILE", core.root.join("mqtt-password"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _adapter = Adapter {
+        child,
+        root: core.root.join("no-such-subdir"),
+    };
+    let _session = source.connected().await;
+    let path = "/devices/mitsubishi_room_a_ble_0";
+    let registered: Value = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(response) = core.get(path).send().await {
+                if response.status().is_success() {
+                    let d: Value = response.json().await.unwrap();
+                    if d["device_type"] == "temperature_sensor"
+                        && d["available"] == true
+                        && d["attributes"]["temperature"] == 21.5
+                    {
+                        break d;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("paired sensor must be visible in homeCore");
+    assert_eq!(registered["name"], "Room A AC sensor 1");
+    assert_eq!(registered["parent_device_id"], "mitsubishi_room_a");
+    data["bleSensors"][0]["stale"] = json!(true);
+    source.snapshot.send_replace(Some(data));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let d: Value = core.get(path).send().await.unwrap().json().await.unwrap();
+            if d["available"] == false && d["attributes"].get("temperature").is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("stale sensor must be unavailable without an old temperature");
 }

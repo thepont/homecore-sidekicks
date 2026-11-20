@@ -2,6 +2,7 @@
 use crate::{
     config::{Config, Unit},
     control::{Command, Controls, ReceivedCommand, MAX_COMMAND_BYTES},
+    sensors,
     source::{self, Observation},
     ui,
 };
@@ -133,7 +134,7 @@ impl Publisher {
     ) -> Result<(), &'static str> {
         self.schema = None;
         self.send(self.identity.plugin_topic("register"), true, json!({
-            "device_id":self.identity.device_id,"plugin_id":self.identity.plugin_id,"name":unit.name,"device_type":"sensor"
+            "device_id":self.identity.device_id,"plugin_id":self.identity.plugin_id,"name":unit.name,"device_type":"thermostat"
         }).to_string()).await?;
         self.send(
             self.identity.plugin_topic("capabilities"),
@@ -248,8 +249,9 @@ async fn run_unit(
     assets: Option<Arc<UiAssets>>,
 ) {
     let identity = UnitIdentity::new(&unit.id);
-    let mut options = MqttOptions::new(identity.plugin_id.clone(), broker.host, broker.port);
-    options.set_credentials(broker.username, broker.password);
+    let mut options =
+        MqttOptions::new(identity.plugin_id.clone(), broker.host.clone(), broker.port);
+    options.set_credentials(broker.username.clone(), broker.password.clone());
     options.set_keep_alive(Duration::from_secs(15));
     // A 128 KiB UI chunk grows to about 171 KiB in the base64 MQTT response.
     options.set_max_packet_size(4096, 192 * 1024);
@@ -287,6 +289,20 @@ async fn run_unit(
             ready.clone(),
         )),
     ]);
+    let _sensors = Tasks(
+        (0..5)
+            .map(|slot| {
+                tokio::spawn(sensors::run(
+                    unit.clone(),
+                    broker.clone(),
+                    slot,
+                    latest.clone(),
+                    Duration::from_secs(publish_secs),
+                    stale,
+                ))
+            })
+            .collect(),
+    );
     let mut publisher = Publisher {
         mqtt,
         identity,
