@@ -3,7 +3,7 @@ use crate::{
     config::{Config, Unit},
     source::{self, Observation},
 };
-use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS};
+use rumqttc::{AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, QoS};
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 use tokio::{
@@ -160,6 +160,21 @@ impl Publisher {
     }
 }
 
+async fn drive_mqtt(mut eventloop: EventLoop, ready_tx: watch::Sender<bool>) {
+    loop {
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Incoming::ConnAck(_))) => {
+                ready_tx.send_replace(true);
+            }
+            Ok(_) => (),
+            Err(_) => {
+                ready_tx.send_replace(false);
+                time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
 async fn run_unit(unit: Unit, broker: Broker, publish_secs: u64, stale_secs: u64) {
     let plugin = format!("plugin.mitsubishi.{}", unit.id);
     let device = format!("mitsubishi_{}", unit.id);
@@ -174,25 +189,12 @@ async fn run_unit(unit: Unit, broker: Broker, publish_secs: u64, stale_secs: u64
         QoS::AtLeastOnce,
         true,
     ));
-    let (mqtt, mut eventloop) = AsyncClient::new(options, 8);
+    let (mqtt, eventloop) = AsyncClient::new(options, 8);
     let (ready_tx, mut ready) = watch::channel(false);
     let (source_tx, mut latest) = watch::channel(None);
     let stale = Duration::from_secs(stale_secs);
     let _tasks = Tasks(vec![
-        tokio::spawn(async move {
-            loop {
-                match eventloop.poll().await {
-                    Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                        ready_tx.send_replace(true);
-                    }
-                    Ok(_) => (),
-                    Err(_) => {
-                        ready_tx.send_replace(false);
-                        time::sleep(Duration::from_secs(1)).await;
-                    }
-                }
-            }
-        }),
+        tokio::spawn(drive_mqtt(eventloop, ready_tx)),
         tokio::spawn(source::run(unit.clone(), stale, source_tx)),
     ]);
     let mut publisher = Publisher {
