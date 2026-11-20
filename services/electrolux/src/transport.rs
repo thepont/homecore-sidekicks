@@ -116,9 +116,7 @@ impl Client {
         self.send_control(protocol::mode_request(mode)?)
     }
     pub fn set_fan(&mut self, fan: &str) -> Result<(), &'static str> {
-        let response = self.exchange::<Query>(&protocol::fan_request(fan)?)?;
-        protocol::parse_status_response(&response)?;
-        Ok(())
+        self.send_control(protocol::fan_request(fan)?)
     }
     pub fn set_swing(&mut self, enabled: bool) -> Result<(), &'static str> {
         let response = self.exchange::<Query>(&protocol::swing_request(enabled)?)?;
