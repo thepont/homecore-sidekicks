@@ -509,6 +509,23 @@ fn room_arrays(output: &mut Snapshot, input: &Value) -> Result<(), &'static str>
     Ok(())
 }
 
+fn device_info(input: &Value) -> Result<Snapshot, &'static str> {
+    let mut output = Snapshot::new();
+    for (source, key) in [
+        ("board", "board"),
+        ("fw", "firmware"),
+        ("idf", "idf_version"),
+        ("resetReason", "reset_reason"),
+    ] {
+        output.text(input, source, key)?;
+    }
+    for (source, key) in [("bootCount", "boot_count"), ("crashTotal", "crash_total")] {
+        output.integer(input, source, key, None, 0, i64::from(u32::MAX))?;
+    }
+    output.boolean(input, "safeMode", "safe_mode")?;
+    Ok(output)
+}
+
 pub fn parse(bytes: &[u8]) -> Result<Option<Frame>, &'static str> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err("frame too large");
@@ -521,22 +538,7 @@ pub fn parse(bytes: &[u8]) -> Result<Option<Frame>, &'static str> {
         .ok_or("missing frame type")?
     {
         "state" => state(&input).map(|value| Some(Frame::State(value))),
-        "deviceInfo" => {
-            let mut output = Snapshot::new();
-            for (source, key) in [
-                ("board", "board"),
-                ("fw", "firmware"),
-                ("idf", "idf_version"),
-                ("resetReason", "reset_reason"),
-            ] {
-                output.text(&input, source, key)?;
-            }
-            for (source, key) in [("bootCount", "boot_count"), ("crashTotal", "crash_total")] {
-                output.integer(&input, source, key, None, 0, i64::from(u32::MAX))?;
-            }
-            output.boolean(&input, "safeMode", "safe_mode")?;
-            Ok(Some(Frame::DeviceInfo(output)))
-        }
+        "deviceInfo" => device_info(&input).map(|value| Some(Frame::DeviceInfo(value))),
         _ => Ok(None),
     }
 }
