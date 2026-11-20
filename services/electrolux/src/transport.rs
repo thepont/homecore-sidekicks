@@ -107,9 +107,7 @@ impl Client {
 
 impl Client {
     pub fn set_temperature(&mut self, temperature: u8) -> Result<(), &'static str> {
-        let response = self.exchange::<Query>(&protocol::temperature_request(temperature)?)?;
-        protocol::parse_status_response(&response)?;
-        Ok(())
+        self.send_control(protocol::temperature_request(temperature)?)
     }
 }
 
