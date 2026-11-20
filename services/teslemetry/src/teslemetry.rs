@@ -108,6 +108,51 @@ pub fn fetch_energy(
     energy(&status)
 }
 
+pub async fn fetch_energy_async(
+    client: &reqwest::Client,
+    base: &str,
+    site: u64,
+    token: &str,
+) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
+    let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
+    if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+        || site == 0
+        || token.is_empty()
+        || token.len() > 4096
+        || !token.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err("Invalid Teslemetry configuration");
+    }
+    let mut response = client
+        .get(format!(
+            "{}/api/1/energy_sites/{site}/live_status",
+            base.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|_| "Teslemetry request failed")?;
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Teslemetry request failed")?
+    {
+        if body.len() + chunk.len() > 65_536 {
+            return Err("Invalid Teslemetry response");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let status = serde_json::from_slice(&body).map_err(|_| "Invalid Teslemetry response")?;
+    energy(&status)
+}
+
 pub fn energy(status: &Value) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
     let battery = powerwall(status)?;
     let response = &status["response"];

@@ -714,3 +714,77 @@ async fn given_vehicle_telemetry_then_schema_describes_read_only_values() {
     assert_eq!(schema["primary"], json!(["battery_level", "vehicle_state"]));
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_repeated_energy_polls_then_http_connection_is_reused() {
+    use axum::extract::ConnectInfo;
+    use std::{collections::HashSet, net::SocketAddr};
+    let broker = mqtt_broker::Broker::start().await;
+    let (observed, mut requests) = tokio::sync::mpsc::channel(8);
+    let app = Router::new().route("/api/1/energy_sites/42/live_status", get(move |ConnectInfo(peer): ConnectInfo<SocketAddr>| {
+        let observed = observed.clone();
+        async move {
+            observed.send(peer).await.unwrap();
+            Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    let _owned = start_adapter(&url, broker.port, "energy-reuse-fixture", Some("1"));
+    let peers = tokio::time::timeout(Duration::from_secs(6), async {
+        let mut peers = HashSet::new();
+        for _ in 0..3 {
+            peers.insert(requests.recv().await.unwrap());
+        }
+        peers
+    })
+    .await
+    .expect("three polls must reach the source");
+    assert_eq!(
+        peers.len(),
+        1,
+        "successive energy polls should reuse the HTTP connection"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_oversized_energy_response_then_adapter_reports_unavailable() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let app = Router::new().route("/api/1/energy_sites/42/live_status", get(|| async {
+        Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190,"padding":"x".repeat(70_000)}}))
+    }));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "oversized-source-fixture", Some("1"));
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message.topic == "homecore/devices/teslemetry_powerwall/state" {
+                return false;
+            }
+            if message.topic == "homecore/devices/teslemetry_powerwall/availability"
+                && message.payload.as_ref() == b"offline"
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await;
+    assert_eq!(
+        result,
+        Ok(true),
+        "oversized response must be rejected and reported unavailable"
+    );
+    server.abort();
+}

@@ -131,15 +131,18 @@ async fn poll_powerwall(
     interval: u64,
     totals: tokio::sync::watch::Receiver<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = None;
     loop {
-        let endpoint = base.clone();
-        let bearer = token.clone();
-        let reading = tokio::task::spawn_blocking(move || {
-            let client =
-                homecore_teslemetry::http::blocking_client().map_err(|_| "HTTP client failed")?;
-            homecore_teslemetry::teslemetry::fetch_energy(&client, &endpoint, site, &bearer)
-        })
-        .await?;
+        if client.is_none() {
+            client = homecore_teslemetry::http::client().ok();
+        }
+        let reading = match client.as_ref() {
+            Some(client) => {
+                homecore_teslemetry::teslemetry::fetch_energy_async(client, &base, site, &token)
+                    .await
+            }
+            None => Err("HTTP client failed"),
+        };
         match reading {
             Ok((value, mut readings)) => {
                 readings.extend(totals.borrow().clone());
