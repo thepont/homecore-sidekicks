@@ -148,6 +148,7 @@ impl Provider {
         let response = self
             .client
             .get(challenge.poll_url.clone())
+            .timeout(challenge.expires_after)
             .send()
             .await
             .map_err(|_| "Waiting for Xiaomi sign-in failed")?

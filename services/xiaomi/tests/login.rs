@@ -87,6 +87,27 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     assert_eq!(saved.address(), "192.168.10.2");
     assert_eq!(saved.model(), "lumi.gateway.mcn001");
     assert_eq!(saved.token(), "0123456789abcdef0123456789abcdef");
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    let setup = homecore_xiaomi::setup::Setup::new(
+        Provider::new(&base).unwrap(),
+        homecore_xiaomi::store::Store::new(&root),
+        "cn",
+    );
+    assert_eq!(setup.status().await, "unconfigured");
+    assert!(setup.begin().await.unwrap().starts_with("iVBORw0KGgo"));
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while setup.status().await == "waiting" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(setup.status().await, "gateway_saved");
+    assert!(homecore_xiaomi::store::Store::new(&root)
+        .load_gateway()
+        .unwrap()
+        .is_some());
     std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }
