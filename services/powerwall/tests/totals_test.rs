@@ -36,3 +36,23 @@ fn site_configuration_is_scoped_and_rejects_invalid_reserve() {
     bad["site_info"]["backup_reserve_percent"] = json!(101);
     assert!(homecore_powerwall::totals::parse_site_info(&bad.to_string(), 42).is_none());
 }
+
+#[test]
+fn charger_totals_are_site_scoped_and_dated() {
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let event = json!({"id":"42", "date":now.format("%Y-%m-%d").to_string(), "totals":{"fixture-1":1200,"fixture-2":800}});
+    let result =
+        homecore_powerwall::totals::parse_connector_totals(&event.to_string(), 42).unwrap();
+    assert_eq!(result["wall_connectors_energy_wh"], 2000.0);
+    assert_eq!(
+        result["wall_connectors_energy_date"],
+        now.format("%Y-%m-%d").to_string()
+    );
+    assert!(homecore_powerwall::totals::parse_connector_totals(&event.to_string(), 43).is_none());
+    let mut old = event.clone();
+    old["date"] = json!("2000-01-01");
+    assert!(homecore_powerwall::totals::parse_connector_totals(&old.to_string(), 42).is_none());
+    let mut invalid = event.clone();
+    invalid["totals"]["fixture-1"] = json!(-1);
+    assert!(homecore_powerwall::totals::parse_connector_totals(&invalid.to_string(), 42).is_none());
+}
