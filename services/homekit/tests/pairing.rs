@@ -204,6 +204,13 @@ async fn reads_each_contact_from_a_bridge_independently() {
             })),
         "actual readings: {sensors:?}"
     );
+    assert!(
+        sensors
+            .iter()
+            .any(|(_, state)| *state
+                == json!({"smoke_detected":true,"fault":false,"battery_pct":74})),
+        "smoke detector missing: {sensors:?}"
+    );
     let invited_root = fixture.root.join("invited-controller");
     fs::create_dir(&invited_root).unwrap();
     fs::set_permissions(&invited_root, fs::Permissions::from_mode(0o700)).unwrap();
@@ -327,6 +334,35 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .unwrap();
+    let smoke_id = sensors
+        .iter()
+        .find(|(_, state)| state.get("smoke_detected").is_some())
+        .unwrap()
+        .0;
+    let smoke_availability =
+        format!("homecore/devices/homekit_021122334455_{smoke_id}/availability");
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "smoke-offline").unwrap();
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == smoke_availability && msg.payload.as_ref() == b"offline" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("unavailable smoke detector must be marked offline");
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "smoke-online").unwrap();
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == smoke_availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("recovered smoke detector must be marked online");
     writeln!(fixture.child.stdin.as_mut().unwrap(), "open").unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {

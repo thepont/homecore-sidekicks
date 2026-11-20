@@ -6,6 +6,44 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
 
 #[tokio::test]
+async fn smoke_detector_reports_alarm_fault_and_battery_as_a_smoke_detector() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    homecore_homekit::publish_sensors(
+        &probe.client,
+        "plugin.homekit",
+        "02:11:22:33:44:55",
+        &[(
+            9,
+            json!({"smoke_detected":true,"fault":false,"battery_pct":74}),
+        )],
+    )
+    .await
+    .unwrap();
+    let messages = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut received = HashMap::<String, Value>::new();
+        while received.len() < 3 {
+            let msg = probe.messages.recv().await.unwrap();
+            received.insert(msg.topic, serde_json::from_slice(&msg.payload).unwrap());
+        }
+        received
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        messages["homecore/plugins/plugin.homekit/register"]["device_type"],
+        "smoke_detector"
+    );
+    assert_eq!(
+        messages["homecore/devices/homekit_021122334455_9/state"],
+        json!({"smoke_detected":true,"fault":false,"battery_pct":74})
+    );
+    let attributes = &messages["homecore/devices/homekit_021122334455_9/schema"]["attributes"];
+    assert_eq!(attributes["smoke_detected"]["kind"], "bool");
+    assert_eq!(attributes["fault"]["kind"], "bool");
+}
+
+#[tokio::test]
 async fn climate_sensor_is_registered_with_temperature_humidity_and_battery() {
     let broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;

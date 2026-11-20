@@ -28,6 +28,7 @@ pub async fn publish_sensors(
     let mut seen = std::collections::HashSet::new();
     let mut contacts = Vec::new();
     let mut climate = Vec::new();
+    let mut smoke = Vec::new();
     for (aid, state) in readings {
         let object = state.as_object().ok_or("Invalid sensor state")?;
         if *aid == 0 || !seen.insert(*aid) {
@@ -43,6 +44,22 @@ pub async fn publish_sensors(
                 return Err("Invalid sensor state");
             }
             contacts.push((*aid, state.clone()));
+        } else if object.contains_key("smoke_detected") {
+            if object
+                .get("smoke_detected")
+                .and_then(Value::as_bool)
+                .is_none()
+                || object.get("fault").is_some_and(|v| v.as_bool().is_none())
+                || object
+                    .get("battery_pct")
+                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+                || object
+                    .keys()
+                    .any(|k| !matches!(k.as_str(), "smoke_detected" | "fault" | "battery_pct"))
+            {
+                return Err("Invalid sensor state");
+            }
+            smoke.push((*aid, state));
         } else {
             if (!object.contains_key("temperature") && !object.contains_key("humidity"))
                 || object
@@ -98,6 +115,51 @@ pub async fn publish_sensors(
                 format!("homecore/devices/{device}/schema"),
                 true,
                 json!({"attributes":attributes,"primary":[primary]}),
+            ),
+            (
+                format!("homecore/devices/{device}/state"),
+                true,
+                state.clone(),
+            ),
+        ] {
+            mqtt.publish(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+                retained,
+                payload.to_string(),
+            )
+            .await
+            .map_err(|_| "Cannot publish sensor")?;
+        }
+    }
+    for (aid, state) in smoke {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        for (name, label) in [("smoke_detected", "Smoke detected"), ("fault", "Fault")] {
+            if state.get(name).is_some() {
+                attributes.insert(
+                    name.into(),
+                    json!({"kind":"bool","writable":false,"display_name":label}),
+                );
+            }
+        }
+        if state.get("battery_pct").is_some() {
+            attributes.insert(
+                "battery_pct".into(),
+                json!({"kind":"integer","writable":false,"display_name":"Battery","unit":"%"}),
+            );
+        }
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit smoke detector {aid}"),"device_type":"smoke_detector"});
+        for (topic, retained, payload) in [
+            (
+                format!("homecore/plugins/{plugin}/register"),
+                false,
+                register,
+            ),
+            (
+                format!("homecore/devices/{device}/schema"),
+                true,
+                json!({"attributes":attributes,"primary":["smoke_detected"]}),
             ),
             (
                 format!("homecore/devices/{device}/state"),
@@ -235,8 +297,13 @@ pub async fn run_contact_publisher_with_interval(
     let mut watch = watch_contacts_with_interval(&bridge_id, &state_dir, refresh).await?;
     publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
     contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
-    while watch.next().await.is_some() {
+    while let Some(update) = watch.next().await {
+        if update.1.is_null() {
+            contact_availability(&mqtt, &bridge_id, &[update], false).await?;
+            continue;
+        }
         publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+        contact_availability(&mqtt, &bridge_id, &[update], true).await?;
     }
     contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
@@ -679,6 +746,8 @@ async fn read_sensors(
         let mut temperature = None;
         let mut humidity = None;
         let mut battery = None;
+        let mut smoke = None;
+        let mut fault = None;
         for service in accessory.services {
             for characteristic in service.characteristics {
                 let target = match (&service.service_type, &characteristic.char_type) {
@@ -689,6 +758,8 @@ async fn read_sensors(
                         &mut humidity
                     }
                     (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut battery,
+                    (ServiceType::SmokeSensor, CharacteristicType::SmokeDetected) => &mut smoke,
+                    (ServiceType::SmokeSensor, CharacteristicType::StatusFault) => &mut fault,
                     _ => continue,
                 };
                 if target.replace(characteristic.iid).is_some() {
@@ -696,10 +767,27 @@ async fn read_sensors(
                 }
             }
         }
-        if temperature.is_none() && humidity.is_none() {
+        if temperature.is_none() && humidity.is_none() && smoke.is_none() {
             continue;
         }
+        if smoke.is_some() && (temperature.is_some() || humidity.is_some()) {
+            return Err("Ambiguous sensor type");
+        }
         let mut state = Map::new();
+        for (name, iid) in [("smoke_detected", smoke), ("fault", fault)] {
+            if let Some(iid) = iid {
+                let value = match handle.read(accessory.aid, iid).await {
+                    Ok(value) => value.to_json(),
+                    Err(_) => continue 'accessory,
+                };
+                let detected = match value.as_u64() {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err("Invalid sensor reading"),
+                };
+                state.insert(name.to_owned(), json!(detected));
+            }
+        }
         for (name, iid, min, max) in [
             ("temperature", temperature, -100.0, 100.0),
             ("humidity", humidity, 0.0, 100.0),
@@ -983,8 +1071,12 @@ impl ContactsWatch {
     }
     pub async fn next(&mut self) -> Option<(u64, Value)> {
         let update = self.updates.recv().await?;
-        if let Some((_, state)) = self.current.iter_mut().find(|(aid, _)| *aid == update.0) {
+        if update.1.is_null() {
+            self.current.retain(|(aid, _)| *aid != update.0);
+        } else if let Some((_, state)) = self.current.iter_mut().find(|(aid, _)| *aid == update.0) {
             *state = update.1.clone();
+        } else {
+            self.current.push(update.clone());
         }
         Some(update)
     }
@@ -1057,6 +1149,9 @@ async fn watch_contacts_with_interval(
                         Ok(Ok(refreshed)) => refreshed,
                         _ => break,
                     };
+                    for (aid, _) in &state {
+                        if !refreshed.iter().any(|(new, _)| new == aid) && send.try_send((*aid, Value::Null)).is_err() { return; }
+                    }
                     for (aid, value) in &refreshed {
                         if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) && send.try_send((*aid, value.clone())).is_err() { return; }
                     }
