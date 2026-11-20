@@ -235,7 +235,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
         (readings[0].0, json!({"open":true,"battery_pct":50}))
     );
     drop(watch);
-    let broker = mqtt_broker::Broker::start().await;
+    let mut broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;
     let publisher = tokio::spawn(homecore_homekit::run_contact_publisher(
         probe.client.clone(),
@@ -354,6 +354,33 @@ async fn reads_each_contact_from_a_bridge_independently() {
         loop {
             let msg = probe.messages.recv().await.unwrap();
             if msg.topic == availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(probe);
+    broker.restart().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == availability && msg.payload.as_ref() == b"online" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "close").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == topic
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
+                    == false
+            {
                 break;
             }
         }
