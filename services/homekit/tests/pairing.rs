@@ -91,4 +91,7 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
             & 0o077,
         0
     );
+    let stored: serde_json::Value =
+        serde_json::from_slice(&fs::read(state_root.join("pairing.json")).unwrap()).unwrap();
+    assert_ne!(stored["controller"]["id"], "hap-rust-controller");
 }

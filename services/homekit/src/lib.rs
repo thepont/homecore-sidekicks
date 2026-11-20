@@ -65,7 +65,7 @@ pub async fn pair_and_read(
     state_dir: &std::path::Path,
 ) -> Result<Value, &'static str> {
     use hap_controller::{
-        CharacteristicType, Discovered, HapController, JsonFileStore, ServiceType,
+        CharacteristicType, Discovered, HapController, JsonFileStore, PairingStore, ServiceType,
     };
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let Discovered::Ip(ref ip) = accessory;
@@ -129,6 +129,27 @@ pub async fn pair_and_read(
     create_tmp()?;
     let _temporary = PairingTemp(tmp.clone());
     let store = JsonFileStore::new(&path);
+    if store
+        .load_controller()
+        .await
+        .map_err(|_| "Cannot read HomeKit identity")?
+        .is_none()
+    {
+        let mut key = hap_crypto::ControllerKeypair::generate(String::new());
+        let public = key.ltpk();
+        key.id = format!(
+            "homecore-{}",
+            public[..16]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+        store
+            .save_controller(&key)
+            .await
+            .map_err(|_| "Cannot save HomeKit identity")?;
+        create_tmp()?;
+    }
     let mut controller = HapController::new(store)
         .await
         .map_err(|_| "Cannot initialize HomeKit controller")?;
