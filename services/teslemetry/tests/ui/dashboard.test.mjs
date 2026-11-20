@@ -122,3 +122,11 @@ test('cost identifies the reported total date and rejects a missing date', async
   await page.evaluate(() => { delete device.attributes.energy_totals_date; document.querySelector('hc-teslemetry-grid').host = host; });
   assert.equal(await page.getByText('Import cost unavailable',{exact:true}).count(), 1);
 });
+
+test('battery rounds a high precision charge reading for display', async () => {
+  await page.evaluate(() => {
+    device.attributes.charge_pct = 54.31899430207542;
+    const c = document.createElement('hc-teslemetry-battery'); c.host = host; document.querySelector('main').replaceChildren(c);
+  });
+  assert.equal(await page.getByText('54.3%', {exact:true}).count(), 1);
+});

@@ -465,7 +465,7 @@ class TeslemetryBattery extends HTMLElement {
   #render() {
     const d = this.#host?.devices.get('teslemetry_powerwall');
     const charge = d?.available === true ? d.attributes?.charge_pct : undefined;
-    const value = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${charge}%` : 'Unavailable';
+    const value = typeof charge === 'number' && Number.isFinite(charge) && charge >= 0 && charge <= 100 ? `${Number(charge.toFixed(1))}%` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin-top:8px}</style><div class="card"><span>Battery</span><strong></strong></div>';
     this.shadowRoot.querySelector('strong').textContent = value;
   }
