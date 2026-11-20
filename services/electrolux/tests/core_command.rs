@@ -135,3 +135,63 @@ async fn homecore_api_power_command_changes_reported_device_state() {
     assert_eq!(state["attributes"]["hvac_mode"], "cool");
     worker.join().unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires Docker and pinned homeCore image"]
+async fn homecore_discovers_and_fetches_the_electrolux_ac_card() {
+    let core = homecore::Core::start().await;
+    let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/ac-card");
+    let _adapter = Owned(
+        Command::new(env!("CARGO_BIN_EXE_electrolux-bridge"))
+            .env("ELECTROLUX_ADDRESS", "127.0.0.1:9")
+            .env("ELECTROLUX_MAC", "020304050607")
+            .env("MQTT_HOST", "127.0.0.1")
+            .env("MQTT_PORT", core.mqtt_port.to_string())
+            .env("MQTT_USERNAME", "plugin.electrolux.living_room")
+            .env("MQTT_PASSWORD_FILE", core.root.join("mqtt-password"))
+            .env("HC_PLUGIN_UI_DIR", &ui)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let card = tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let list: Value = core
+                .get("/plugins/ui")
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if let Some(card) = list.as_array().and_then(|xs| {
+                xs.iter()
+                    .find(|x| x["plugin_id"] == "plugin.electrolux.living_room")
+            }) {
+                return card["ui"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("card announcement");
+    assert!(card["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|slot| slot["element"] == "hc-ac-card"));
+    let build = card["build"].as_str().unwrap();
+    let response = core
+        .get(&format!(
+            "/plugins/plugin.electrolux.living_room/ui/{build}/index.js"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        std::fs::read(ui.join("index.js")).unwrap()
+    );
+}
