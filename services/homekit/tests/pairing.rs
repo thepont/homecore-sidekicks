@@ -36,6 +36,7 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
     let mut child = Command::new(node)
         .arg(fixture)
         .env("HAP_STORE_DIR", fixture_root)
+        .env("HAP_CONTROLLER_DIR", &state_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -75,6 +76,14 @@ async fn pairs_with_a_homekit_accessory_and_reads_its_contact_sensor() {
     )
     .await
     .is_err());
+    assert!(homecore_homekit::pair_and_read(
+        hap_controller::Discovered::Ip(discovered.clone()),
+        "123-45-678",
+        &state_root,
+    )
+    .await
+    .is_err());
+    fs::set_permissions(&state_root, fs::Permissions::from_mode(0o700)).unwrap();
     let state = homecore_homekit::pair_and_read(
         hap_controller::Discovered::Ip(discovered),
         "123-45-678",

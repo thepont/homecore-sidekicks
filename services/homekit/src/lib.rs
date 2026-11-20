@@ -64,7 +64,9 @@ pub async fn pair_and_read(
     pin: &str,
     state_dir: &std::path::Path,
 ) -> Result<Value, &'static str> {
-    use hap_controller::{Discovered, HapController, JsonFileStore, PairingStore};
+    use hap_controller::{
+        Discovered, HapController, JsonFileStore, PairingStore, StoredAccessory, StoredTransport,
+    };
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let Discovered::Ip(ref ip) = accessory;
     let address = ip.addr;
@@ -148,16 +150,43 @@ pub async fn pair_and_read(
             .map_err(|_| "Cannot save HomeKit identity")?;
         create_tmp()?;
     }
-    let mut controller = HapController::new(store)
-        .await
-        .map_err(|_| "Cannot initialize HomeKit controller")?;
     if !tmp.exists() {
         create_tmp()?;
     }
-    let mut handle = controller
-        .pair(&accessory, pin)
+    let key = store
+        .load_controller()
+        .await
+        .map_err(|_| "Cannot read HomeKit identity")?
+        .ok_or("HomeKit identity unavailable")?;
+    let connection = hap_transport::HapConnection::connect(address)
+        .await
+        .map_err(|_| "Cannot connect to HomeKit accessory")?;
+    let (pairing, mut session) = hap_pairing::pair(connection, pin, &key)
         .await
         .map_err(|_| "HomeKit pairing failed")?;
+    let valid_id = pairing.pairing_id.eq_ignore_ascii_case(id);
+    let paired_id = pairing.pairing_id.clone();
+    let saved = StoredAccessory {
+        pairing,
+        transport: StoredTransport::Ip { addr: address },
+    };
+    if !valid_id || store.save_pairing(&saved).await.is_err() {
+        return match hap_pairing::PairingsAdmin::new(&mut session)
+            .remove(&key.id)
+            .await
+        {
+            Ok(()) => Err("Pairing could not be saved; the temporary pairing was removed"),
+            Err(_) => Err("Pairing could not be saved or removed; manual recovery is needed"),
+        };
+    }
+    drop(session);
+    let controller = HapController::new(store)
+        .await
+        .map_err(|_| "Cannot initialize HomeKit controller")?;
+    let mut handle = controller
+        .connect(&paired_id)
+        .await
+        .map_err(|_| "Cannot reconnect to HomeKit accessory")?;
     read_contact(&mut handle).await
 }
 

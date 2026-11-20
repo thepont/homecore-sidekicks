@@ -11,6 +11,15 @@ HAPServer.prototype.handleRequestOnHAPConnection=function(connection,request,res
 // HAP-NodeJS otherwise binds all IPv4 interfaces even for a loopback address.
 const parseBind = Accessory.parseBindOption;
 Accessory.parseBindOption = info => ({...parseBind(info), serverAddress:'127.0.0.1'});
+// Simulate a storage failure after the accessory has accepted Pair Setup.
+const paired=Accessory.prototype.handleInitialPairSetupFinished;
+let failStorage=true;
+Accessory.prototype.handleInitialPairSetupFinished=function(...args){
+  if(failStorage && process.env.HAP_CONTROLLER_DIR){
+    require('fs').chmodSync(process.env.HAP_CONTROLLER_DIR,0o500);failStorage=false;
+  }
+  return paired.apply(this,args);
+};
 const accessory = new Accessory('Fixture contact', uuid.generate('homecore.fixture.contact'));
 const contact = accessory.addService(Service.ContactSensor, 'Fixture contact');
 contact.getCharacteristic(Characteristic.ContactSensorState).onGet(() => 1);
