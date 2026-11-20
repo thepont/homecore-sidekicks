@@ -675,3 +675,42 @@ async fn given_vehicle_reading_is_withdrawn_then_old_sensor_value_disappears() {
     );
     server.abort();
 }
+
+#[tokio::test]
+#[ignore = "requires pinned local Mosquitto image and Docker; run explicitly"]
+async fn given_vehicle_telemetry_then_schema_describes_read_only_values() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let vin = "5YJ3E1EA7KF000001";
+    let event = format!(
+        "event: data\ndata: {}\n\n",
+        json!({"vin":vin,"createdAt":now.to_rfc3339(),"data":{"BatteryLevel":62,"Locked":true,"InsideTemp":21.5}})
+    );
+    let app = Router::new().route("/api/1/vehicles", get(move || async move {Json(json!({"response":[{"vin":vin}]}))}))
+        .route("/sse/{vin}", get(move || {let event=event.clone(); async move {([("content-type", "text/event-stream")],event)}}))
+        .route("/api/1/energy_sites/42/live_status", get(|| async {Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}}))}));
+    let (url, server) = support::serve(app).await;
+    let _owned = start_adapter(&url, broker.port, "vehicle-schema-fixture", Some("1"));
+    let schema = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = probe.messages.recv().await {
+            if message
+                .topic
+                .starts_with("homecore/devices/teslemetry_vehicle_")
+                && message.topic.ends_with("/schema")
+            {
+                return serde_json::from_slice::<Value>(&message.payload).unwrap();
+            }
+        }
+        panic!("schema stream closed")
+    })
+    .await
+    .expect("vehicle schema must arrive");
+    assert_eq!(schema["attributes"]["battery_level"]["unit"], "%");
+    assert_eq!(schema["attributes"]["inside_temp"]["unit"], "°C");
+    for field in ["battery_level", "locked", "inside_temp"] {
+        assert_eq!(schema["attributes"][field]["writable"], false);
+    }
+    assert_eq!(schema["primary"], json!(["battery_level", "vehicle_state"]));
+    server.abort();
+}
