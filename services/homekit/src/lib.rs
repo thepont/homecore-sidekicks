@@ -64,9 +64,7 @@ pub async fn pair_and_read(
     pin: &str,
     state_dir: &std::path::Path,
 ) -> Result<Value, &'static str> {
-    use hap_controller::{
-        CharacteristicType, Discovered, HapController, JsonFileStore, PairingStore, ServiceType,
-    };
+    use hap_controller::{Discovered, HapController, JsonFileStore, PairingStore};
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let Discovered::Ip(ref ip) = accessory;
     let address = ip.addr;
@@ -160,42 +158,12 @@ pub async fn pair_and_read(
         .pair(&accessory, pin)
         .await
         .map_err(|_| "HomeKit pairing failed")?;
-    handle
-        .accessories()
-        .await
-        .map_err(|_| "Cannot read HomeKit accessories")?;
-    let (aid, iid) = handle
-        .find(
-            ServiceType::ContactSensor,
-            CharacteristicType::ContactSensorState,
-        )
-        .map_err(|_| "Contact sensor unavailable")?;
-    let contact = handle
-        .read(aid, iid)
-        .await
-        .map_err(|_| "Cannot read contact")?
-        .to_json();
-    let mut services = vec![json!({"type":"80","characteristics":[{"type":"6A","value":contact}]})];
-    if let Ok((battery_aid, battery_iid)) =
-        handle.find(ServiceType::Battery, CharacteristicType::BatteryLevel)
-    {
-        if battery_aid == aid {
-            let battery = handle
-                .read(battery_aid, battery_iid)
-                .await
-                .map_err(|_| "Cannot read battery")?
-                .to_json();
-            services.push(json!({"type":"96","characteristics":[{"type":"68","value":battery}]}));
-        }
-    }
-    contact_state(&json!({"services":services})).ok_or("Invalid contact reading")
+    read_contact(&mut handle).await
 }
 
 /// Reconnect to a previously paired contact accessory.
 pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, &'static str> {
-    use hap_controller::{
-        CharacteristicType, HapController, JsonFileStore, PairingStore, ServiceType,
-    };
+    use hap_controller::{HapController, JsonFileStore, PairingStore};
     use std::os::unix::fs::PermissionsExt;
     if id.len() != 17
         || !id.bytes().enumerate().all(|(i, b)| {
@@ -238,6 +206,11 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
         .connect(id)
         .await
         .map_err(|_| "Cannot reconnect to HomeKit accessory")?;
+    read_contact(&mut handle).await
+}
+
+async fn read_contact(handle: &mut hap_controller::AccessoryHandle) -> Result<Value, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
     handle
         .accessories()
         .await
