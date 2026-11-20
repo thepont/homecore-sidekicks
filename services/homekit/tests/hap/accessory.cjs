@@ -2,6 +2,14 @@
 const {Accessory, Bridge, Service, Characteristic, Categories, HAPStorage, uuid} = require('hap-nodejs');
 HAPStorage.setCustomStoragePath(process.env.HAP_STORE_DIR);
 const {HAPServer}=require('hap-nodejs/dist/lib/HAPServer');
+const pairings=HAPServer.prototype.handlePairings;
+HAPServer.prototype.handlePairings=function(connection,url,request,data,response){
+  if(process.env.HAP_STRICT_CONTROLLER_ID === '1'){
+    const fields=require('hap-nodejs/dist/lib/util/tlv').decode(data);
+    if(fields[0]?.[0] === 3 && fields[1]?.length > 36){response.writeHead(400);response.end();return;}
+  }
+  return pairings.call(this,connection,url,request,data,response);
+};
 const finishPairing=HAPServer.prototype.handlePairSetupM5_3;
 HAPServer.prototype.handlePairSetupM5_3=function(connection,request,response,...rest){
   if(process.env.HAP_DELAY_M6 === '1') {console.log('WAIT_M6');return;}

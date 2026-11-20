@@ -5,12 +5,14 @@ actions, contact and battery readings, and homeCore MQTT publications have
 been exercised against simulated accessories and an isolated homeCore. A fake
 bridge has also accepted a second controller without removing the first one.
 
-The real Xiaomi hub has not been paired with this controller. Its compatibility
-with a second controller, real-device readings, Kubernetes discovery, and the
-live deployment still need verification. The current implementation handles
-contact sensors and their batteries; it is not a complete adapter for all
-HomeKit accessory types. Do not transfer or remove the existing Home Assistant
-pairing until the real-device comparison and recovery path are verified.
+The Xiaomi DMWG03LM hub has accepted a second, non-admin controller alongside
+Home Assistant, and both controller identities read the same contact and
+battery values. This hub rejected controller identifiers longer than 36 bytes;
+new controller identities use UUIDs. Kubernetes discovery and live deployment
+still need verification. The current implementation handles contact sensors
+and their batteries; it does not yet cover temperature, humidity, smoke alarms,
+or outlets. Do not transfer or remove the existing Home Assistant pairing until
+the remaining devices and recovery path are verified.
 
 The pairing test starts a HAP-NodeJS accessory bound to loopback, with an
 isolated temporary identity. Node.js 24 and the pinned fixture dependencies are

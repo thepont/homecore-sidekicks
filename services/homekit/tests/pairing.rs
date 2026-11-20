@@ -152,6 +152,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
         .env("HAP_STORE_DIR", fixture_root)
         .env("HAP_BRIDGE", "1")
+        .env("HAP_STRICT_CONTROLLER_ID", "1")
         .env("HAP_RACE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

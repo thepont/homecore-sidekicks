@@ -321,15 +321,7 @@ pub async fn pair_and_read(
         .map_err(|_| "Cannot read HomeKit identity")?
         .is_none()
     {
-        let mut key = hap_crypto::ControllerKeypair::generate(String::new());
-        let public = key.ltpk();
-        key.id = format!(
-            "homecore-{}",
-            public[..16]
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        );
+        let key = hap_crypto::ControllerKeypair::generate(uuid::Uuid::new_v4().to_string());
         store
             .save_controller(&key)
             .await
@@ -512,14 +504,7 @@ pub async fn invite_controller(
         .into_iter()
         .find(|p| p.pairing.pairing_id.eq_ignore_ascii_case(id))
         .ok_or("Pairing unavailable")?;
-    let mut key = hap_crypto::ControllerKeypair::generate(String::new());
-    key.id = format!(
-        "homecore-{}",
-        key.ltpk()[..16]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
+    let key = hap_crypto::ControllerKeypair::generate(uuid::Uuid::new_v4().to_string());
     let target = JsonFileStore::new(&path);
     target
         .save_controller(&key)
