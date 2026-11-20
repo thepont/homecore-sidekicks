@@ -481,7 +481,6 @@ pub async fn watch_contacts_saved(
     use hap_controller::{CharacteristicType, ServiceType};
     use tokio_stream::StreamExt;
     let (lock, mut handle) = connect_saved(id, state_dir).await?;
-    let current = read_contacts(&mut handle).await?;
     let accessories = handle
         .accessories()
         .await
@@ -506,16 +505,20 @@ pub async fn watch_contacts_saved(
             .await
             .map_err(|_| "Cannot subscribe to contact")?;
     }
+    let current = read_contacts(&mut handle).await?;
     let (send, updates) = tokio::sync::mpsc::channel(32);
     let mut state = current.clone();
     let task = tokio::spawn(async move {
         let _lock = lock;
-        let _handle = handle;
         while let Some(event) = events.next().await {
             if !contacts.contains(&(event.aid, event.iid)) {
                 continue;
             }
-            let open = match event.value.to_json().as_u64() {
+            let value = match handle.read(event.aid, event.iid).await {
+                Ok(value) => value.to_json(),
+                Err(_) => break,
+            };
+            let open = match value.as_u64() {
                 Some(0) => false,
                 Some(1) => true,
                 _ => continue,

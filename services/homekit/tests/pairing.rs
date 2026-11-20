@@ -142,6 +142,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
         .env("HAP_STORE_DIR", fixture_root)
         .env("HAP_BRIDGE", "1")
+        .env("HAP_RACE", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -185,14 +186,15 @@ async fn reads_each_contact_from_a_bridge_independently() {
     let mut watch = homecore_homekit::watch_contacts_saved("02:11:22:33:44:55", &state_root)
         .await
         .unwrap();
-    assert_eq!(watch.current(), &readings);
-    writeln!(fixture.child.stdin.as_mut().unwrap(), "close").unwrap();
+    assert_eq!(watch.current()[0].1, json!({"open":false,"battery_pct":69}));
+    assert_eq!(watch.current()[1], readings[1]);
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "open").unwrap();
     let update = tokio::time::timeout(Duration::from_secs(5), watch.next())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
         update,
-        (readings[0].0, json!({"open":false,"battery_pct":69}))
+        (readings[0].0, json!({"open":true,"battery_pct":69}))
     );
 }

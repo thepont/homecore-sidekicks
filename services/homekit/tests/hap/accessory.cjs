@@ -37,9 +37,13 @@ const contact = first.addService(Service.ContactSensor, 'Fixture contact');
 let contactValue=1;
 const state=contact.getCharacteristic(Characteristic.ContactSensorState);
 state.onGet(()=>contactValue);
-state.on('subscribe',()=>console.log('SUBSCRIBED'));
+state.on('subscribe',()=>{
+  if (process.env.HAP_RACE === '1') contactValue=0;
+  console.log('SUBSCRIBED');
+});
 require('readline').createInterface({input:process.stdin}).on('line',line=>{
   if(line==='close'){contactValue=0;state.updateValue(contactValue);}
+  if(line==='open'){contactValue=1;state.updateValue(contactValue);}
 });
 const battery = first.addService(Service.Battery, 'Fixture battery');
 battery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 69);
