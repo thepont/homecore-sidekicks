@@ -3,7 +3,8 @@
 The adapter reads mitsubishi-cn105-homekit's `state` and `deviceInfo`
 WebSocket frames. This catalogue follows [v0.2.8, commit
 56676c8](https://github.com/akifbayram/mitsubishi-cn105-homekit/blob/56676c8fad6053be23d80e3b02d9089ae559a2a3/main/web_ws.cpp).
-Every published attribute is read-only. Unsupported, absent and null readings
+Only the climate settings listed in the [control guide](../README.md#controls)
+can be written. Unsupported, absent and null readings
 are omitted; a new snapshot replaces the previous snapshot.
 
 | Group | Attributes | Units or meaning |

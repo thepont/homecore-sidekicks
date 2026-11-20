@@ -271,3 +271,19 @@ fn malformed_known_fields_are_rejected_without_echoing_input() {
         .is_none());
     assert!(parse(b"{\"type\":\"future-extension\"}").unwrap().is_none());
 }
+
+#[test]
+fn configured_vanes_publish_optional_climate_capabilities() {
+    for (count, vertical, horizontal) in [(0, false, false), (1, true, false), (2, true, true)] {
+        let input = serde_json::json!({"type":"state", "connected":true, "vaneConfig":count,
+            "vane":"auto", "wideVane":"c"});
+        let Some(homecore_mitsubishi::model::Frame::State(snapshot)) =
+            homecore_mitsubishi::model::parse(input.to_string().as_bytes()).unwrap()
+        else {
+            panic!("expected state");
+        };
+        assert_eq!(snapshot.values["has_vertical_vane"], vertical);
+        assert_eq!(snapshot.values["has_horizontal_vane"], horizontal);
+        assert_eq!(snapshot.values["horizontal_vane"], "c");
+    }
+}

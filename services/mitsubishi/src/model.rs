@@ -175,6 +175,24 @@ fn state(input: &Value) -> Result<Snapshot, &'static str> {
     }
     ble_sensors(&mut output, input)?;
     room_arrays(&mut output, input)?;
+    if let Some(count) = output
+        .values
+        .get("vane_configuration")
+        .and_then(Value::as_u64)
+    {
+        output.insert(
+            "has_vertical_vane",
+            (count >= 1).into(),
+            AttributeKind::Bool,
+            None,
+        );
+        output.insert(
+            "has_horizontal_vane",
+            (count >= 2).into(),
+            AttributeKind::Bool,
+            None,
+        );
+    }
     hvac_status(&mut output, input);
     Ok(output)
 }
