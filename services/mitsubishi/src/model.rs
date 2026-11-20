@@ -15,6 +15,24 @@ pub struct Snapshot {
     pub attributes: Map<String, Value>,
 }
 
+enum AttributeKind {
+    Bool,
+    Float,
+    Integer,
+    String,
+}
+
+impl AttributeKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::Float => "float",
+            Self::Integer => "integer",
+            Self::String => "string",
+        }
+    }
+}
+
 impl Snapshot {
     fn new() -> Self {
         Self {
@@ -23,9 +41,9 @@ impl Snapshot {
         }
     }
 
-    fn insert(&mut self, key: &str, value: Value, kind: &str, unit: Option<&str>) {
+    fn insert(&mut self, key: &str, value: Value, kind: AttributeKind, unit: Option<&str>) {
         let mut attribute =
-            json!({"kind":kind,"writable":false,"display_name":key.replace('_', " ")});
+            json!({"kind":kind.as_str(),"writable":false,"display_name":key.replace('_', " ")});
         if let Some(unit) = unit {
             attribute["unit"] = unit.into();
         }
@@ -41,7 +59,7 @@ impl Snapshot {
     fn boolean(&mut self, input: &Value, source: &str, key: &str) -> Result<(), &'static str> {
         if let Some(value) = optional(input, source) {
             let value = value.as_bool().ok_or("invalid boolean")?;
-            self.insert(key, value.into(), "bool", None);
+            self.insert(key, value.into(), AttributeKind::Bool, None);
         }
         Ok(())
     }
@@ -60,7 +78,7 @@ impl Snapshot {
             if !number.is_finite() || number < min || number > max {
                 return Err("number outside bounds");
             }
-            self.insert(key, value.clone(), "float", unit);
+            self.insert(key, value.clone(), AttributeKind::Float, unit);
         }
         Ok(())
     }
@@ -77,7 +95,7 @@ impl Snapshot {
             if !choices.contains(&value) {
                 return Err("invalid enum");
             }
-            self.insert(key, value.into(), "string", None);
+            self.insert(key, value.into(), AttributeKind::String, None);
         }
         Ok(())
     }
@@ -96,7 +114,7 @@ impl Snapshot {
             if !(min..=max).contains(&number) {
                 return Err("integer outside bounds");
             }
-            self.insert(key, number.into(), "integer", unit);
+            self.insert(key, number.into(), AttributeKind::Integer, unit);
         }
         Ok(())
     }
@@ -107,7 +125,7 @@ impl Snapshot {
             if value.len() > 128 || value.chars().any(char::is_control) {
                 return Err("invalid string");
             }
-            self.insert(key, value.into(), "string", None);
+            self.insert(key, value.into(), AttributeKind::String, None);
         }
         Ok(())
     }
@@ -123,7 +141,12 @@ fn state(input: &Value) -> Result<Snapshot, &'static str> {
         .and_then(Value::as_bool)
         .ok_or("missing connection state")?;
     let mut output = Snapshot::new();
-    output.insert("cn105_connected", connected.into(), "bool", None);
+    output.insert(
+        "cn105_connected",
+        connected.into(),
+        AttributeKind::Bool,
+        None,
+    );
     output.boolean(input, "power", "power")?;
     output.boolean(input, "operating", "operating")?;
     output.number(input, "room", "temperature", Some("°C"), -100.0, 150.0)?;
@@ -143,7 +166,12 @@ fn state(input: &Value) -> Result<Snapshot, &'static str> {
     optional_readings(&mut output, input)?;
     // The firmware emits null exactly when its hasError flag is false.
     if let Some(error) = input.get("errorCode") {
-        output.insert("fault", (!error.is_null()).into(), "bool", None);
+        output.insert(
+            "fault",
+            (!error.is_null()).into(),
+            AttributeKind::Bool,
+            None,
+        );
     }
     ble_sensors(&mut output, input)?;
     room_arrays(&mut output, input)?;
@@ -161,7 +189,7 @@ fn hvac_status(output: &mut Snapshot, input: &Value) {
         _ => None,
     };
     if let Some(mode) = mode {
-        output.insert("hvac_mode", mode.into(), "string", None);
+        output.insert("hvac_mode", mode.into(), AttributeKind::String, None);
         let actual_mode = if mode == "auto" {
             input
                 .get("autoSubMode")
@@ -185,7 +213,7 @@ fn hvac_status(output: &mut Snapshot, input: &Value) {
             _ => None,
         };
         if let Some(action) = action {
-            output.insert("hvac_action", action.into(), "string", None);
+            output.insert("hvac_action", action.into(), AttributeKind::String, None);
         }
     }
 }
@@ -392,7 +420,7 @@ fn ble_sensors(output: &mut Snapshot, input: &Value) -> Result<(), &'static str>
         output.insert(
             &key("available"),
             (sensor["active"] == true && sensor["stale"] == false).into(),
-            "bool",
+            AttributeKind::Bool,
             None,
         );
         output.integer(
@@ -418,7 +446,7 @@ fn ble_sensors(output: &mut Snapshot, input: &Value) -> Result<(), &'static str>
             output.integer(sensor, "batt", &key("battery"), Some("%"), 0, 100)?;
         }
         if sensor["active"] != true || sensor["stale"] != false || input["bleEnabled"] == false {
-            output.insert(&key("available"), false.into(), "bool", None);
+            output.insert(&key("available"), false.into(), AttributeKind::Bool, None);
             for suffix in ["temperature", "humidity", "battery", "rssi"] {
                 output.remove(&key(suffix));
             }
@@ -441,7 +469,7 @@ fn room_arrays(output: &mut Snapshot, input: &Value) -> Result<(), &'static str>
             output.insert(
                 &format!("room_offset_{index}"),
                 (value as f64 / 10.0).into(),
-                "float",
+                AttributeKind::Float,
                 Some("°C"),
             );
         }
@@ -451,7 +479,12 @@ fn room_arrays(output: &mut Snapshot, input: &Value) -> Result<(), &'static str>
             .as_array()
             .filter(|v| v.len() <= 4)
             .ok_or("invalid dial list")?;
-        output.insert("remote_dial_count", dials.len().into(), "integer", None);
+        output.insert(
+            "remote_dial_count",
+            dials.len().into(),
+            AttributeKind::Integer,
+            None,
+        );
         for (index, dial) in dials.iter().enumerate() {
             dial.as_object().ok_or("invalid dial")?;
             let key = |suffix: &str| format!("remote_dial_{index}_{suffix}");
