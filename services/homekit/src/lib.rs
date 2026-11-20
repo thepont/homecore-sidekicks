@@ -37,7 +37,7 @@ pub async fn publish_contacts(
                 .any(|key| key != "open" && key != "battery_pct")
             || object
                 .get("battery_pct")
-                .is_some_and(|battery| !battery.as_u64().is_some_and(|n| n <= 100))
+                .is_some_and(|battery| battery.as_u64().is_none_or(|n| n > 100))
         {
             return Err("Invalid contact state");
         }
