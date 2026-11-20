@@ -29,14 +29,9 @@ pub fn parse_status_response(frame: &[u8]) -> Result<Value, &'static str> {
     serde_json::from_slice(payload).map_err(|_| "Invalid Electrolux response")
 }
 
-pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
-    let data: &[u8] = if on {
-        br#"{"ac_pwr":1}"#
-    } else {
-        br#"{"ac_pwr":0}"#
-    };
+fn control_frame(command: u8, data: &[u8]) -> Vec<u8> {
     let mut frame = vec![
-        0x18,
+        command,
         0,
         0xa5,
         0xa5,
@@ -54,7 +49,16 @@ pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
     frame.extend_from_slice(data);
     let sum = checksum(&frame[8..]);
     frame[6..8].copy_from_slice(&sum.to_le_bytes());
-    Ok(frame)
+    frame
+}
+
+pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
+    let data: &[u8] = if on {
+        br#"{"ac_pwr":1}"#
+    } else {
+        br#"{"ac_pwr":0}"#
+    };
+    Ok(control_frame(0x18, data))
 }
 
 pub fn temperature_request(temperature: u8) -> Result<Vec<u8>, &'static str> {
