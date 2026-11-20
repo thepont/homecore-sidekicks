@@ -108,3 +108,21 @@ impl Client {
         Ok(())
     }
 }
+
+impl Client {
+    pub fn set_mode(&mut self, mode: &str) -> Result<(), &'static str> {
+        let response = self.exchange::<Query>(&protocol::mode_request(mode)?)?;
+        protocol::parse_status_response(&response)?;
+        Ok(())
+    }
+    pub fn set_fan(&mut self, fan: &str) -> Result<(), &'static str> {
+        let response = self.exchange::<Query>(&protocol::fan_request(fan)?)?;
+        protocol::parse_status_response(&response)?;
+        Ok(())
+    }
+    pub fn set_swing(&mut self, enabled: bool) -> Result<(), &'static str> {
+        let response = self.exchange::<Query>(&protocol::swing_request(enabled)?)?;
+        protocol::parse_status_response(&response)?;
+        Ok(())
+    }
+}

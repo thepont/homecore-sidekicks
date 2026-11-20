@@ -180,3 +180,58 @@ fn sends_target_temperature_to_authenticated_device() {
     assert!(client.set_temperature(24).is_ok());
     worker.join().unwrap();
 }
+
+#[test]
+fn sends_mode_fan_and_swing_to_authenticated_device() {
+    let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let addr = server.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let mut buf = [0; 8192];
+        let (_, peer) = server.recv_from(&mut buf).unwrap();
+        let count = u16::from_le_bytes([buf[40], buf[41]]);
+        let mut auth = vec![1, 2, 3, 4];
+        auth.extend_from_slice(&KEY);
+        server
+            .send_to(
+                &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                    .pack_with_payload(&auth, &INITIAL)
+                    .unwrap(),
+                peer,
+            )
+            .unwrap();
+        for payload in [
+            br#"{"ac_mode":1}"#.as_slice(),
+            br#"{"ac_mark":3}"#.as_slice(),
+            br#"{"ac_vdir":1}"#.as_slice(),
+        ] {
+            let (n, peer) = server.recv_from(&mut buf).unwrap();
+            let command = CommandMessage::unpack_with_payload(buf[..n].to_vec(), &KEY).unwrap();
+            assert_eq!(&command[..2], &[0x19, 0]);
+            assert_eq!(&command[14..], payload);
+            let count = u16::from_le_bytes([buf[40], buf[41]]);
+            let mut frame = vec![0; 14];
+            frame[10] = 2;
+            frame.extend_from_slice(b"{}");
+            let sum = frame[8..]
+                .iter()
+                .fold(0xc0adu16, |s, b| s.wrapping_add(u16::from(*b)));
+            frame[6..8].copy_from_slice(&sum.to_le_bytes());
+            server
+                .send_to(
+                    &CommandMessage::with_count::<Reply>(count, 0x4f9b, MAC, 0)
+                        .pack_with_payload(&frame, &KEY)
+                        .unwrap(),
+                    peer,
+                )
+                .unwrap();
+        }
+    });
+    let mut client = Client::connect(addr, MAC, Duration::from_secs(2)).unwrap();
+    client.set_mode("heat").unwrap();
+    client.set_fan("high").unwrap();
+    client.set_swing(true).unwrap();
+    worker.join().unwrap();
+}
