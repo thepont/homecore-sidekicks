@@ -147,6 +147,11 @@ fn state(input: &Value) -> Result<Snapshot, &'static str> {
     }
     ble_sensors(&mut output, input)?;
     room_arrays(&mut output, input)?;
+    hvac_status(&mut output, input);
+    Ok(output)
+}
+
+fn hvac_status(output: &mut Snapshot, input: &Value) {
     let power = input.get("power").and_then(Value::as_bool);
     let mode = input.get("mode").and_then(Value::as_str);
     let mode = match (power, mode) {
@@ -183,7 +188,6 @@ fn state(input: &Value) -> Result<Snapshot, &'static str> {
             output.insert("hvac_action", action.into(), "string", None);
         }
     }
-    Ok(output)
 }
 
 fn optional_readings(output: &mut Snapshot, input: &Value) -> Result<(), &'static str> {
