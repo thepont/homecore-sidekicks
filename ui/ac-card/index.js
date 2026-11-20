@@ -625,14 +625,7 @@ class AcCard extends HTMLElement {
     const { dial } = this.#view;
     dial.addEventListener('pointerdown', event => this.#beginDrag(event));
     dial.addEventListener('pointermove', event => this.#moveDrag(event));
-    dial.addEventListener('pointerup', event => {
-      if (this.#drag?.pointer !== event.pointerId) return;
-      this.#moveDrag(event);
-      const { control, value } = this.#drag;
-      this.#cancelDrag();
-      if (Number.isFinite(value) && value !== control.value) void this.#send(control.key, value);
-      else this.#drawTargets();
-    });
+    dial.addEventListener('pointerup', event => this.#endDrag(event));
     for (const name of ['pointercancel', 'lostpointercapture']) {
       dial.addEventListener(name, event => {
         if (this.#drag?.pointer !== event.pointerId) return;
@@ -641,6 +634,15 @@ class AcCard extends HTMLElement {
       });
     }
     dial.addEventListener('keydown', event => this.#dialKey(event));
+  }
+
+  #endDrag(event) {
+    if (this.#drag?.pointer !== event.pointerId) return;
+    this.#moveDrag(event);
+    const { control, value } = this.#drag;
+    this.#cancelDrag();
+    if (Number.isFinite(value) && value !== control.value) void this.#send(control.key, value);
+    else this.#drawTargets();
   }
 
   #dialMarkers(lowSlot) {
