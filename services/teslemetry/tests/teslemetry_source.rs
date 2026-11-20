@@ -175,3 +175,24 @@ fn energy_readings_reject_malformed_optional_values() {
         "missing optional sensors are allowed"
     );
 }
+
+#[tokio::test]
+async fn async_source_rejects_non_root_endpoint_even_when_it_would_return_valid_data() {
+    use axum::{routing::get, Json, Router};
+    let app = Router::new().route("/unexpected/api/1/energy_sites/42/live_status", get(|| async {
+        Json(json!({"response":{"timestamp":chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).to_rfc3339(),"percentage_charged":65.2,"battery_power":-1190}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/unexpected", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = homecore_teslemetry::http::client().unwrap();
+    assert!(homecore_teslemetry::teslemetry::fetch_energy_async(
+        &client,
+        &base,
+        42,
+        "fixture-token"
+    )
+    .await
+    .is_err());
+    server.abort();
+}

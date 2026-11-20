@@ -71,11 +71,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(homecore_teslemetry::plugin::run(mqtt.clone(), eventloop));
     register(&mqtt).await?;
     let (totals_tx, totals_rx) = tokio::sync::watch::channel(serde_json::Map::new());
+    let (tariff_tx, tariff_rx) =
+        tokio::sync::watch::channel(homecore_teslemetry::totals::TariffState::default());
     tokio::spawn(homecore_teslemetry::totals::listen(
         base.clone(),
         site,
         token.clone(),
         totals_tx,
+        tariff_tx,
     ));
     tokio::spawn(homecore_teslemetry::vehicle::supervise(
         base.clone(),
@@ -87,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             password,
         },
     ));
-    poll_powerwall(mqtt, base, site, token, interval, totals_rx).await
+    poll_powerwall(mqtt, base, site, token, interval, totals_rx, tariff_rx).await
 }
 
 fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
@@ -115,6 +118,22 @@ fn powerwall_schema(readings: &serde_json::Map<String, serde_json::Value>) -> se
             attribute["min"] = json!(0);
             attribute["max"] = json!(100);
         }
+        if matches!(
+            name.as_str(),
+            "tariff_buy_price_per_kwh" | "tariff_sell_price_per_kwh"
+        ) {
+            let currency = readings
+                .get("tariff_currency")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| *value != "unspecified")
+                .unwrap_or("currency");
+            attribute["unit"] = json!(format!("{currency}/kWh"));
+            attribute["display_name"] = json!(if name == "tariff_buy_price_per_kwh" {
+                "Buy price"
+            } else {
+                "Feed-in price"
+            });
+        }
         attributes.insert(name.clone(), attribute);
     }
     json!({"attributes":attributes,"primary":["charge_pct","battery_power_w"]})
@@ -127,19 +146,28 @@ async fn poll_powerwall(
     token: String,
     interval: u64,
     totals: tokio::sync::watch::Receiver<serde_json::Map<String, serde_json::Value>>,
+    tariffs: tokio::sync::watch::Receiver<homecore_teslemetry::totals::TariffState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = None;
     loop {
-        let endpoint = base.clone();
-        let bearer = token.clone();
-        let reading = tokio::task::spawn_blocking(move || {
-            let client =
-                homecore_teslemetry::http::blocking_client().map_err(|_| "HTTP client failed")?;
-            homecore_teslemetry::teslemetry::fetch_energy(&client, &endpoint, site, &bearer)
-        })
-        .await?;
+        if client.is_none() {
+            client = homecore_teslemetry::http::client().ok();
+        }
+        let reading = match client.as_ref() {
+            Some(client) => {
+                homecore_teslemetry::teslemetry::fetch_energy_async(client, &base, site, &token)
+                    .await
+            }
+            None => Err("HTTP client failed"),
+        };
         match reading {
             Ok((value, mut readings)) => {
                 readings.extend(totals.borrow().clone());
+                readings.extend(
+                    tariffs
+                        .borrow()
+                        .readings(std::time::SystemTime::now().into()),
+                );
                 if !readings
                     .keys()
                     .any(|key| key.starts_with("wall_connector_"))
