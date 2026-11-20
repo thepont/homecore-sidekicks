@@ -286,6 +286,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
             .env("MQTT_PASSWORD_FILE", password_file)
             .env("HOMEKIT_PLUGIN_ID", "plugin.homekit")
             .env("HOMEKIT_BRIDGE_ID", "02:11:22:33:44:55")
+            .env("HOMEKIT_REFRESH_SECS", "1")
             .env("HOMEKIT_STATE_DIR", &state_root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -310,6 +311,21 @@ async fn reads_each_contact_from_a_bridge_independently() {
                 && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()["open"]
                     == true
             {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    fixture.child.kill().unwrap();
+    let availability = format!(
+        "homecore/devices/homekit_021122334455_{}/availability",
+        readings[0].0
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == availability && msg.payload.as_ref() == b"offline" {
                 break;
             }
         }

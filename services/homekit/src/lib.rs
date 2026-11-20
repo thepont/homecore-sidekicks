@@ -93,12 +93,55 @@ pub async fn run_contact_publisher(
     bridge_id: String,
     state_dir: std::path::PathBuf,
 ) -> Result<(), &'static str> {
-    let mut watch = watch_contacts_saved(&bridge_id, &state_dir).await?;
+    run_contact_publisher_with_interval(
+        mqtt,
+        plugin,
+        bridge_id,
+        state_dir,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+}
+
+pub async fn run_contact_publisher_with_interval(
+    mqtt: rumqttc::AsyncClient,
+    plugin: String,
+    bridge_id: String,
+    state_dir: std::path::PathBuf,
+    refresh: std::time::Duration,
+) -> Result<(), &'static str> {
+    if refresh < std::time::Duration::from_secs(1) || refresh > std::time::Duration::from_secs(3600)
+    {
+        return Err("Invalid refresh interval");
+    }
+    let mut watch = watch_contacts_with_interval(&bridge_id, &state_dir, refresh).await?;
     publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
     while watch.next().await.is_some() {
         publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
     }
+    contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
+}
+
+async fn contact_availability(
+    mqtt: &rumqttc::AsyncClient,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+    online: bool,
+) -> Result<(), &'static str> {
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, _) in readings {
+        mqtt.publish(
+            format!("homecore/devices/homekit_{bridge}_{aid}/availability"),
+            rumqttc::QoS::AtLeastOnce,
+            true,
+            if online { "online" } else { "offline" },
+        )
+        .await
+        .map_err(|_| "Cannot publish availability")?;
+    }
+    Ok(())
 }
 
 struct PairingTemp(std::path::PathBuf);
@@ -670,6 +713,14 @@ pub async fn watch_contacts_saved(
     id: &str,
     state_dir: &std::path::Path,
 ) -> Result<ContactsWatch, &'static str> {
+    watch_contacts_with_interval(id, state_dir, std::time::Duration::from_secs(30)).await
+}
+
+async fn watch_contacts_with_interval(
+    id: &str,
+    state_dir: &std::path::Path,
+    refresh: std::time::Duration,
+) -> Result<ContactsWatch, &'static str> {
     use hap_controller::{CharacteristicType, ServiceType};
     use tokio_stream::StreamExt;
     let (lock, mut handle) = connect_saved(id, state_dir).await?;
@@ -709,7 +760,23 @@ pub async fn watch_contacts_saved(
     let mut state = current.clone();
     let task = tokio::spawn(async move {
         let _lock = lock;
-        while let Some(event) = events.next().await {
+        let mut timer = tokio::time::interval(refresh);
+        timer.tick().await;
+        loop {
+            let event = tokio::select! {
+                event = events.next() => match event { Some(event) => event, None => break },
+                _ = timer.tick() => {
+                    let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_contacts(&mut handle)).await {
+                        Ok(Ok(refreshed)) => refreshed,
+                        _ => break,
+                    };
+                    for (aid, value) in &refreshed {
+                        if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) && send.try_send((*aid, value.clone())).is_err() { return; }
+                    }
+                    state = refreshed;
+                    continue;
+                }
+            };
             let is_contact = contacts.contains(&(event.aid, event.iid));
             if !is_contact && !batteries.contains(&(event.aid, event.iid)) {
                 continue;

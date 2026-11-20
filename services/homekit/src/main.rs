@@ -45,6 +45,13 @@ async fn run() -> Result<(), &'static str> {
     let plugin = required("HOMEKIT_PLUGIN_ID")?;
     let bridge_id = required("HOMEKIT_BRIDGE_ID")?;
     let state_dir = PathBuf::from(required("HOMEKIT_STATE_DIR")?);
+    let refresh = env::var("HOMEKIT_REFRESH_SECS")
+        .unwrap_or_else(|_| "30".into())
+        .parse::<u64>()
+        .map_err(|_| "Invalid refresh interval")?;
+    if !(1..=3600).contains(&refresh) {
+        return Err("Invalid refresh interval");
+    }
     let mut options = MqttOptions::new(&plugin, host, port);
     options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(15));
@@ -72,7 +79,7 @@ async fn run() -> Result<(), &'static str> {
             }
         }
         tokio::select! {
-            _ = homecore_homekit::run_contact_publisher(mqtt.clone(), plugin.clone(), bridge_id.clone(), state_dir.clone()) => {
+            _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id.clone(), state_dir.clone(), Duration::from_secs(refresh)) => {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
             _ = connection.changed() => {}
