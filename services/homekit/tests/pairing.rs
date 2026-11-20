@@ -438,3 +438,33 @@ async fn lost_final_pairing_response_warns_that_recovery_may_be_required() {
         "Pairing confirmation was lost; accessory recovery may be needed"
     );
 }
+
+#[tokio::test]
+async fn management_setup_pairs_the_discovered_fake_accessory() {
+    tokio::task::LocalSet::new().run_until(async {
+        let root=std::env::temp_dir().join(format!("homekit-setup-flow-{}",std::process::id()));
+        fs::create_dir(&root).unwrap();fs::set_permissions(&root,fs::Permissions::from_mode(0o700)).unwrap();
+        let accessory_root=root.join("accessory");let state_root=root.join("controller");
+        fs::create_dir(&accessory_root).unwrap();fs::create_dir(&state_root).unwrap();fs::set_permissions(&state_root,fs::Permissions::from_mode(0o700)).unwrap();
+        let mut child=Command::new(std::env::var("HAP_NODE_BIN").unwrap_or_else(|_|"node".into()))
+            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
+            .env("HAP_STORE_DIR",accessory_root).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        let output=child.stdout.take().unwrap();let _fixture=Fixture{child,root};let mut line=String::new();
+        BufReader::new(output).read_line(&mut line).unwrap();
+        let port=line.trim().strip_prefix("PORT=").unwrap().parse::<u16>().unwrap();
+        let txt=std::collections::HashMap::from([("id".to_owned(),"02:11:22:33:44:55".to_owned()),("sf".to_owned(),"1".to_owned())]);
+        let accessory=hap_transport::discovery_test_support::parse_txt("Fixture._hap._tcp.local.",SocketAddrV4::new(Ipv4Addr::LOCALHOST,port).into(),&txt).unwrap();
+        let discover:homecore_homekit::setup::Discover=std::sync::Arc::new(move || {let accessory=accessory.clone();Box::pin(async move {Ok(vec![accessory])})});
+        let broker=mqtt_broker::Broker::start().await;let mut probe=mqtt_broker::Probe::start(broker.port).await;
+        let task=tokio::task::spawn_local(homecore_homekit::setup::run_with_discovery("127.0.0.1".into(),broker.port,"fixture-user".into(),"fixture-password".into(),state_root.clone(),std::path::PathBuf::from("ui"),discover));
+        tokio::time::timeout(Duration::from_secs(10),async {loop {if probe.messages.recv().await.unwrap().topic=="homecore/plugins/fixture-user/capabilities" {break;}}}).await.unwrap();
+        for command in [json!({"action":"discover_accessories","request_id":"discover"}),json!({"action":"pair_accessory","request_id":"pair","id":"02:11:22:33:44:55","pin":"123-45-678"})] {
+            let request=command["request_id"].as_str().unwrap().to_owned();
+            probe.client.publish("homecore/plugins/fixture-user/manage/cmd",rumqttc::QoS::AtLeastOnce,false,command.to_string()).await.unwrap();
+            let reply=tokio::time::timeout(Duration::from_secs(20),async {loop {let p=probe.messages.recv().await.unwrap();if p.topic.contains("manage/") && !p.topic.ends_with("/cmd") {if let Ok(v)=serde_json::from_slice::<serde_json::Value>(&p.payload) {if v["request_id"]==request {break v;}}}}}).await.unwrap();
+            assert_eq!(reply["status"],"ok");
+        }
+        assert_eq!(homecore_homekit::read_saved("02:11:22:33:44:55",&state_root).await.unwrap(),json!({"open":true,"battery_pct":69}));
+        task.abort();
+    }).await;
+}
