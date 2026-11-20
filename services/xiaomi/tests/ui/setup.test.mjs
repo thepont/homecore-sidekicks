@@ -103,3 +103,14 @@ test('region and sign-in controls have usable spacing without overflowing',async
     }
   } finally {await browser.close();}
 });
+
+test('reopening on another device resumes an active QR sign-in',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();await page.setContent('<main></main>');await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{const el=document.createElement('hc-xiaomi-setup');el.host={me:{can:()=>true},action:async()=>({ok:true,data:{status:'ok',setup_status:'waiting',qr_png:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}})};document.querySelector('main').append(el)});
+    await page.getByRole('img',{name:'Mi Home sign-in QR code'}).waitFor({timeout:2000});
+    assert.equal(await page.getByRole('button',{name:'Sign in with Mi Home'}).isDisabled(),true);
+    assert.equal(await page.getByText('Scan this code with Mi Home.',{exact:true}).count(),1);
+  } finally {await browser.close();}
+});

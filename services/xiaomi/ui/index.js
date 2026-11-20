@@ -14,6 +14,14 @@ class XiaomiSetup extends HTMLElement {
   async #restore(generation) {
     let result;try{result=await this.#host.action('sign_in_status');}catch{return;}
     if(generation!==this.#generation || !this.isConnected || !result?.ok)return;
+    const qr=result.data?.qr_png;
+    if(result.data?.setup_status==='waiting' && typeof qr==='string' && qr.length<=262144 && qr.startsWith('iVBORw0KGgo') && /^[A-Za-z0-9+/]+={0,2}$/.test(qr)) {
+      const image=document.createElement('img');image.alt='Mi Home sign-in QR code';image.src=`data:image/png;base64,${qr}`;
+      this.shadowRoot.querySelector('.qr').replaceChildren(image);
+      this.shadowRoot.querySelector('button').disabled=true;
+      this.shadowRoot.querySelector('.status').textContent='Scan this code with Mi Home.';
+      this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
+    }
     if(result.data?.setup_status==='gateway_saved') {
       this.shadowRoot.querySelector('button').hidden=true;
       this.shadowRoot.querySelector('.status').textContent='Gateway saved. Connection needs verification.';

@@ -7,7 +7,11 @@ pub struct Setup {
     provider: Arc<Provider>,
     store: Arc<Store>,
     region: String,
-    state: Arc<Mutex<&'static str>>,
+    state: Arc<Mutex<SetupState>>,
+}
+struct SetupState {
+    status: &'static str,
+    qr_png: Option<String>,
 }
 impl Setup {
     pub fn new(provider: Provider, store: Store, region: &str) -> Self {
@@ -20,11 +24,18 @@ impl Setup {
             provider: Arc::new(provider),
             store: Arc::new(store),
             region: region.to_owned(),
-            state: Arc::new(Mutex::new(state)),
+            state: Arc::new(Mutex::new(SetupState {
+                status: state,
+                qr_png: None,
+            })),
         }
     }
     pub async fn status(&self) -> &'static str {
-        *self.state.lock().await
+        self.state.lock().await.status
+    }
+    pub async fn snapshot(&self) -> (&'static str, Option<String>) {
+        let state = self.state.lock().await;
+        (state.status, state.qr_png.clone())
     }
     pub async fn begin(&self) -> Result<String, &'static str> {
         self.begin_with_region(&self.region).await
@@ -34,12 +45,13 @@ impl Setup {
             return Err("Invalid Xiaomi region");
         }
         let mut state = self.state.lock().await;
-        if *state == "waiting" {
+        if state.status == "waiting" {
             return Err("Sign-in already in progress");
         }
         let challenge = self.provider.begin().await?;
         let qr = challenge.qr_png.clone();
-        *state = "waiting";
+        state.status = "waiting";
+        state.qr_png = Some(qr.clone());
         let mut setup = self.clone();
         setup.region = region.to_owned();
         tokio::spawn(async move {
@@ -53,10 +65,12 @@ impl Setup {
                 gateways[0].save_configuration(&setup.store)
             })
             .await;
-            *setup.state.lock().await = match result {
+            let mut state = setup.state.lock().await;
+            state.status = match result {
                 Ok(Ok(())) => "gateway_saved",
                 _ => "error",
             };
+            state.qr_png = None;
         });
         Ok(qr)
     }

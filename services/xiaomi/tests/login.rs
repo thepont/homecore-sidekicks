@@ -134,3 +134,44 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn pending_qr_can_be_retrieved_from_another_setup_page() {
+    use homecore_xiaomi::{actions, setup::Setup, store::Store};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/longPolling/loginUrl",
+            get(|State(base): State<String>| async move {
+                Json(json!({"qr":format!("{base}/qr"),"lp":format!("{base}/poll"),"timeout":120}))
+            }),
+        )
+        .route(
+            "/qr",
+            get(|| async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "image/png")
+                    .body(Body::from(vec![137, 80, 78, 71, 13, 10, 26, 10]))
+                    .unwrap()
+            }),
+        )
+        .route(
+            "/poll",
+            get(|| async {
+                std::future::pending::<()>().await;
+                ""
+            }),
+        )
+        .with_state(base.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let root = std::env::temp_dir().join(format!("xiaomi-pending-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let setup = Setup::new(Provider::new(&base).unwrap(), Store::new(&root), "cn");
+    let begun = actions::dispatch(&setup, "begin_sign_in").await.unwrap();
+    let resumed = actions::dispatch(&setup, "sign_in_status").await.unwrap();
+    assert_eq!(resumed["setup_status"], "waiting");
+    assert_eq!(resumed["qr_png"], begun["qr_png"]);
+    server.abort();
+    std::fs::remove_dir(root).unwrap();
+}
