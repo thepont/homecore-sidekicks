@@ -1,0 +1,5 @@
+FROM scratch
+COPY services/mitsubishi/target/container-runtime/ /
+COPY services/mitsubishi/target/release/mitsubishi-bridge /mitsubishi-bridge
+USER 65532:65532
+ENTRYPOINT ["/mitsubishi-bridge"]
