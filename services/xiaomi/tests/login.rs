@@ -79,5 +79,14 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     assert_eq!(gateways[0].name, "Gateway");
     assert_eq!(gateways[0].model, "lumi.gateway.mcn001");
     assert_eq!(gateways[0].address, "192.168.10.2");
+    let root = std::env::temp_dir().join(format!("xiaomi-discovered-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let store = homecore_xiaomi::store::Store::new(&root);
+    gateways[0].save_configuration(&store).unwrap();
+    let saved = store.load_gateway().unwrap().unwrap();
+    assert_eq!(saved.address(), "192.168.10.2");
+    assert_eq!(saved.model(), "lumi.gateway.mcn001");
+    assert_eq!(saved.token(), "0123456789abcdef0123456789abcdef");
+    std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }

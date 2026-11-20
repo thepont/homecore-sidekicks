@@ -214,6 +214,10 @@ pub struct Gateway {
     token: String,
 }
 impl Gateway {
+    pub fn save_configuration(&self, store: &crate::store::Store) -> Result<(), &'static str> {
+        let config = crate::store::GatewayConfig::new(&self.address, &self.model, &self.token)?;
+        store.save_gateway(&config)
+    }
     pub fn save_token(&self, store: &crate::store::Store) -> Result<(), &'static str> {
         store.save(&self.token)
     }
