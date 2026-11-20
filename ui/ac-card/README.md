@@ -41,7 +41,7 @@ through `host.command` and keeps the reported display until the device echoes
 the requested value. Drag a target marker to preview a temperature and release
 to send it. The dial and step buttons share the same temperature limits. Use
 the arrow keys to adjust a focused marker and Escape to cancel a drag.
-In Auto, the heating and cooling markers move separately.
+On a touchscreen, drag along the arc. The closest target moves in Auto.
 
 Adapters must enforce command validity and interlocks themselves because
 commands may also come from outside the card.

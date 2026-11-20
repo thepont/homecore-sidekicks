@@ -141,6 +141,10 @@ const style = `
   .diagnostics dl{display:grid;grid-template-columns:1fr auto;gap:6px 10px;text-align:left}
   .diagnostics dd{text-align:right}
   @container (max-width:225px){.card{padding:9px}}
+  @media (any-pointer:coarse) {
+    .dial:has(.target-dot[role="slider"]){width:min(152px,100%)}
+    .target-dot[role="slider"]{r:8}
+  }
   @media(forced-colors:active){.airflow-field select{appearance:auto;background:var(--ac-surface);padding-inline:3px}}
 `;
 
@@ -318,7 +322,8 @@ function dialPointer(svg, event) {
   const x = point.x - dialGeometry.x;
   const y = point.y - dialGeometry.y;
   const degrees = Math.atan2(y, x) * 180 / Math.PI;
-  return { x: point.x, y: point.y, radius: Math.hypot(x, y), angle: (degrees - dialGeometry.start + 720) % 360 };
+  return { x: point.x, y: point.y, radius: Math.hypot(x, y),
+    angle: (degrees - dialGeometry.start + 720) % 360, pixelsPerUnit: Math.hypot(screen.a, screen.b) };
 }
 
 class AcCard extends HTMLElement {
@@ -533,7 +538,8 @@ class AcCard extends HTMLElement {
 
   #beginDrag(event) {
     const state = this.#dialState;
-    if (!state || this.#drag || this.#pending || !event.isPrimary || event.button !== 0) return;
+    const touch = event.pointerType === 'touch';
+    if (!state || this.#drag || this.#pending || !event.isPrimary || (!touch && event.button !== 0)) return;
     const point = dialPointer(this.#view.svg, event);
     if (!point) return;
     const handles = [
@@ -550,9 +556,14 @@ class AcCard extends HTMLElement {
       if (!b.control) return a;
       return !a?.control || b.distance < a.distance ? b : a;
     }, undefined);
-    if (!nearest?.control || nearest.distance > 34) return;
+    if (!nearest?.control) return;
+    // A touch can grab the arc in a 44 px band, even away from the target dot.
+    const inGrabArea = touch
+      ? point.angle <= dialGeometry.sweep && Math.abs(point.radius - dialGeometry.radius) * point.pixelsPerUnit <= 22
+      : nearest.distance <= 34;
+    if (!inGrabArea) return;
     event.preventDefault();
-    nearest.marker.focus({ preventScroll: true });
+    if (!touch) nearest.marker.focus({ preventScroll: true });
     const { control, slot } = nearest;
     this.#drag = { pointer: event.pointerId, slot, control, value: control.value,
       startX: event.clientX, startY: event.clientY, moved: false };

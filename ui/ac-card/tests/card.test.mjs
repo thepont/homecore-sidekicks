@@ -15,9 +15,12 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-beforeEach(async () => {
+beforeEach(() => preparePage(page));
+
+async function preparePage(page) {
   await page.goto('about:blank');
-  await page.setContent('<main style="max-width:420px;margin:auto"></main>');
+  await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<main style="max-width:420px;margin:auto"></main>');
   await page.addScriptTag({ type: 'module', content: await readFile(new URL('index.js', ui), 'utf8') });
   await page.evaluate(() => {
     window.mountAc = ({ writable = false, allowed = writable, temperatureUnit = '°F', mode = 'auto', setpointStep = 0.5 } = {}) => {
@@ -91,7 +94,7 @@ beforeEach(async () => {
         subscriptions: () => [listeners.size, units.size] });
     };
   });
-});
+}
 
 const mount = config => page.evaluate(config => mountAc(config), config);
 const byText = text => page.getByText(text, { exact: true });
@@ -208,8 +211,8 @@ test('an accepted command without a matching report expires and leaves the old t
   await page.clock.resume();
 });
 
-async function pointOnDial(value) {
-  return page.locator('.dial svg').evaluate((svg, value) => {
+async function pointOnDial(value, targetPage = page) {
+  return targetPage.locator('.dial svg').evaluate((svg, value) => {
     const angle = (135 + 270 * (value - 16) / 14.5) * Math.PI / 180;
     const point = new DOMPoint(110 + 69 * Math.cos(angle), 88 + 69 * Math.sin(angle));
     const position = point.matrixTransform(svg.getScreenCTM());
@@ -296,5 +299,48 @@ test('dial accepts keyboard and touch input using the same temperature limits', 
     assert.deepEqual((await page.evaluate(() => sent)).at(-1), ['ac_1', { setpoint: 26 }]);
   } finally {
     await cdp.detach();
+  }
+});
+
+test('a finger can start away from the dot on a narrow, scrollable mobile card', async () => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true
+  });
+  try {
+    const phone = await context.newPage();
+    phone.setDefaultTimeout(2500);
+    await preparePage(phone);
+    await phone.evaluate(() => {
+      document.body.style.minHeight = '200vh';
+      document.querySelector('main').style.width = '174px';
+      mountAc({ writable: true, mode: 'cool', setpointStep: 1, temperatureUnit: '°C' });
+    });
+    await phone.getByRole('slider', { name: 'Target temperature' }).waitFor();
+    assert(await phone.evaluate(() => matchMedia('(any-pointer: coarse)').matches));
+    const start = await pointOnDial(24.8, phone);
+    const end = await pointOnDial(27.1, phone);
+    const cdp = await context.newCDPSession(phone);
+    const drag = async () => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{
+          x: start.x + (end.x - start.x) * fraction,
+          y: start.y + (end.y - start.y) * fraction
+        }] });
+      }
+    };
+    await drag();
+    await phone.getByText('27 °C', { exact: true }).waitFor();
+    assert.deepEqual(await phone.evaluate(() => sent), []);
+    assert.equal(await phone.evaluate(() => scrollY), 0);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    await phone.getByText('22 °C', { exact: true }).waitFor();
+    assert.deepEqual(await phone.evaluate(() => sent), []);
+
+    await drag();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    assert.deepEqual(await phone.evaluate(() => sent), [['ac_1', { setpoint: 27 }]]);
+  } finally {
+    await context.close();
   }
 });
