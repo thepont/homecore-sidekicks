@@ -9,7 +9,7 @@
 //! the bundle a new build address. No file handle or asset-body cache is kept.
 
 use base64::Engine;
-use ring::digest::{Context, SHA256};
+use ring::digest::{Context, Digest, SHA256};
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -89,30 +89,13 @@ impl UiAssets {
         let mut scan = |name: &'static str| -> Result<Asset, UiError> {
             let mut f = open_asset(&dir, name)?;
             let size = f.metadata()?.len();
-            let mut hash = Context::new(&SHA256);
             build.update(name.as_bytes());
             build.update(&[0]);
-            let mut buffer = [0u8; 8192];
-            let mut read = 0u64;
-            loop {
-                let n = f.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                read += n as u64;
-                if read > size {
-                    return Err(UiError);
-                }
-                hash.update(&buffer[..n]);
-                build.update(&buffer[..n]);
-            }
-            if read != size {
-                return Err(UiError);
-            }
+            let hash = scan_asset(&mut f, size, |_, chunk| build.update(chunk))?;
             Ok(Asset {
                 name,
                 size,
-                digest: hash.finish().as_ref().try_into().unwrap(),
+                digest: hash.as_ref().try_into().unwrap(),
             })
         };
         let files = [scan("index.js")?, scan("manifest.json")?];
@@ -150,33 +133,48 @@ impl UiAssets {
         }
         let end = (offset + max as u64).min(asset.size);
         let mut bytes = Vec::with_capacity((end - offset) as usize);
-        let mut hash = Context::new(&SHA256);
-        let mut buffer = [0u8; 8192];
-        let mut position = 0u64;
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
-            let next = position + n as u64;
-            if next > asset.size {
-                return Err(UiError);
-            }
-            hash.update(&buffer[..n]);
+        let hash = scan_asset(&mut file, asset.size, |position, chunk| {
             let start = position.max(offset);
-            let stop = next.min(end);
+            let stop = (position + chunk.len() as u64).min(end);
             if stop > start {
                 bytes.extend_from_slice(
-                    &buffer[(start - position) as usize..(stop - position) as usize],
+                    &chunk[(start - position) as usize..(stop - position) as usize],
                 );
             }
-            position = next;
-        }
-        if position != asset.size || hash.finish().as_ref() != asset.digest {
+        })?;
+        if hash.as_ref() != asset.digest {
             return Err(UiError);
         }
         Ok((bytes, end == asset.size))
     }
+}
+
+fn scan_asset(
+    file: &mut File,
+    size: u64,
+    mut visit: impl FnMut(u64, &[u8]),
+) -> Result<Digest, UiError> {
+    let mut hash = Context::new(&SHA256);
+    let mut buffer = [0u8; 8192];
+    let mut position = 0;
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        let next = position + n as u64;
+        if next > size {
+            return Err(UiError);
+        }
+        let chunk = &buffer[..n];
+        hash.update(chunk);
+        visit(position, chunk);
+        position = next;
+    }
+    if position != size {
+        return Err(UiError);
+    }
+    Ok(hash.finish())
 }
 
 fn open_asset(dir: &Path, name: &str) -> Result<File, UiError> {
