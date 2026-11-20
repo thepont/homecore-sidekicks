@@ -256,7 +256,7 @@ async fn two_controllers_publish_independent_read_only_climate_devices() {
         assert_eq!(registration["device_id"], format!("mitsubishi_{id}"));
         assert_eq!(registration["plugin_id"], format!("plugin.mitsubishi.{id}"));
         assert_eq!(registration["name"], name);
-        assert_eq!(registration["device_type"], "sensor");
+        assert_eq!(registration["device_type"], "thermostat");
         let schema = retained(
             broker.port,
             &format!("homecore/devices/mitsubishi_{id}/schema"),

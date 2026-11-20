@@ -112,7 +112,7 @@ impl Publisher {
     ) -> Result<(), &'static str> {
         self.schema = None;
         self.send(format!("homecore/plugins/{}/register", self.plugin), true, json!({
-            "device_id":self.device,"plugin_id":self.plugin,"name":unit.name,"device_type":"sensor"
+            "device_id":self.device,"plugin_id":self.plugin,"name":unit.name,"device_type":"thermostat"
         }).to_string()).await?;
         self.send(
             format!("homecore/plugins/{}/capabilities", self.plugin),

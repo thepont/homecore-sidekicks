@@ -151,7 +151,7 @@ For every configured unit, the bridge keeps one WebSocket connection and one
 MQTT connection. The firmware automatically sends `deviceInfo` and `state`
 messages after connection, then pushes state regularly. The adapter validates
 each message at this boundary and projects explicitly allowed fields into the
-homeCore sensor schema.
+homeCore thermostat schema.
 
 A latest-value channel connects the source reader to the publisher. It holds
 the newest observation rather than queuing a history of every firmware update.
@@ -189,7 +189,7 @@ with the same IDs against the same broker: their MQTT client identities collide.
 
 | Topic suffix | Prefix | Content |
 | --- | --- | --- |
-| `register` | `homecore/plugins/plugin.mitsubishi.living_room/` | Device name, IDs and sensor type; retained. |
+| `register` | `homecore/plugins/plugin.mitsubishi.living_room/` | Device name, IDs and thermostat type; retained. |
 | `capabilities` | Same plugin prefix | Empty action list and the AC card descriptor when assets are available; retained. |
 | `manage/cmd`, `manage/response` | Same plugin prefix | HomeCore requests and replies for the shared card bundle. |
 | `heartbeat` | Same plugin prefix | Adapter version and uptime, every 30 seconds. |
@@ -198,7 +198,7 @@ with the same IDs against the same broker: their MQTT client identities collide.
 | `state` | Same device prefix | Latest permitted telemetry; retained. |
 | `availability` | Same device prefix | `online` or `offline`; retained. |
 
-The bridge uses each unit’s existing HomeCore sensor identity. The shared
+The bridge uses each unit’s existing HomeCore device identity. The shared
 card supplies controls on standard and large cards on Home and room pages.
 Tap **Open controls** on the room temperature reading to use the larger dial
 in the HomeCore device sheet.
@@ -310,6 +310,7 @@ from compressor frequency or runtime without another measurement source.
 ```sh
 cargo test --locked --manifest-path services/mitsubishi/Cargo.toml
 cargo test --locked --manifest-path services/mitsubishi/Cargo.toml --test bridge -- --ignored --test-threads=1
+cargo test --locked --manifest-path services/mitsubishi/Cargo.toml --test registration_core -- --ignored --test-threads=1
 cargo clippy --locked --manifest-path services/mitsubishi/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path services/mitsubishi/Cargo.toml --check
 ```
@@ -319,6 +320,10 @@ container bound to loopback and fake WebSocket controllers. They require a
 working Docker daemon and the pinned fixture image. Live controller checks
 must use a separate temporary broker and a deadline, with no application
 commands sent to the controller.
+
+The registration test also runs the pinned homeCore image in an isolated
+network and checks that changing an existing sensor to a thermostat preserves
+its device identity and room.
 
 ## Source contract
 
