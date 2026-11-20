@@ -192,6 +192,8 @@ impl Probe {
         );
         options.set_credentials("fixture-user", "fixture-password");
         options.set_keep_alive(Duration::from_secs(5));
+        // homeCore's UI protocol returns 128 KiB file chunks encoded as base64.
+        options.set_max_packet_size(256 * 1024, 256 * 1024);
         let (client, mut events) = AsyncClient::new(options, 16);
         let (tx, messages) = tokio::sync::mpsc::channel(32);
         let ready = Arc::new(tokio::sync::Notify::new());

@@ -36,6 +36,9 @@ fn mqtt_options(host: String, port: u16, username: &str, password: &str) -> Mqtt
     let mut options = MqttOptions::new("plugin.teslemetry-powerwall", host, port);
     options.set_credentials(username, password);
     options.set_keep_alive(Duration::from_secs(30));
+    // UI replies carry at most 128 KiB as base64; bound unacknowledged copies.
+    options.set_max_packet_size(8 * 1024, 256 * 1024);
+    options.set_inflight(2);
     options.set_last_will(LastWill::new(
         AVAILABILITY_TOPIC,
         "offline",
@@ -64,14 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let username = required("MQTT_USERNAME")?;
     let password = secret("MQTT_PASSWORD_FILE")?;
     let options = mqtt_options(mqtt_host.clone(), mqtt_port, &username, &password);
-    let (mqtt, mut eventloop) = AsyncClient::new(options, 16);
-    tokio::spawn(async move {
-        loop {
-            if eventloop.poll().await.is_err() {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-    });
+    let (mqtt, eventloop) = AsyncClient::new(options, 16);
+    tokio::spawn(homecore_teslemetry::plugin::run(mqtt.clone(), eventloop));
     register(&mqtt).await?;
     let (totals_tx, totals_rx) = tokio::sync::watch::channel(serde_json::Map::new());
     tokio::spawn(homecore_teslemetry::totals::listen(

@@ -1,0 +1,12 @@
+{
+  "host_api": 1,
+  "entry": "index.js",
+  "slots": [
+    {
+      "slot": "device.card",
+      "element": "hc-teslemetry-card",
+      "device_types": ["sensor"],
+      "forms": ["standard", "large", "compact"]
+    }
+  ]
+}
