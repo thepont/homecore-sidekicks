@@ -15,6 +15,23 @@ enum Command {
     Fan(&'static str),
     Swing(bool),
 }
+impl Command {
+    fn execute(self, client: &mut Client, off: bool) -> Result<(), &'static str> {
+        match self {
+            Self::Temperature(value) => client.set_temperature(value),
+            Self::Power(value) => client.set_power(value),
+            Self::Mode(value) => {
+                if off {
+                    client.set_power(true).and_then(|_| client.set_mode(value))
+                } else {
+                    client.set_mode(value)
+                }
+            }
+            Self::Fan(value) => client.set_fan(value),
+            Self::Swing(value) => client.set_swing(value),
+        }
+    }
+}
 fn command(payload: &[u8]) -> Option<Command> {
     let serde_json::Value::Object(values) = serde_json::from_slice(payload).ok()? else {
         return None;
@@ -175,19 +192,7 @@ async fn main() -> Result<(), &'static str> {
                 }
                 match command_rx.recv_timeout(Duration::from_secs(5)) {
                     Ok(command) => {
-                        let result = match command {
-                            Command::Temperature(value) => client.set_temperature(value),
-                            Command::Power(value) => client.set_power(value),
-                            Command::Mode(value) => {
-                                if off {
-                                    client.set_power(true).and_then(|_| client.set_mode(value))
-                                } else {
-                                    client.set_mode(value)
-                                }
-                            }
-                            Command::Fan(value) => client.set_fan(value),
-                            Command::Swing(value) => client.set_swing(value),
-                        };
+                        let result = command.execute(&mut client, off);
                         if result.is_err() {
                             let _ = tx.send(None);
                             break;
