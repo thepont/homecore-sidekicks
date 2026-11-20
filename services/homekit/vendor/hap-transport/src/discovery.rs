@@ -178,7 +178,10 @@ pub async fn discover_stream(
 /// Convert an mDNS address into a connection endpoint.
 #[doc(hidden)]
 pub fn socket_address(ip: &mdns_sd::ScopedIp, port: u16) -> SocketAddr {
-    SocketAddr::new(ip.to_ip_addr(), port)
+    match ip {
+        mdns_sd::ScopedIp::V6(v6) => SocketAddr::V6(std::net::SocketAddrV6::new(*v6.addr(), port, 0, v6.scope_id().index)),
+        _ => SocketAddr::new(ip.to_ip_addr(), port),
+    }
 }
 
 /// Derive the human-readable name from an mDNS fullname like
