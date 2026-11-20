@@ -64,6 +64,12 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
       .route("/qr",get(||async {Response::builder().header(header::CONTENT_TYPE,"image/png").body(Body::from(vec![137,80,78,71,13,10,26,10])).unwrap()}))
       .route("/poll",get(|State(base):State<String>|async move {Json(json!({"userId":"123","ssecurity":"Zml4dHVyZS1zZWN1cml0eSE=","location":format!("{base}/token")}))}))
       .route("/token",get(||async {Response::builder().header(header::SET_COOKIE,"serviceToken=fixture-session; Path=/; HttpOnly").body(Body::empty()).unwrap()}))
+      .route("/app/home/device_list",axum::routing::post(|RawQuery(query):RawQuery|async move {
+          let parsed=reqwest::Url::parse(&format!("http://localhost/?{}",query.unwrap())).unwrap();let nonce=parsed.query_pairs().find(|(k,_)|k=="_nonce").unwrap().1.into_owned();
+          let mut material=STANDARD.decode("Zml4dHVyZS1zZWN1cml0eSE=").unwrap();material.extend(STANDARD.decode(nonce).unwrap());let hash=digest(&SHA256,&material);let key:[u8;32]=hash.as_ref().try_into().unwrap();
+          let body=json!({"result":{"list":[{"did":"123456789","token":"fedcba9876543210fedcba9876543210","isOnline":true}]}});
+          STANDARD.encode(homecore_xiaomi::cloud::legacy_encrypt(&key,body.to_string().as_bytes()))
+      }))
       .route("/app/v2/{*path}",axum::routing::post(|axum::extract::Path(path):axum::extract::Path<String>,RawQuery(query):RawQuery|async move {
           let parsed=reqwest::Url::parse(&format!("http://localhost/?{}",query.unwrap())).unwrap();let nonce=parsed.query_pairs().find(|(k,_)|k=="_nonce").unwrap().1.into_owned();
           let mut material=STANDARD.decode("Zml4dHVyZS1zZWN1cml0eSE=").unwrap();material.extend(STANDARD.decode(nonce).unwrap());let hash=digest(&SHA256,&material);let key:[u8;32]=hash.as_ref().try_into().unwrap();
@@ -87,7 +93,12 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     assert_eq!(saved.address(), "192.168.10.2");
     assert_eq!(saved.model(), "lumi.gateway.mcn001");
     assert_eq!(saved.device_id(), Some("123456789"));
+    assert_eq!(
+        saved.alternate_token(),
+        Some("fedcba9876543210fedcba9876543210")
+    );
     assert_eq!(saved.token(), "0123456789abcdef0123456789abcdef");
+    assert_eq!(saved.cloud_comparison(), Some("different"));
     std::fs::remove_dir_all(&root).unwrap();
     std::fs::create_dir(&root).unwrap();
     let setup = homecore_xiaomi::setup::Setup::new(

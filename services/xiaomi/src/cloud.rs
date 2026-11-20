@@ -25,7 +25,10 @@ pub fn sign_request(
 ) -> Result<SignedRequest, &'static str> {
     if !matches!(
         path,
-        "/v2/homeroom/gethome" | "/v2/home/home_device_list" | "/v2/user/get_device_cnt"
+        "/v2/homeroom/gethome"
+            | "/v2/home/home_device_list"
+            | "/v2/user/get_device_cnt"
+            | "/home/device_list"
     ) || data.len() > 8192
     {
         return Err("Invalid cloud request");

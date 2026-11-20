@@ -214,6 +214,8 @@ pub struct Gateway {
     pub address: String,
     device_id: Option<String>,
     token: String,
+    alternate_token: Option<String>,
+    cloud_comparison: &'static str,
 }
 impl Gateway {
     pub fn save_configuration(&self, store: &crate::store::Store) -> Result<(), &'static str> {
@@ -221,6 +223,10 @@ impl Gateway {
         if let Some(id) = &self.device_id {
             config = config.with_device_id(id)?;
         }
+        if let Some(token) = &self.alternate_token {
+            config = config.with_alternate_token(token)?;
+        }
+        config = config.with_cloud_comparison(self.cloud_comparison)?;
         store.save_gateway(&config)
     }
     pub fn save_token(&self, store: &crate::store::Store) -> Result<(), &'static str> {
@@ -378,9 +384,46 @@ impl Provider {
                     address: address.to_string(),
                     device_id: item.get("did").and_then(Value::as_str).map(str::to_owned),
                     token: token.to_owned(),
+                    alternate_token: None,
+                    cloud_comparison: "unavailable",
                 });
                 if gateways.len() > 64 {
                     return Err("Too many gateways");
+                }
+            }
+        }
+        if !gateways.is_empty() {
+            let payload = serde_json::json!({"getVirtualModel":true,"getHuamiDevices":1,"get_split_device":false,"support_smart_home":true});
+            if let Ok(result) = self
+                .cloud_call(auth, region, "/home/device_list", payload)
+                .await
+            {
+                if let Some(devices) = result
+                    .pointer("/result/list")
+                    .and_then(Value::as_array)
+                    .filter(|xs| xs.len() <= 4096)
+                {
+                    for gateway in &mut gateways {
+                        gateway.cloud_comparison = "not_found";
+                        if let Some(item) = devices.iter().find(|item| {
+                            item.get("did").and_then(Value::as_str) == gateway.device_id.as_deref()
+                                && gateway.device_id.is_some()
+                        }) {
+                            gateway.cloud_comparison = "unavailable";
+                            if let Some(token) =
+                                item.get("token").and_then(Value::as_str).filter(|s| {
+                                    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
+                                })
+                            {
+                                if !token.eq_ignore_ascii_case(&gateway.token) {
+                                    gateway.alternate_token = Some(token.to_owned());
+                                    gateway.cloud_comparison = "different";
+                                } else {
+                                    gateway.cloud_comparison = "same";
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

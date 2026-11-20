@@ -94,6 +94,8 @@ pub struct GatewayConfig {
     model: String,
     token: String,
     device_id: Option<String>,
+    alternate_token: Option<String>,
+    cloud_comparison: Option<String>,
 }
 impl GatewayConfig {
     pub fn new(address: &str, model: &str, token: &str) -> Result<Self, &'static str> {
@@ -113,6 +115,8 @@ impl GatewayConfig {
             model: model.into(),
             token: token.into(),
             device_id: None,
+            alternate_token: None,
+            cloud_comparison: None,
         })
     }
     pub fn address(&self) -> &str {
@@ -135,6 +139,26 @@ impl GatewayConfig {
     }
     pub fn device_id(&self) -> Option<&str> {
         self.device_id.as_deref()
+    }
+    pub fn with_alternate_token(mut self, token: &str) -> Result<Self, &'static str> {
+        if !valid(token) {
+            return Err("Invalid gateway token");
+        }
+        self.alternate_token = Some(token.to_owned());
+        Ok(self)
+    }
+    pub fn with_cloud_comparison(mut self, status: &str) -> Result<Self, &'static str> {
+        if !matches!(status, "same" | "different" | "not_found" | "unavailable") {
+            return Err("Invalid discovery status");
+        }
+        self.cloud_comparison = Some(status.to_owned());
+        Ok(self)
+    }
+    pub fn cloud_comparison(&self) -> Option<&str> {
+        self.cloud_comparison.as_deref()
+    }
+    pub fn alternate_token(&self) -> Option<&str> {
+        self.alternate_token.as_deref()
     }
     pub fn token(&self) -> &str {
         &self.token
@@ -168,7 +192,7 @@ impl Store {
             .custom_flags(libc::O_NOFOLLOW)
             .open(&tmp.0)
             .map_err(|_| "Cannot create secret")?;
-        let data = serde_json::json!({"address":config.address, "model":config.model, "token":config.token, "device_id":config.device_id});
+        let data = serde_json::json!({"address":config.address, "model":config.model, "token":config.token, "device_id":config.device_id, "alternate_token":config.alternate_token, "cloud_comparison":config.cloud_comparison});
         serde_json::to_writer(&mut file, &data).map_err(|_| "Cannot write secret")?;
         file.sync_all().map_err(|_| "Cannot write secret")?;
         fs::rename(&tmp.0, destination).map_err(|_| "Cannot save secret")?;
@@ -207,6 +231,20 @@ impl Store {
             None | Some(serde_json::Value::Null) => {}
             Some(serde_json::Value::String(id)) => config = config.with_device_id(id)?,
             Some(_) => return Err("Invalid gateway identity"),
+        }
+        match value.get("alternate_token") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(token)) => {
+                config = config.with_alternate_token(token)?
+            }
+            Some(_) => return Err("Invalid gateway token"),
+        }
+        match value.get("cloud_comparison") {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(status)) => {
+                config = config.with_cloud_comparison(status)?
+            }
+            Some(_) => return Err("Invalid discovery status"),
         }
         Ok(Some(config))
     }
