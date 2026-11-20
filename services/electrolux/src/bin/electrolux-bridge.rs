@@ -19,10 +19,22 @@ fn command(payload: &[u8]) -> Option<Command> {
     let serde_json::Value::Object(values) = serde_json::from_slice(payload).ok()? else {
         return None;
     };
-    if values.len() != 1 {
+    if values.get("_hc").is_some_and(|v| !v.is_object())
+        || values.get("correlation_id").is_some_and(|v| {
+            !v.as_str().is_some_and(|s| {
+                !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_graphic())
+            })
+        })
+    {
         return None;
     }
-    let (key, value) = values.iter().next()?;
+    let mut controls = values
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "_hc" | "correlation_id"));
+    let (key, value) = controls.next()?;
+    if controls.next().is_some() {
+        return None;
+    }
     match key.as_str() {
         "setpoint" => value
             .as_f64()
