@@ -1,3 +1,10 @@
+const MAX_QR_BASE64_LENGTH = 262144;
+const SIGN_IN_POLL_INTERVAL_MS = 1500;
+
+function hasSetupStatus(result, status) {
+  return result?.ok && result.data?.setup_status === status;
+}
+
 class XiaomiSetup extends HTMLElement {
   #host; #generation=0; #timer;
   constructor() { super(); this.attachShadow({mode:'open'}); }
@@ -27,7 +34,7 @@ class XiaomiSetup extends HTMLElement {
     if(result.data?.setup_status==='devices_found') this.#showDevices(result.data.devices);
   }
   #qrImage(qr) {
-    if(typeof qr!=='string' || qr.length>262144 || !qr.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(qr)) return null;
+    if(typeof qr!=='string' || qr.length>MAX_QR_BASE64_LENGTH || !qr.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(qr)) return null;
     const image=document.createElement('img');
     image.alt='Mi Home sign-in QR code';
     image.src=`data:image/png;base64,${qr}`;
@@ -38,7 +45,7 @@ class XiaomiSetup extends HTMLElement {
     const button=this.shadowRoot.querySelector('button');
     if(!button.disabled) button.disabled=true;
     this.shadowRoot.querySelector('.status').textContent='Scan this code with Mi Home.';
-    this.#timer=setTimeout(()=>void this.#check(generation),1500);
+    this.#timer=setTimeout(()=>void this.#check(generation),SIGN_IN_POLL_INTERVAL_MS);
   }
   #showAccess(data) {
     const devices=Array.isArray(data?.known_devices) ? data.known_devices.filter(device=>
@@ -174,18 +181,18 @@ class XiaomiSetup extends HTMLElement {
     if(generation!==this.#generation || !this.isConnected)return;
     if(result?.ok) this.#showAccess(result.data);
     const status=this.shadowRoot.querySelector('.status'), button=this.shadowRoot.querySelector('button');
-    if(result?.ok && result.data?.setup_status==='devices_found') {
+    if(hasSetupStatus(result, 'devices_found')) {
       this.#showDevices(result.data.devices);
       return;
     }
-    if(result?.ok && result.data?.setup_status==='gateway_saved') {
+    if(hasSetupStatus(result, 'gateway_saved')) {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;button.textContent='Sign in again';status.textContent='Gateway saved. Connection needs verification.';return;
     }
-    if(result?.ok && result.data?.setup_status==='connected') {
+    if(hasSetupStatus(result, 'connected')) {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
     }
-    if(result?.ok && result.data?.setup_status==='waiting') {
-      this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
+    if(hasSetupStatus(result, 'waiting')) {
+      this.#timer=setTimeout(()=>void this.#check(generation),SIGN_IN_POLL_INTERVAL_MS);return;
     }
     this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;
     status.textContent='Sign-in could not be completed. Try again.';

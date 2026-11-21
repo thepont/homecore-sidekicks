@@ -1,4 +1,7 @@
 // homeCore plugin UI host interface v1. The browser owns rendering and live data.
+const WATTS_PER_KILOWATT = 1000;
+const WATT_HOURS_PER_KILOWATT_HOUR = 1000;
+const MAX_HISTORY_POINTS = 1000;
 const powerwallStyle = `
   :host { display:block; min-width:0; container-type:inline-size; color:var(--ink,#20242b); font-family:var(--font,system-ui,sans-serif); }
   * { box-sizing:border-box; }
@@ -79,6 +82,21 @@ const powerwallConnections = [
   { key: 'battery', field: 'battery_power_w', label: 'Battery', positive: 'Discharging', negative: 'Charging',
     paths: ['M170 222V164', 'M170 164V222'] }
 ];
+
+function tariffCurrency(attributes) {
+  const currency = attributes?.tariff_currency;
+  return typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
+    ? currency.toUpperCase() : undefined;
+}
+
+function tariffPeriodLabel(price, period) {
+  return price !== undefined && typeof period === 'string'
+    ? period.replaceAll('_', ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '';
+}
+
+function validTariffPrice(raw, active) {
+  return active && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
 
 class TeslemetryCard extends HTMLElement {
   #host;
@@ -226,7 +244,7 @@ class TeslemetryCard extends HTMLElement {
         .some(suffix => Object.hasOwn(attributes ?? {}, prefix + suffix))) continue;
       const raw = attributes?.[`${prefix}power_w`];
       const watts = available && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
-      const power = this.#format(watts === undefined ? undefined : watts / 1000, 'kW');
+      const power = this.#format(watts === undefined ? undefined : watts / WATTS_PER_KILOWATT, 'kW');
       const state = !available ? 'Unavailable' : watts === undefined ? 'No reading'
         : watts === 0 ? 'Idle' : watts > 0 ? 'Drawing' : 'Reverse flow';
       const name = `Charger ${index}`;
@@ -251,19 +269,16 @@ class TeslemetryCard extends HTMLElement {
 
   #renderTariffs(attributes, available) {
     const active = available && attributes?.tariff_available === true;
-    const rawCurrency = attributes?.tariff_currency;
-    const currency = typeof rawCurrency === 'string' && /^[A-Za-z]{3}$/.test(rawCurrency)
-      ? rawCurrency.toUpperCase() : undefined;
+    const currency = tariffCurrency(attributes);
     const descriptions = [];
     const missing = [];
     for (const tariff of this.#view.tariffs) {
       const raw = attributes?.[`tariff_${tariff.side}_price_per_kwh`];
-      const price = active && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+      const price = validTariffPrice(raw, active);
       // Rates are already currency units/kWh. Preserve source precision, including zero and negatives.
       tariff.rate.textContent = price === undefined ? '—' : `${price} ${currency ?? ''}/kWh`;
       const period = attributes?.[`tariff_${tariff.side}_period`];
-      tariff.period.textContent = price !== undefined && typeof period === 'string'
-        ? period.replaceAll('_', ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '';
+      tariff.period.textContent = tariffPeriodLabel(price, period);
       if (price === undefined) missing.push(tariff.side === 'buy' ? 'Buy' : 'Sell');
       descriptions.push(`Tariff ${tariff.side}: ${tariff.rate.textContent} ${tariff.period.textContent}.`);
     }
@@ -278,7 +293,7 @@ class TeslemetryCard extends HTMLElement {
   }
 
   #renderConnection(node, watts) {
-    const magnitude = watts === undefined ? undefined : Math.abs(watts) / 1000;
+    const magnitude = watts === undefined ? undefined : Math.abs(watts) / WATTS_PER_KILOWATT;
     const kw = magnitude === undefined ? undefined : Number(magnitude.toFixed(magnitude < 0.1 ? 3 : 2));
     const power = this.#format(kw, 'kW');
     const direction = watts === undefined ? 'No reading'
@@ -333,18 +348,21 @@ class TeslemetryCard extends HTMLElement {
 customElements.define('hc-teslemetry-card', TeslemetryCard);
 
 // Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
-async function readTariffPeriods(host) {
+async function readHistoryOrEmpty(host, field) {
   try {
-    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit:1000});
-    return result?.ok && Array.isArray(result.data) ? result.data.slice(0,1000) : [];
+    const result = await host.devices.history('teslemetry_powerwall', field, {limit: MAX_HISTORY_POINTS});
+    return result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : [];
   } catch { return []; }
+}
+function readTariffPeriods(host) {
+  return readHistoryOrEmpty(host, 'tariff_buy_period');
 }
 function renderTariffBands(svg, records, points) {
   const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
   if (end <= start) return;
-  const periods = records.filter(p => typeof p?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(p.value) && Number.isFinite(Date.parse(p.at)))
-    .sort((a,b) => Date.parse(a.at) - Date.parse(b.at))
-    .filter((p, i, all) => i === 0 || p.value !== all[i - 1].value);
+  const periods = records.filter(record => typeof record?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(record.value) && Number.isFinite(Date.parse(record.at)))
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
+    .filter((period, i, all) => i === 0 || period.value !== all[i - 1].value);
   for (let i = 0; i < periods.length; i++) {
     const from = Math.max(start, Date.parse(periods[i].at));
     const until = Math.min(end, i + 1 < periods.length ? Date.parse(periods[i + 1].at) : end);
@@ -362,7 +380,7 @@ function renderTariffBands(svg, records, points) {
   }
 }
 
-const formatPowerRange = (min, max) => `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+const formatPowerRange = (min, max) => `${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
 
 function appendHistoryChart(target, points, periods, label, formatRange) {
   const values = points.map(point => point.value);
@@ -392,6 +410,11 @@ function appendHistoryChart(target, points, periods, label, formatRange) {
   target.append(range, dates);
 }
 
+function sortedPowerHistory(records) {
+  return records.filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.at)))
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+}
+
 class TeslemetrySolar extends HTMLElement {
   #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
@@ -409,19 +432,19 @@ class TeslemetrySolar extends HTMLElement {
     const generation = ++this.#generation;
     this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: 1000 }); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: MAX_HISTORY_POINTS }); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -433,7 +456,7 @@ class TeslemetrySolar extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    const points = sortedPowerHistory(this.#history ?? []);
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     appendHistoryChart(target, points, this.#periods, 'Solar power history', formatPowerRange);
   }
@@ -445,9 +468,13 @@ function estimateEnergyCost(energyWh, rate, currency) {
   if (typeof energyWh !== 'number' || !Number.isFinite(energyWh) || energyWh < 0 ||
       typeof rate !== 'number' || !Number.isFinite(rate) ||
       typeof currency !== 'string' || !/^[A-Za-z]{3}$/.test(currency)) return undefined;
-  const amount = energyWh / 1000 * rate;
+  const amount = energyWh / WATT_HOURS_PER_KILOWATT_HOUR * rate;
   if (!Number.isFinite(amount)) return undefined;
   return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
+}
+
+function energyTotalsDate(attributes) {
+  return typeof attributes?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(attributes.energy_totals_date) && !Number.isNaN(Date.parse(attributes.energy_totals_date)) && new Date(attributes.energy_totals_date).toISOString().startsWith(attributes.energy_totals_date) ? attributes.energy_totals_date : undefined;
 }
 
 class TeslemetryGrid extends HTMLElement {
@@ -465,20 +492,20 @@ class TeslemetryGrid extends HTMLElement {
     this.#details = true; this.#history = undefined;
     const generation = ++this.#generation; this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit:1000}); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit: MAX_HISTORY_POINTS}); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
-    const a = device?.available === true ? device.attributes : undefined;
-    const watts = a?.grid_power_w;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    const attributes = device?.available === true ? device.attributes : undefined;
+    const watts = attributes?.grid_power_w;
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -489,12 +516,12 @@ class TeslemetryGrid extends HTMLElement {
       else void this.#showHistory();
     });
     if (!this.#details) return;
-    const date = typeof a?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.energy_totals_date) && !Number.isNaN(Date.parse(a.energy_totals_date)) && new Date(a.energy_totals_date).toISOString().startsWith(a.energy_totals_date) ? a.energy_totals_date : undefined;
-    const cost = a?.tariff_available === true && date ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
+    const date = energyTotalsDate(attributes);
+    const cost = attributes?.tariff_available === true && date ? estimateEnergyCost(attributes.grid_energy_imported_wh, attributes.tariff_buy_price_per_kwh, attributes.tariff_currency) : undefined;
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    const points = sortedPowerHistory(this.#history ?? []);
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     appendHistoryChart(target, points, this.#periods, 'Grid power history', formatPowerRange);
   }
@@ -518,12 +545,12 @@ class TeslemetryBattery extends HTMLElement {
     const generation = ++this.#generation;
     this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: 1000 }); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: MAX_HISTORY_POINTS }); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
@@ -567,10 +594,9 @@ class TeslemetryCombined extends HTMLElement {
     const legend=this.shadowRoot.querySelector('.legend');
     for(const series of combinedSeries){const label=document.createElement('span');label.className='key';label.style.setProperty('--key',series.color);label.textContent=series.name;legend.append(label);}
     const host=this.#host;
-    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit:1000});return r?.ok && Array.isArray(r.data) ? r.data.slice(0,1000):[];}catch{return [];}};
-    const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
+    const all=await Promise.all([...combinedSeries.map(series=>readHistoryOrEmpty(host,series.field)),readTariffPeriods(host)]);
     if(generation!==this.#generation || !this.isConnected)return;
-    const series=all.slice(0,4).map(rows=>rows.filter(p=>typeof p?.value==='number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)));
+    const series=all.slice(0,4).map(sortedPowerHistory);
     const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
     const target=this.shadowRoot.querySelector('.graph');target.textContent='';
     if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
@@ -580,7 +606,7 @@ class TeslemetryCombined extends HTMLElement {
     renderTariffBands(svg,all[4],points);
     series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
     target.append(svg);
-    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min/1000).toFixed(2))}–${Number((max/1000).toFixed(2))} kW`;
+    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
     const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
     target.append(range,dates);
   }

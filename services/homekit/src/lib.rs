@@ -1058,6 +1058,16 @@ async fn read_sensor_value(
     }
 }
 
+fn sensor_types_conflict(
+    temperature: Option<u64>,
+    humidity: Option<u64>,
+    smoke: Option<u64>,
+    on: Option<u64>,
+) -> bool {
+    (smoke.is_some() && (temperature.is_some() || humidity.is_some() || on.is_some()))
+        || (on.is_some() && (temperature.is_some() || humidity.is_some()))
+}
+
 async fn read_sensors(
     handle: &mut hap_controller::AccessoryHandle,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
@@ -1100,9 +1110,7 @@ async fn read_sensors(
         if temperature.is_none() && humidity.is_none() && smoke.is_none() && on.is_none() {
             continue;
         }
-        if (smoke.is_some() && (temperature.is_some() || humidity.is_some() || on.is_some()))
-            || (on.is_some() && (temperature.is_some() || humidity.is_some()))
-        {
+        if sensor_types_conflict(temperature, humidity, smoke, on) {
             return Err("Ambiguous sensor type");
         }
         let offline_type = if on.is_some() {

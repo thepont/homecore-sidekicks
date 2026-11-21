@@ -1,40 +1,21 @@
 {
-  "services/homekit/ui/index.js": {
-    "complexity": {
-      "count": 2
-    },
-    "no-magic-numbers": {
-      "count": 2
-    }
-  },
   "services/teslemetry/ui/index.js": {
     "complexity": {
-      "count": 4
+      "count": 3
     },
     "id-length": {
-      "count": 24
+      "count": 8
     },
     "no-magic-numbers": {
-      "count": 54
-    }
-  },
-  "services/xiaomi/ui/index.js": {
-    "complexity": {
-      "count": 1
-    },
-    "no-magic-numbers": {
-      "count": 3
+      "count": 40
     }
   },
   "ui/ac-card/index.js": {
     "complexity": {
       "count": 4
     },
-    "id-length": {
-      "count": 3
-    },
     "no-magic-numbers": {
-      "count": 23
+      "count": 18
     }
   }
 }

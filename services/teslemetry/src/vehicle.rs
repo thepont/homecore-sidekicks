@@ -350,6 +350,43 @@ async fn publish_vehicle_state(
     .is_ok()
 }
 
+async fn open_vehicle_stream(
+    client: &reqwest::Client,
+    endpoint: String,
+    token: &str,
+) -> Option<reqwest::Response> {
+    let response = client.get(endpoint).bearer_auth(token).send().await.ok()?;
+    let response = response.error_for_status().ok()?;
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"))
+        .then_some(response)
+}
+
+fn update_vehicle_event(
+    data: &str,
+    vin: &str,
+    state: &mut Map<String, Value>,
+    field_times: &mut HashMap<String, chrono::DateTime<chrono::FixedOffset>>,
+    latest: &mut Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    let (observed, fields) = parse_event(data, vin)?;
+    let mut changed = false;
+    for (key, value) in fields {
+        if apply_observation(state, field_times, key, value, observed) {
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    let updated = latest.map_or(observed, |previous| previous.max(observed));
+    *latest = Some(updated);
+    Some(updated)
+}
+
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
     let id = device_id(&vin);
     let availability = format!("homecore/devices/{id}/availability");
@@ -399,73 +436,44 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
             base.trim_end_matches('/'),
             vin
         );
-        if let Ok(response) = client.get(endpoint).bearer_auth(&token).send().await {
-            if let Ok(mut response) = response.error_for_status() {
-                if response
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .is_some_and(|v| v.starts_with("text/event-stream"))
-                {
-                    let mut pending = Vec::new();
-                    let mut data = String::new();
-                    while let Ok(Some(chunk)) = response.chunk().await {
-                        pending.extend_from_slice(&chunk);
-                        if pending.len() > 65_536 {
-                            break;
-                        }
-                        while let Some(end) = pending.iter().position(|&b| b == b'\n') {
-                            let line: Vec<u8> = pending.drain(..=end).collect();
-                            let Ok(line) = std::str::from_utf8(&line[..end]) else {
-                                continue;
-                            };
-                            let line = line.strip_suffix('\r').unwrap_or(line);
-                            if line.is_empty() {
-                                if let Some((observed, fields)) = parse_event(&data, &vin) {
-                                    let mut changed = false;
-                                    for (key, value) in fields {
-                                        if apply_observation(
-                                            &mut state,
-                                            &mut field_times,
-                                            key,
-                                            value,
-                                            observed,
-                                        ) {
-                                            changed = true;
-                                        }
-                                    }
-                                    if changed {
-                                        latest = Some(latest.map_or(
-                                            observed,
-                                            |previous: chrono::DateTime<chrono::FixedOffset>| {
-                                                previous.max(observed)
-                                            },
-                                        ));
-                                        if !publish_vehicle_state(
-                                            &mqtt,
-                                            &id,
-                                            &availability,
-                                            &state,
-                                            latest.unwrap(),
-                                        )
-                                        .await
-                                        {
-                                            return;
-                                        }
-                                    }
-                                }
-                                data.clear();
-                            } else if let Some(line) = line.strip_prefix("data:") {
-                                if data.len() + line.len() > 65_536 {
-                                    data.clear();
-                                    break;
-                                }
-                                if !data.is_empty() {
-                                    data.push('\n');
-                                }
-                                data.push_str(line.strip_prefix(' ').unwrap_or(line));
+        if let Some(mut response) = open_vehicle_stream(&client, endpoint, &token).await {
+            let mut pending = Vec::new();
+            let mut data = String::new();
+            while let Ok(Some(chunk)) = response.chunk().await {
+                pending.extend_from_slice(&chunk);
+                if pending.len() > 65_536 {
+                    break;
+                }
+                while let Some(end) = pending.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=end).collect();
+                    let Ok(line) = std::str::from_utf8(&line[..end]) else {
+                        continue;
+                    };
+                    let line = line.strip_suffix('\r').unwrap_or(line);
+                    if line.is_empty() {
+                        if let Some(updated) = update_vehicle_event(
+                            &data,
+                            &vin,
+                            &mut state,
+                            &mut field_times,
+                            &mut latest,
+                        ) {
+                            if !publish_vehicle_state(&mqtt, &id, &availability, &state, updated)
+                                .await
+                            {
+                                return;
                             }
                         }
+                        data.clear();
+                    } else if let Some(line) = line.strip_prefix("data:") {
+                        if data.len() + line.len() > 65_536 {
+                            data.clear();
+                            break;
+                        }
+                        if !data.is_empty() {
+                            data.push('\n');
+                        }
+                        data.push_str(line.strip_prefix(' ').unwrap_or(line));
                     }
                 }
             }

@@ -240,9 +240,12 @@ const template = panel => {
 };
 
 // Keep the inputs typed before running any display or command rules.
+const MIN_VALID_TEMPERATURE = -100;
+const MAX_VALID_TEMPERATURE = 150;
+const TICK_EPSILON = 1e-6;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-const temperature = value => number(value) >= -100 && value <= 150 ? value : undefined;
+const temperature = value => number(value) >= MIN_VALID_TEMPERATURE && value <= MAX_VALID_TEMPERATURE ? value : undefined;
 const choice = value => typeof value === 'string' && /^[a-zA-Z0-9_. -]{1,40}$/.test(value) ? value : undefined;
 const lookup = (table, key) => typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined;
 const show = (element, visible) => element.toggleAttribute('hidden', !visible);
@@ -299,23 +302,23 @@ function readTemperatureTargets(attributes, mode) {
 }
 
 function climateOf(device) {
-  const a = record(device?.attributes);
-  const mode = lookup(modes, a.hvac_mode) ? a.hvac_mode : undefined;
-  const room = temperature(a.temperature);
-  const { targets, targetsByKey } = readTemperatureTargets(a, mode);
-  let activity = mode === 'off' ? 'Off' : lookup(activities, a.hvac_action);
+  const attributes = record(device?.attributes);
+  const mode = lookup(modes, attributes.hvac_mode) ? attributes.hvac_mode : undefined;
+  const room = temperature(attributes.temperature);
+  const { targets, targetsByKey } = readTemperatureTargets(attributes, mode);
+  let activity = mode === 'off' ? 'Off' : lookup(activities, attributes.hvac_action);
   if (mode === 'heat' || mode === 'auto') {
-    activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, a.sub_mode) ?? activity;
+    activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, attributes.sub_mode) ?? activity;
   }
   if (room !== undefined) activity ??= lookup(modes, mode);
   return { available: device?.available === true, mode, activity, room,
-    gap: number(a.min_setpoint_gap) >= 0 && a.min_setpoint_gap <= 30 ? a.min_setpoint_gap : 0,
+    gap: number(attributes.min_setpoint_gap) >= 0 && attributes.min_setpoint_gap <= 30 ? attributes.min_setpoint_gap : 0,
     targets, targetsByKey, reported: { hvac_mode: mode,
-      ...Object.fromEntries(airflow.map(({ key }) => [key, choice(a[key])])) },
-    unsupportedAirflow: new Set(airflow.filter(({ capability }) => capability && a[capability] === false)
+      ...Object.fromEntries(airflow.map(({ key }) => [key, choice(attributes[key])])) },
+    unsupportedAirflow: new Set(airflow.filter(({ capability }) => capability && attributes[capability] === false)
       .map(field => field.key)),
     diagnostics: Object.fromEntries(diagnostics.map(({ key }) => [key,
-      key === 'outside_temperature' ? temperature(a[key]) : number(a[key])])) };
+      key === 'outside_temperature' ? temperature(attributes[key]) : number(attributes[key])])) };
 }
 
 function targetControl(target, spec, model) {
@@ -328,8 +331,8 @@ function targetControl(target, spec, model) {
     else min = Math.max(min, model.targets.heat.value + model.gap);
   }
   const offset = { origin: spec.min, step: spec.step };
-  const first = atTick(offset, Math.ceil((min - spec.min) / spec.step - 1e-6));
-  const last = atTick(offset, Math.floor((max - spec.min) / spec.step + 1e-6));
+  const first = atTick(offset, Math.ceil((min - spec.min) / spec.step - TICK_EPSILON));
+  const last = atTick(offset, Math.floor((max - spec.min) / spec.step + TICK_EPSILON));
   if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) return undefined;
   return { ...target, ...offset, min: first, max: last };
 }
@@ -342,7 +345,7 @@ function nextTarget(control, direction) {
   if (!control) return undefined;
   const offset = (control.value - control.origin) / control.step;
   const nearest = Math.round(offset);
-  const tick = Math.abs(offset - nearest) < 1e-6 ? nearest + direction :
+  const tick = Math.abs(offset - nearest) < TICK_EPSILON ? nearest + direction :
     direction > 0 ? Math.ceil(offset) : Math.floor(offset);
   const value = atTick(control, tick);
   return value >= control.min && value <= control.max && value !== control.value ? value : undefined;
@@ -664,9 +667,9 @@ class AcCard extends HTMLElement {
         point.y - Number(marker.getAttribute('cy')));
       return { marker, slot, control, distance };
     });
-    const nearest = handles.reduce((a, b) => {
-      if (!b.control) return a;
-      return !a?.control || b.distance < a.distance ? b : a;
+    const nearest = handles.reduce((closest, candidate) => {
+      if (!candidate.control) return closest;
+      return !closest?.control || candidate.distance < closest.distance ? candidate : closest;
     }, undefined);
     if (!nearest?.control) return;
     // A touch can grab the arc in a 44 px band, even away from the target dot.

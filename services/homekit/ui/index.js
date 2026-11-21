@@ -1,3 +1,20 @@
+const MAX_DISCOVERED_ACCESSORIES = 100;
+const MAX_ACCESSORY_NAME_LENGTH = 128;
+
+function validAccessory(item) {
+  return typeof item?.id === 'string' && /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)
+    && typeof item.name === 'string' && item.name.length <= MAX_ACCESSORY_NAME_LENGTH
+    && typeof item.paired === 'boolean';
+}
+
+function discoveredAccessories(result) {
+  return result?.ok && Array.isArray(result.data?.accessories) ? result.data.accessories : null;
+}
+
+function pairingRequiresRecovery(result) {
+  return result?.ok && result.data?.status === 'recovery_required';
+}
+
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
@@ -34,13 +51,13 @@ class HomeKitSetup extends HTMLElement {
     let result;try{result=await this.#host.action('discover_accessories');}catch{}
     if(generation!==this.#generation || !this.isConnected)return;
     button.disabled=false;
-    const list=result?.ok && Array.isArray(result.data?.accessories)?result.data.accessories:null;
+    const list=discoveredAccessories(result);
     if(!list){status.textContent='Could not find accessories. Try again.';return;}
     const select=this.shadowRoot.querySelector('#accessory');
     select.replaceChildren(new Option('Choose an accessory',''));
     const paired=[];
-    for(const item of list.slice(0,100)){
-      if(typeof item?.id!=='string'||!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)||typeof item.name!=='string'||item.name.length>128||typeof item.paired!=='boolean')continue;
+    for(const item of list.slice(0,MAX_DISCOVERED_ACCESSORIES)){
+      if(!validAccessory(item))continue;
       if(item.paired){paired.push(`${item.name} is already paired.`);continue;}
       select.add(new Option(item.name,item.id));
     }
@@ -57,7 +74,7 @@ class HomeKitSetup extends HTMLElement {
     let result;try{result=await this.#host.action('pair_accessory',{id,pin:pin.value});}catch{}
     pin.value='';
     if(generation!==this.#generation || !this.isConnected)return;
-    if(result?.ok && result.data?.status==='recovery_required'){
+    if(pairingRequiresRecovery(result)){
       this.#recovery=true;status.textContent='Pairing could not be confirmed. The accessory may need recovery before another attempt.';
     } else {
       status.textContent=result?.ok&&result.data?.status==='ok'?'Accessory connected.':'Could not connect the accessory. Check its setup code and try again.';
