@@ -41,10 +41,10 @@ webpki-roots = { version = "=1.0.12", optional = true }
 rc4 = { version = "=0.2.0", features = ["zeroize"] }
 zeroize = "=1.9.2"
 plugin-sdk-rs = { path = "../../crates/vendor/plugin-sdk-rs", optional = true }
-axum = { version = "=0.8.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"], optional = true }
 futures-util = { version = "=0.3.34", default-features = false, optional = true }
 subtle = { version = "=2.6.1", default-features = false, optional = true }
 
 [dev-dependencies]
 homecore-test-support = { path = "../../crates/test-support" }
-axum = "=0.8.8"
+axum = "=0.8.9"
