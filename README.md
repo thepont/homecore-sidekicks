@@ -1,4 +1,4 @@
-# homeCore services
+# homeCore Sidekicks
 
 Device integrations for [homeCore](https://homecore.io/). Each service
 publishes device state and capabilities through the homeCore MQTT protocol.
