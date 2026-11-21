@@ -1,7 +1,10 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Client, Url};
 use serde_json::Value;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    net::Ipv4Addr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 pub struct Provider {
     base: Url,
@@ -217,6 +220,39 @@ pub struct Gateway {
     alternate_token: Option<String>,
     cloud_comparison: &'static str,
 }
+
+struct LanDevice<'a> {
+    name: &'a str,
+    model: &'a str,
+    address: Ipv4Addr,
+    device_id: Option<&'a str>,
+    token: &'a str,
+}
+
+impl<'a> LanDevice<'a> {
+    fn from_cloud(item: &'a Value) -> Option<Self> {
+        Some(Self {
+            name: item.get("name").and_then(Value::as_str).filter(|name| {
+                !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
+            })?,
+            model: item.get("model").and_then(Value::as_str)?,
+            address: item
+                .get("localip")
+                .and_then(Value::as_str)
+                .and_then(|address| address.parse::<Ipv4Addr>().ok())
+                .filter(Ipv4Addr::is_private)?,
+            device_id: item.get("did").and_then(Value::as_str),
+            token: cloud_device_token(item)?,
+        })
+    }
+}
+
+fn cloud_device_token(item: &Value) -> Option<&str> {
+    item.get("token")
+        .and_then(Value::as_str)
+        .filter(|token| crate::store::valid_token(token))
+}
+
 impl Gateway {
     pub fn save_configuration(&self, store: &crate::store::Store) -> Result<(), &'static str> {
         let mut config = crate::store::GatewayConfig::new(&self.address, &self.model, &self.token)?;
@@ -324,7 +360,7 @@ impl Provider {
         &self,
         auth: &Authentication,
         region: &str,
-        mut visit: impl FnMut(&Value) -> Result<(), &'static str>,
+        mut visit: impl FnMut(LanDevice<'_>) -> Result<(), &'static str>,
     ) -> Result<(), &'static str> {
         let homes=self.cloud_call(auth,region,"/v2/homeroom/gethome",serde_json::json!({"fg":true,"fetch_share":true,"fetch_share_dev":true,"limit":300,"app_ver":7})).await?;
         let homes = homes
@@ -352,7 +388,9 @@ impl Provider {
                 return Err("Invalid discovery response");
             }
             for item in devices {
-                visit(item)?;
+                if let Some(device) = LanDevice::from_cloud(item) {
+                    visit(device)?;
+                }
             }
         }
         Ok(())
@@ -366,8 +404,11 @@ impl Provider {
     ) -> Result<Vec<crate::adapters::MatchedDevice>, &'static str> {
         use std::collections::{btree_map::Entry, BTreeMap};
         let mut candidates = BTreeMap::new();
-        self.visit_devices(auth, region, |item| {
-            if let Some(candidate) = catalog.candidate(item) {
+        self.visit_devices(auth, region, |device| {
+            if let Some(candidate) = device
+                .device_id
+                .and_then(|id| catalog.match_device(id, device.name, device.model))
+            {
                 match candidates.entry(candidate.id.clone()) {
                     Entry::Occupied(entry) if entry.get() != &candidate => {
                         return Err("Conflicting Xiaomi device identity");
@@ -393,41 +434,16 @@ impl Provider {
         region: &str,
     ) -> Result<Vec<Gateway>, &'static str> {
         let mut gateways = Vec::new();
-        self.visit_devices(auth, region, |item| {
-            let Some(model) = item.get("model").and_then(Value::as_str) else {
-                return Ok(());
-            };
-            if !model.starts_with("lumi.gateway.") || model.len() > 64 {
+        self.visit_devices(auth, region, |device| {
+            if !device.model.starts_with("lumi.gateway.") || device.model.len() > 64 {
                 return Ok(());
             }
-            let Some(address) = item
-                .get("localip")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<std::net::Ipv4Addr>().ok())
-                .filter(|ip| ip.is_private())
-            else {
-                return Ok(());
-            };
-            let Some(token) = item
-                .get("token")
-                .and_then(Value::as_str)
-                .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-            else {
-                return Ok(());
-            };
-            let Some(name) = item
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
-            else {
-                return Ok(());
-            };
             gateways.push(Gateway {
-                name: name.to_owned(),
-                model: model.to_owned(),
-                address: address.to_string(),
-                device_id: item.get("did").and_then(Value::as_str).map(str::to_owned),
-                token: token.to_owned(),
+                name: device.name.to_owned(),
+                model: device.model.to_owned(),
+                address: device.address.to_string(),
+                device_id: device.device_id.map(str::to_owned),
+                token: device.token.to_owned(),
                 alternate_token: None,
                 cloud_comparison: "unavailable",
             });
@@ -455,11 +471,7 @@ impl Provider {
                                 && gateway.device_id.is_some()
                         }) {
                             gateway.cloud_comparison = "unavailable";
-                            if let Some(token) =
-                                item.get("token").and_then(Value::as_str).filter(|s| {
-                                    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
-                                })
-                            {
+                            if let Some(token) = cloud_device_token(item) {
                                 if !token.eq_ignore_ascii_case(&gateway.token) {
                                     gateway.alternate_token = Some(token.to_owned());
                                     gateway.cloud_comparison = "different";

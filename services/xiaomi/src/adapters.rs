@@ -3,7 +3,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
     io::Read,
-    net::Ipv4Addr,
     os::unix::fs::OpenOptionsExt,
     path::Path,
 };
@@ -79,20 +78,11 @@ impl AdapterCatalog {
         Ok(Self(by_model))
     }
 
-    pub(crate) fn candidate(&self, item: &Value) -> Option<MatchedDevice> {
-        let model = item["model"].as_str()?;
+    pub(crate) fn match_device(&self, id: &str, name: &str, model: &str) -> Option<MatchedDevice> {
         let adapters = self.0.get(model)?;
-        let id = item["did"].as_str().filter(|id| valid_identifier(id))?;
-        let name = item["name"].as_str().filter(|name| {
-            !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
-        })?;
-        item["localip"]
-            .as_str()
-            .and_then(|ip| ip.parse::<Ipv4Addr>().ok())
-            .filter(Ipv4Addr::is_private)?;
-        item["token"]
-            .as_str()
-            .filter(|token| crate::store::valid(token))?;
+        if !valid_identifier(id) {
+            return None;
+        }
         Some(MatchedDevice {
             id: id.to_owned(),
             name: name.to_owned(),

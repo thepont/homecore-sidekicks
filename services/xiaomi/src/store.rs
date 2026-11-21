@@ -15,7 +15,7 @@ impl Drop for Temp {
         let _ = fs::remove_file(&self.0);
     }
 }
-pub(crate) fn valid(token: &str) -> bool {
+pub(crate) fn valid_token(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 impl Store {
@@ -28,7 +28,7 @@ impl Store {
         crate::adapters::AdapterCatalog::load(&self.root.join("adapters.json"))
     }
     pub fn save(&self, token: &str) -> Result<(), &'static str> {
-        if !valid(token) {
+        if !valid_token(token) {
             return Err("Invalid gateway token");
         }
         if !fs::symlink_metadata(&self.root)
@@ -85,7 +85,7 @@ impl Store {
         file.take(33)
             .read_to_string(&mut token)
             .map_err(|_| "Cannot read secret")?;
-        if !valid(&token) {
+        if !valid_token(&token) {
             return Err("Invalid gateway token");
         }
         Ok(Some(token))
@@ -109,7 +109,7 @@ impl GatewayConfig {
             || !model
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
-            || !valid(token)
+            || !valid_token(token)
         {
             return Err("Invalid gateway configuration");
         }
@@ -144,7 +144,7 @@ impl GatewayConfig {
         self.device_id.as_deref()
     }
     pub fn with_alternate_token(mut self, token: &str) -> Result<Self, &'static str> {
-        if !valid(token) {
+        if !valid_token(token) {
             return Err("Invalid gateway token");
         }
         self.alternate_token = Some(token.to_owned());
