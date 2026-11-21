@@ -1,4 +1,4 @@
-use crate::{adapters::valid_identifier, login::DiscoveredDevice};
+use crate::{adapters::valid_identifier, login::DiscoveredDevice, transport::valid_region};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ring::{
     aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM},
@@ -12,10 +12,6 @@ const INVALID: &str = "Invalid Xiaomi credential record";
 const ENVELOPE_BYTES: usize = 12 + 4 + 32 + 16;
 
 pub(crate) struct Vault(LessSafeKey);
-
-pub(crate) fn valid_region(region: &str) -> bool {
-    matches!(region, "cn" | "de" | "i2" | "ru" | "sg" | "us")
-}
 
 pub(crate) fn valid_device_ref(reference: &str) -> bool {
     reference

@@ -211,6 +211,7 @@ impl Provider {
     }
 }
 
+#[cfg(feature = "setup")]
 pub struct Gateway {
     pub name: String,
     pub model: String,
@@ -221,26 +222,29 @@ pub struct Gateway {
     cloud_comparison: &'static str,
 }
 
-struct LanDevice<'a> {
-    name: &'a str,
-    model: &'a str,
-    address: Ipv4Addr,
-    device_id: Option<&'a str>,
-    token: &'a str,
+pub(crate) struct LanDevice<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) model: &'a str,
+    pub(crate) address: Ipv4Addr,
+    pub(crate) device_id: Option<&'a str>,
+    pub(crate) token: &'a str,
 }
 
 #[derive(PartialEq, Eq)]
+#[cfg(feature = "setup")]
 pub(crate) struct DiscoveredDevice {
     pub(crate) device: crate::adapters::MatchedDevice,
     pub(crate) credential: Option<DiscoveredCredential>,
 }
 
 #[derive(PartialEq, Eq)]
+#[cfg(feature = "setup")]
 pub(crate) struct DiscoveredCredential {
     pub(crate) address: Ipv4Addr,
     pub(crate) token: String,
 }
 
+#[cfg(feature = "setup")]
 impl Drop for DiscoveredCredential {
     fn drop(&mut self) {
         use zeroize::Zeroize;
@@ -249,7 +253,7 @@ impl Drop for DiscoveredCredential {
 }
 
 impl<'a> LanDevice<'a> {
-    fn from_cloud(item: &'a Value) -> Option<Self> {
+    pub(crate) fn from_cloud(item: &'a Value) -> Option<Self> {
         Some(Self {
             name: item.get("name").and_then(Value::as_str).filter(|name| {
                 !name.is_empty() && name.len() <= 128 && !name.chars().any(char::is_control)
@@ -269,9 +273,14 @@ impl<'a> LanDevice<'a> {
 fn cloud_device_token(item: &Value) -> Option<&str> {
     item.get("token")
         .and_then(Value::as_str)
-        .filter(|token| crate::store::valid_token(token))
+        .filter(|token| valid_token(token))
 }
 
+pub(crate) fn valid_token(token: &str) -> bool {
+    token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(feature = "setup")]
 impl Gateway {
     pub fn save_configuration(&self, store: &crate::store::Store) -> Result<(), &'static str> {
         let mut config = crate::store::GatewayConfig::new(&self.address, &self.model, &self.token)?;
@@ -375,7 +384,7 @@ impl Provider {
         let data = crate::cloud::legacy_encrypt(&key, &encrypted);
         serde_json::from_slice(&data).map_err(|_| "Invalid discovery response")
     }
-    async fn visit_devices(
+    pub(crate) async fn visit_devices(
         &self,
         auth: &Authentication,
         region: &str,
@@ -415,6 +424,7 @@ impl Provider {
         Ok(())
     }
 
+    #[cfg(feature = "setup")]
     pub(crate) async fn discover_registered(
         &self,
         auth: &Authentication,
@@ -456,6 +466,7 @@ impl Provider {
         Ok(candidates.into_values().collect())
     }
 
+    #[cfg(feature = "setup")]
     pub async fn discover(
         &self,
         auth: &Authentication,

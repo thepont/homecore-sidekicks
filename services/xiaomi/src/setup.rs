@@ -1,9 +1,11 @@
 use crate::{
-    adapters::MatchedDevice,
-    login::Provider,
+    adapters::{AdapterCatalog, MatchedDevice},
+    extractor_client::{Extraction, ExtractorClient},
+    login::{Challenge, DiscoveredDevice, Provider},
     registry::{Operation, Registry, RegistryState},
     store::Store,
-    vault::{valid_region, Vault},
+    transport::valid_region,
+    vault::Vault,
 };
 use std::{path::Path, sync::Arc};
 use tokio::sync::Mutex;
@@ -16,6 +18,21 @@ pub struct Setup {
     state: Arc<Mutex<SetupState>>,
     adapters: AdapterSource,
     vault: Option<Arc<Vault>>,
+    extractor: Option<Arc<ExtractorClient>>,
+}
+
+enum SignIn {
+    Local(Challenge),
+    Remote(Extraction),
+}
+
+impl SignIn {
+    fn qr(&self) -> &str {
+        match self {
+            Self::Local(challenge) => &challenge.qr_png,
+            Self::Remote(extraction) => &extraction.qr_png,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -69,6 +86,7 @@ impl Setup {
             state: Arc::new(Mutex::new(state)),
             adapters: AdapterSource::File,
             vault: None,
+            extractor: None,
         }
     }
 
@@ -100,6 +118,16 @@ impl Setup {
         self.vault
             .clone()
             .ok_or("Xiaomi credential storage is not configured")
+    }
+
+    pub fn with_extractor(
+        mut self,
+        origin: &str,
+        key_file: &Path,
+        ca_file: Option<&Path>,
+    ) -> Result<Self, &'static str> {
+        self.extractor = Some(Arc::new(ExtractorClient::new(origin, key_file, ca_file)?));
+        Ok(self)
     }
 
     #[cfg(feature = "postgres")]
@@ -171,47 +199,82 @@ impl Setup {
             AdapterSource::File => self.store.adapters()?,
             AdapterSource::Registry(registry) => registry.state.lock().await.catalog.clone(),
         };
-        let challenge = self.provider.begin().await?;
-        let qr = challenge.qr_png.clone();
+        let sign_in = match &self.extractor {
+            Some(extractor) => {
+                let catalog = adapters.as_ref().ok_or("Register Xiaomi adapters first")?;
+                SignIn::Remote(extractor.begin(region, catalog).await?)
+            }
+            None => SignIn::Local(self.provider.begin().await?),
+        };
+        let qr = sign_in.qr().to_owned();
         *state = SetupState::Waiting { qr_png: qr.clone() };
-        let mut setup = self.clone();
-        setup.region = region.to_owned();
+        let setup = self.clone();
+        let region = region.to_owned();
         tokio::spawn(async move {
-            let expiry = challenge.expires_after;
-            let result = tokio::time::timeout(expiry, async {
-                let auth = setup.provider.poll(&challenge).await?;
-                if let Some(catalog) = &adapters {
-                    let discovered = setup
-                        .provider
-                        .discover_registered(&auth, &setup.region, catalog, setup.vault.is_some())
-                        .await?;
-                    if let Some(vault) = &setup.vault {
-                        let encrypted = discovered
-                            .iter()
-                            .map(|device| vault.seal(&setup.region, device))
-                            .collect::<Result<_, _>>()?;
-                        setup
-                            .update_registry(Operation::Remember(encrypted))
-                            .await?;
-                    }
-                    return Ok(Some(
-                        discovered.into_iter().map(|record| record.device).collect(),
-                    ));
-                }
-                let gateways = setup.provider.discover(&auth, &setup.region).await?;
-                if gateways.len() != 1 {
-                    return Err("Expected one gateway");
-                }
-                gateways[0].save_configuration(&setup.store)?;
-                Ok(None)
-            })
-            .await;
+            let result = setup
+                .complete_sign_in(sign_in, &region, adapters.as_ref())
+                .await;
             *setup.state.lock().await = match result {
-                Ok(Ok(Some(devices))) => SetupState::DevicesFound(devices),
-                Ok(Ok(None)) => SetupState::GatewaySaved,
+                Ok(Some(devices)) => SetupState::DevicesFound(devices),
+                Ok(None) => SetupState::GatewaySaved,
                 _ => SetupState::Error,
             };
         });
         Ok(qr)
+    }
+
+    async fn complete_sign_in(
+        &self,
+        sign_in: SignIn,
+        region: &str,
+        catalog: Option<&AdapterCatalog>,
+    ) -> Result<Option<Vec<MatchedDevice>>, &'static str> {
+        let capture = self.vault.is_some();
+        let discovered = match sign_in {
+            SignIn::Local(challenge) => tokio::time::timeout(challenge.expires_after, async {
+                let auth = self.provider.poll(&challenge).await?;
+                if let Some(catalog) = catalog {
+                    return self
+                        .provider
+                        .discover_registered(&auth, region, catalog, capture)
+                        .await
+                        .map(Some);
+                }
+                let gateways = self.provider.discover(&auth, region).await?;
+                if gateways.len() != 1 {
+                    return Err("Expected one gateway");
+                }
+                gateways[0].save_configuration(&self.store)?;
+                Ok(None)
+            })
+            .await
+            .map_err(|_| "Xiaomi sign-in timed out")??,
+            SignIn::Remote(extraction) => {
+                let catalog = catalog.ok_or("Register Xiaomi adapters first")?;
+                Some(extraction.finish(catalog, capture).await?)
+            }
+        };
+        let Some(discovered) = discovered else {
+            return Ok(None);
+        };
+        self.remember_devices(region, &discovered).await?;
+        Ok(Some(
+            discovered.into_iter().map(|record| record.device).collect(),
+        ))
+    }
+
+    async fn remember_devices(
+        &self,
+        region: &str,
+        devices: &[DiscoveredDevice],
+    ) -> Result<(), &'static str> {
+        if let Some(vault) = &self.vault {
+            let encrypted = devices
+                .iter()
+                .map(|device| vault.seal(region, device))
+                .collect::<Result<_, _>>()?;
+            self.update_registry(Operation::Remember(encrypted)).await?;
+        }
+        Ok(())
     }
 }

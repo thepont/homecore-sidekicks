@@ -1,3 +1,4 @@
+use crate::login::valid_token;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{
     fs::{self, File, OpenOptions},
@@ -14,9 +15,6 @@ impl Drop for Temp {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
-}
-pub(crate) fn valid_token(token: &str) -> bool {
-    token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 impl Store {
     pub fn new(root: &Path) -> Self {

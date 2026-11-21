@@ -67,5 +67,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(path) => setup.with_vault_key_file(&PathBuf::from(path))?,
         None => setup,
     };
+    let setup = match env::var("XIAOMI_EXTRACTOR_URL") {
+        Ok(url) => {
+            let key = PathBuf::from(required("XIAOMI_EXTRACTOR_AUTH_FILE")?);
+            let ca = env::var_os("XIAOMI_EXTRACTOR_CA_FILE").map(PathBuf::from);
+            setup.with_extractor(&url, &key, ca.as_deref())?
+        }
+        Err(env::VarError::NotPresent) => setup,
+        Err(_) => return Err("Invalid Xiaomi extractor URL".into()),
+    };
     runtime::run(host, port, id, password, setup, ui).await
 }

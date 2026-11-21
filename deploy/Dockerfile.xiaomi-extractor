@@ -1,0 +1,4 @@
+FROM scratch
+COPY xiaomi-extractor /xiaomi-extractor
+USER 65532:65532
+ENTRYPOINT ["/xiaomi-extractor"]

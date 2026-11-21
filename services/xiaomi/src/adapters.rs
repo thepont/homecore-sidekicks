@@ -1,3 +1,4 @@
+pub(crate) use crate::transport::valid_identifier;
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -115,6 +116,10 @@ impl AdapterCatalog {
         self.0.get(model).map_or(&[], Vec::as_slice)
     }
 
+    pub(crate) fn models(&self) -> Vec<&str> {
+        self.0.keys().map(String::as_str).collect()
+    }
+
     pub(crate) fn registrations(&self) -> Value {
         let mut by_plugin: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for (model, plugins) in &self.0 {
@@ -146,16 +151,6 @@ impl AdapterCatalog {
 
 pub(crate) fn valid_plugin_id(id: &str) -> bool {
     id.starts_with("plugin.") && valid_identifier(id)
-}
-
-pub(crate) fn valid_identifier(value: &str) -> bool {
-    value.len() <= 64
-        && value.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        })
 }
 
 #[derive(Clone, PartialEq, Eq)]

@@ -1,0 +1,52 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: xiaomi-extractor
+  labels:
+    networking.knative.dev/visibility: cluster-local
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "1"
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 600
+      responseStartTimeoutSeconds: 25
+      idleTimeoutSeconds: 0
+      containers:
+        # Replace with the digest of the image built from Dockerfile.xiaomi-extractor.
+        - image: xiaomi-extractor:local
+          ports:
+            - containerPort: 8080
+          env:
+            - name: XIAOMI_EXTRACTOR_AUTH_FILE
+              value: /extractor-auth/key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 250m
+              memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: extractor-auth
+              mountPath: /extractor-auth
+              readOnly: true
+      volumes:
+        - name: extractor-auth
+          secret:
+            secretName: xiaomi-extractor-auth

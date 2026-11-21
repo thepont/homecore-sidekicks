@@ -76,5 +76,34 @@ owns model matching, and the Xiaomi provider fetches the account's devices
 once per sign-in. The setup response contains device IDs, names, models and
 matching plugin IDs. Credentials stay in the provider during matching.
 
-Credential delivery to adapter processes, automatic startup and moving
-extraction to a Knative worker are follow-up slices.
+## Deploy an on-demand extractor
+
+Build the worker without the resident setup plugin's database and MQTT
+drivers.
+
+```sh
+cargo zigbuild --locked --release --target x86_64-unknown-linux-musl \
+  --no-default-features --features extractor --bin xiaomi-extractor
+```
+
+Place the resulting static binary in the build context for
+[`Dockerfile.xiaomi-extractor`](../../deploy/Dockerfile.xiaomi-extractor).
+The [Knative example](../../deploy/xiaomi-extractor.knative.example.yaml)
+uses zero minimum replicas and one concurrent sign-in per replica. Enable
+cluster-local HTTPS on the route and restrict it to the setup service.
+
+Mount the same 32-byte random extractor key in the setup plugin and worker
+as `XIAOMI_EXTRACTOR_AUTH_FILE`. The extractor key is a separate secret from
+the vault key. Set `XIAOMI_EXTRACTOR_URL` on the setup plugin to the
+extractor's HTTPS origin. Set `XIAOMI_EXTRACTOR_CA_FILE` if the route uses
+a private CA.
+
+The setup plugin opens one HTTP response for the duration of a sign-in.
+The worker sends the QR first and sends matching device data when Xiaomi
+approves the session. The open response keeps the worker active. Pending
+requests, approval and status use the resident plugin while the worker is
+at zero replicas. Local QR sign-in remains available when no extractor
+URL is configured.
+
+Credential delivery to adapter processes and automatic adapter startup are
+follow-up slices.
