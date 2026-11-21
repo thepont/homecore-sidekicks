@@ -418,6 +418,10 @@ function historyUnavailableMessage(history) {
   return history === undefined ? 'Loading history…' : history === null ? 'History unavailable' : 'Not enough history yet';
 }
 
+function formatPowerReading(watts) {
+  return typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+}
+
 function sortedPowerHistory(records) {
   return records.filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.at)))
     .sort(compareHistoryTimes);
@@ -452,7 +456,7 @@ class TeslemetrySolar extends HTMLElement {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+    const reading = formatPowerReading(watts);
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -513,7 +517,7 @@ class TeslemetryGrid extends HTMLElement {
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const attributes = device?.available === true ? device.attributes : undefined;
     const watts = attributes?.grid_power_w;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+    const reading = formatPowerReading(watts);
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');

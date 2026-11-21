@@ -4,7 +4,7 @@
       "count": 2
     },
     "no-magic-numbers": {
-      "count": 40
+      "count": 39
     }
   },
   "ui/ac-card/index.js": {
