@@ -575,7 +575,7 @@ class TeslemetryCombined extends HTMLElement {
     const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit:1000});return r?.ok && Array.isArray(r.data) ? r.data.slice(0,1000):[];}catch{return [];}};
     const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
     if(generation!==this.#generation || !this.isConnected)return;
-    const series=all.slice(0,4).map(rows=>rows.filter(p=>typeof p?.value==='number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)));
+    const series=all.slice(0,4).map(sortedPowerHistory);
     const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
     const target=this.shadowRoot.querySelector('.graph');target.textContent='';
     if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
