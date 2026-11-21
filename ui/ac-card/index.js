@@ -728,6 +728,16 @@ class AcCard extends HTMLElement {
     if (value !== undefined && value !== control.value) void this.#send(control.key, value);
   }
 
+  #cancelDragIfTargetChanged(controls) {
+    if (this.#drag) {
+      const active = controls[this.#drag.slot];
+      const original = this.#drag.control;
+      if (!active || ['key', 'value', 'min', 'max', 'origin', 'step'].some(field => active[field] !== original[field])) {
+        this.#cancelDrag();
+      }
+    }
+  }
+
   #renderTargets(model, schema) {
     const { available, targets, gap, room } = model;
     const view = this.#view;
@@ -755,13 +765,7 @@ class AcCard extends HTMLElement {
     this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
       restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
       scale, controls, lowSlot: targets.heat ? 'heat' : 'single' };
-    if (this.#drag) {
-      const active = controls[this.#drag.slot];
-      const original = this.#drag.control;
-      if (!active || ['key', 'value', 'min', 'max', 'origin', 'step'].some(field => active[field] !== original[field])) {
-        this.#cancelDrag();
-      }
-    }
+    this.#cancelDragIfTargetChanged(controls);
     const editable = Object.keys(controls).length > 0;
     view.dial.toggleAttribute('data-editable', editable && !this.#pending);
     view.svg.setAttribute('aria-hidden', String(!editable));
