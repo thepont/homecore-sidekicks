@@ -65,7 +65,7 @@ async fn homecore_receives_typed_homekit_devices_from_a_fake_bridge() {
         .unwrap()
         .parse::<u16>()
         .unwrap();
-    let _fixture = Fixture {
+    let mut fixture = Fixture {
         child,
         root: root.clone(),
     };
@@ -134,6 +134,36 @@ async fn homecore_receives_typed_homekit_devices_from_a_fake_bridge() {
         .expect("homeCore did not receive device");
         assert_eq!(device["device_type"], expected_type);
     }
+    let contact = devices
+        .iter()
+        .find(|(_, state)| state.get("open") == Some(&json!(true)))
+        .unwrap()
+        .0;
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "close").unwrap();
+    let contact_path = format!("/devices/homekit_021122334455_{contact}");
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Ok(response) = core.get(&contact_path).send().await {
+                if let Ok(value) = response.json::<serde_json::Value>().await {
+                    if value["attributes"]["open"] == false {
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("contact update barrier");
+    let offline = devices
+        .iter()
+        .find(|(_, state)| state.get("_offline") == Some(&json!(true)))
+        .unwrap()
+        .0;
+    let path = format!("/devices/homekit_021122334455_{offline}");
+    let device: serde_json::Value = core.get(&path).send().await.unwrap().json().await.unwrap();
+    assert_eq!(device["device_type"], "temperature_sensor");
+    assert_eq!(device["available"], false);
 }
 
 #[tokio::test]
@@ -314,6 +344,12 @@ async fn reads_each_contact_from_a_bridge_independently() {
             .iter()
             .any(|(_, state)| *state == json!({"smoke":true,"fault":false,"battery_pct":74})),
         "smoke detector missing: {sensors:?}"
+    );
+    assert!(
+        sensors
+            .iter()
+            .any(|(_, state)| *state == json!({"_offline":true,"_type":"temperature_sensor"})),
+        "unavailable climate sensor missing: {sensors:?}"
     );
     assert!(
         sensors

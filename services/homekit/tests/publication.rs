@@ -5,6 +5,36 @@ mod mqtt_broker;
 use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
 
+#[tokio::test]
+async fn unavailable_sensor_is_registered_with_its_type_without_inventing_a_reading() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    homecore_homekit::publish_sensors(
+        &probe.client,
+        "plugin.homekit",
+        "02:11:22:33:44:55",
+        &[(5, json!({"_offline":true,"_type":"temperature_sensor"}))],
+    )
+    .await
+    .unwrap();
+    let messages = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut received = HashMap::<String, Value>::new();
+        while received.len() < 2 {
+            let msg = probe.messages.recv().await.unwrap();
+            received.insert(msg.topic, serde_json::from_slice(&msg.payload).unwrap());
+        }
+        received
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        messages["homecore/plugins/plugin.homekit/register"]["device_type"],
+        "temperature_sensor"
+    );
+    assert!(messages.contains_key("homecore/devices/homekit_021122334455_5/schema"));
+    assert!(!messages.contains_key("homecore/devices/homekit_021122334455_5/state"));
+}
+
 #[test]
 fn only_well_formed_commands_for_the_expected_bridge_are_accepted() {
     let topic = "homecore/devices/homekit_021122334455_7/cmd";

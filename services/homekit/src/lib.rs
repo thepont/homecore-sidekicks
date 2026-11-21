@@ -65,12 +65,28 @@ pub async fn publish_sensors(
     let mut climate = Vec::new();
     let mut smoke = Vec::new();
     let mut outlets = Vec::new();
+    let mut unavailable = Vec::new();
     for (aid, state) in readings {
         let object = state.as_object().ok_or("Invalid sensor state")?;
         if *aid == 0 || !seen.insert(*aid) {
             return Err("Invalid sensor state");
         }
-        if object.contains_key("open") {
+        if object.contains_key("_offline") {
+            let kind = object
+                .get("_type")
+                .and_then(Value::as_str)
+                .ok_or("Invalid sensor state")?;
+            if object.len() != 2
+                || object.get("_offline").and_then(Value::as_bool) != Some(true)
+                || !matches!(
+                    kind,
+                    "contact_sensor" | "temperature_sensor" | "smoke_sensor" | "switch"
+                )
+            {
+                return Err("Invalid sensor state");
+            }
+            unavailable.push((*aid, kind));
+        } else if object.contains_key("open") {
             if object.get("open").and_then(Value::as_bool).is_none()
                 || object.keys().any(|k| k != "open" && k != "battery_pct")
                 || object
@@ -127,6 +143,31 @@ pub async fn publish_sensors(
     }
     publish_contacts(mqtt, plugin, bridge_id, &contacts).await?;
     let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, kind) in unavailable {
+        let device = format!("homekit_{bridge}_{aid}");
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit device {aid}"),"device_type":kind});
+        for (topic, retained, payload) in [
+            (
+                format!("homecore/plugins/{plugin}/register"),
+                false,
+                register,
+            ),
+            (
+                format!("homecore/devices/{device}/schema"),
+                true,
+                json!({"attributes":{},"primary":[]}),
+            ),
+        ] {
+            mqtt.publish(
+                topic,
+                rumqttc::QoS::AtLeastOnce,
+                retained,
+                payload.to_string(),
+            )
+            .await
+            .map_err(|_| "Cannot publish sensor")?;
+        }
+    }
     for (aid, state) in climate {
         let device = format!("homekit_{bridge}_{aid}");
         let mut attributes = Map::new();
@@ -408,7 +449,10 @@ pub async fn run_sensor_publisher_with_commands(
     );
     let mut guards = std::collections::HashMap::new();
     if let Some(options) = &availability_options {
-        for (aid, _) in watch.current() {
+        for (aid, state) in watch.current() {
+            if state.get("_offline").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
             guards.insert(
                 *aid,
                 AvailabilityGuard::start(options.clone(), &prefix, *aid).await?,
@@ -423,7 +467,15 @@ pub async fn run_sensor_publisher_with_commands(
         }
     }
     publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
-    contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
+    for item in watch.current() {
+        contact_availability(
+            &mqtt,
+            &bridge_id,
+            std::slice::from_ref(item),
+            item.1.get("_offline").and_then(Value::as_bool) != Some(true),
+        )
+        .await?;
+    }
     loop {
         let update = tokio::select! {
             update = watch.next() => match update { Some(update) => update, None => break },
@@ -435,6 +487,12 @@ pub async fn run_sensor_publisher_with_commands(
         };
         if update.1.is_null() {
             guards.remove(&update.0);
+            contact_availability(&mqtt, &bridge_id, &[update], false).await?;
+            continue;
+        }
+        if update.1.get("_offline").and_then(Value::as_bool) == Some(true) {
+            guards.remove(&update.0);
+            publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
             contact_availability(&mqtt, &bridge_id, &[update], false).await?;
             continue;
         }
@@ -985,12 +1043,23 @@ async fn read_sensors(
         {
             return Err("Ambiguous sensor type");
         }
+        let offline_type = if on.is_some() {
+            "switch"
+        } else if smoke.is_some() {
+            "smoke_sensor"
+        } else {
+            "temperature_sensor"
+        };
         let mut state = Map::new();
         for (name, iid) in [("on", on), ("in_use", in_use)] {
             if let Some(iid) = iid {
                 let value = match handle.read(accessory.aid, iid).await {
                     Ok(value) => value.to_json(),
-                    Err(_) => continue 'accessory,
+                    Err(_) => {
+                        readings
+                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
+                        continue 'accessory;
+                    }
                 };
                 let value = value.as_bool().ok_or("Invalid outlet reading")?;
                 state.insert(name.into(), json!(value));
@@ -1000,7 +1069,11 @@ async fn read_sensors(
             if let Some(iid) = iid {
                 let value = match handle.read(accessory.aid, iid).await {
                     Ok(value) => value.to_json(),
-                    Err(_) => continue 'accessory,
+                    Err(_) => {
+                        readings
+                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
+                        continue 'accessory;
+                    }
                 };
                 let detected = match value.as_u64() {
                     Some(0) => false,
@@ -1018,7 +1091,11 @@ async fn read_sensors(
             if let Some(iid) = iid {
                 let value = match handle.read(accessory.aid, iid).await {
                     Ok(value) => value.to_json(),
-                    Err(_) => continue 'accessory,
+                    Err(_) => {
+                        readings
+                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
+                        continue 'accessory;
+                    }
                 };
                 if value
                     .as_f64()
