@@ -1,7 +1,7 @@
 {
   "services/teslemetry/ui/index.js": {
     "complexity": {
-      "count": 2
+      "count": 1
     },
     "no-magic-numbers": {
       "count": 39

@@ -83,6 +83,13 @@ const powerwallConnections = [
     paths: ['M170 222V164', 'M170 164V222'] }
 ];
 
+function powerwallStatus(device, available, known) {
+  return !device ? 'Waiting for device'
+    : !available ? 'Unavailable'
+    : known === 0 ? 'Waiting for readings'
+    : known < 5 ? 'Some readings unavailable' : 'Live readings';
+}
+
 function tariffCurrency(attributes) {
   const currency = attributes?.tariff_currency;
   return typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
@@ -338,10 +345,7 @@ class TeslemetryCard extends HTMLElement {
     }
     summary.push(...this.#renderChargers(attributes, available), ...this.#renderTariffs(attributes, available));
     view.summary.textContent = summary.join(' ');
-    view.status.textContent = !device ? 'Waiting for device'
-      : !available ? 'Unavailable'
-      : known === 0 ? 'Waiting for readings'
-      : known < 5 ? 'Some readings unavailable' : 'Live readings';
+    view.status.textContent = powerwallStatus(device, available, known);
   }
 }
 
