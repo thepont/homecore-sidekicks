@@ -172,19 +172,22 @@ async fn bounded_json(response: reqwest::Response) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
+fn vehicle_display_name(vehicle: &Value, vin: &str) -> String {
+    vehicle
+        .get("display_name")
+        .and_then(Value::as_str)
+        .filter(|s| {
+            !s.is_empty() && s.len() <= 64 && s.chars().all(|c| !c.is_control()) && !s.contains(vin)
+        })
+        .unwrap_or("Tesla vehicle")
+        .to_owned()
+}
+
 pub async fn supervise(base: String, token: String, broker: Broker) {
     let Ok(url) = reqwest::Url::parse(&base) else {
         return;
     };
-    if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-        || broker.host != "127.0.0.1"
-        || broker.port == 0
-    {
+    if !crate::http::valid_base_url(&url) || broker.host != "127.0.0.1" || broker.port == 0 {
         return;
     }
     let Ok(client) = crate::http::client_builder()
@@ -222,17 +225,7 @@ pub async fn supervise(base: String, token: String, broker: Broker) {
                                 continue;
                             }
                             if !running.contains_key(vin) {
-                                let name = vehicle
-                                    .get("display_name")
-                                    .and_then(Value::as_str)
-                                    .filter(|s| {
-                                        !s.is_empty()
-                                            && s.len() <= 64
-                                            && s.chars().all(|c| !c.is_control())
-                                            && !s.contains(vin)
-                                    })
-                                    .unwrap_or("Tesla vehicle")
-                                    .to_owned();
+                                let name = vehicle_display_name(vehicle, vin);
                                 let task = tokio::spawn(follow(
                                     base.clone(),
                                     token.clone(),

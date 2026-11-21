@@ -11,12 +11,7 @@ pub fn load_kw(status: &Value) -> Result<f64, &'static str> {
 
 fn status_url(base: &str, site: u64, token: &str) -> Result<String, &'static str> {
     let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
-    if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
+    if !crate::http::valid_base_url(&url)
         || site == 0
         || token.is_empty()
         || token.len() > 4096
@@ -176,31 +171,40 @@ pub fn energy(status: &Value) -> Result<(Powerwall, serde_json::Map<String, Valu
             .filter(|v| v.len() <= 16)
             .ok_or("Invalid wall connectors")?;
         for (index, connector) in connectors.iter().enumerate() {
-            if !connector.is_object() {
-                return Err("Invalid wall connector");
-            }
-            for (source, suffix) in [
-                ("wall_connector_power", "power_w"),
-                ("wall_connector_state", "state"),
-                ("wall_connector_fault_state", "fault_state"),
-                ("ocpp_status", "ocpp_status"),
-                ("powershare_session_state", "powershare_state"),
-            ] {
-                if let Some(value) = connector.get(source).filter(|v| !v.is_null()) {
-                    let value = if suffix == "power_w" {
-                        Value::from(
-                            value
-                                .as_f64()
-                                .filter(|v| v.is_finite())
-                                .ok_or("Invalid wall connector reading")?,
-                        )
-                    } else {
-                        Value::from(value.as_i64().ok_or("Invalid wall connector status")?)
-                    };
-                    readings.insert(format!("wall_connector_{}_{suffix}", index + 1), value);
-                }
-            }
+            add_wall_connector(connector, index, &mut readings)?;
         }
     }
     Ok((battery, readings))
+}
+
+fn add_wall_connector(
+    connector: &Value,
+    index: usize,
+    readings: &mut serde_json::Map<String, Value>,
+) -> Result<(), &'static str> {
+    if !connector.is_object() {
+        return Err("Invalid wall connector");
+    }
+    for (source, suffix) in [
+        ("wall_connector_power", "power_w"),
+        ("wall_connector_state", "state"),
+        ("wall_connector_fault_state", "fault_state"),
+        ("ocpp_status", "ocpp_status"),
+        ("powershare_session_state", "powershare_state"),
+    ] {
+        if let Some(value) = connector.get(source).filter(|v| !v.is_null()) {
+            let value = if suffix == "power_w" {
+                Value::from(
+                    value
+                        .as_f64()
+                        .filter(|v| v.is_finite())
+                        .ok_or("Invalid wall connector reading")?,
+                )
+            } else {
+                Value::from(value.as_i64().ok_or("Invalid wall connector status")?)
+            };
+            readings.insert(format!("wall_connector_{}_{suffix}", index + 1), value);
+        }
+    }
+    Ok(())
 }
