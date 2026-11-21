@@ -1,4 +1,5 @@
 const MAX_QR_BASE64_LENGTH = 262144;
+const SIGN_IN_POLL_INTERVAL_MS = 1500;
 
 class XiaomiSetup extends HTMLElement {
   #host; #generation=0; #timer;
@@ -40,7 +41,7 @@ class XiaomiSetup extends HTMLElement {
     const button=this.shadowRoot.querySelector('button');
     if(!button.disabled) button.disabled=true;
     this.shadowRoot.querySelector('.status').textContent='Scan this code with Mi Home.';
-    this.#timer=setTimeout(()=>void this.#check(generation),1500);
+    this.#timer=setTimeout(()=>void this.#check(generation),SIGN_IN_POLL_INTERVAL_MS);
   }
   #showAccess(data) {
     const devices=Array.isArray(data?.known_devices) ? data.known_devices.filter(device=>
@@ -187,7 +188,7 @@ class XiaomiSetup extends HTMLElement {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
     }
     if(result?.ok && result.data?.setup_status==='waiting') {
-      this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
+      this.#timer=setTimeout(()=>void this.#check(generation),SIGN_IN_POLL_INTERVAL_MS);return;
     }
     this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;
     status.textContent='Sign-in could not be completed. Try again.';

@@ -18,9 +18,6 @@
   "services/xiaomi/ui/index.js": {
     "complexity": {
       "count": 1
-    },
-    "no-magic-numbers": {
-      "count": 2
     }
   },
   "ui/ac-card/index.js": {
