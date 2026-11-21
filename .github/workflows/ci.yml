@@ -33,7 +33,7 @@ jobs:
     env:
       SERVICE: ${{ matrix.service }}
       MANIFEST: services/${{ matrix.service }}/Cargo.toml
-      RUST_TOOLCHAIN: '1.96.0'
+      RUST_TOOLCHAIN: '1.100.0'
     steps:
       - *checkout
       - name: Set up Rust
