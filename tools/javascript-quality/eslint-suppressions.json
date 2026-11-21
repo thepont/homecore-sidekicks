@@ -1,13 +1,10 @@
 {
   "services/teslemetry/ui/index.js": {
     "complexity": {
-      "count": 3
-    },
-    "id-length": {
-      "count": 4
+      "count": 1
     },
     "no-magic-numbers": {
-      "count": 40
+      "count": 39
     }
   },
   "ui/ac-card/index.js": {

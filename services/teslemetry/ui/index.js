@@ -83,6 +83,13 @@ const powerwallConnections = [
     paths: ['M170 222V164', 'M170 164V222'] }
 ];
 
+function powerwallStatus(device, available, known) {
+  return !device ? 'Waiting for device'
+    : !available ? 'Unavailable'
+    : known === 0 ? 'Waiting for readings'
+    : known < 5 ? 'Some readings unavailable' : 'Live readings';
+}
+
 function tariffCurrency(attributes) {
   const currency = attributes?.tariff_currency;
   return typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
@@ -338,10 +345,7 @@ class TeslemetryCard extends HTMLElement {
     }
     summary.push(...this.#renderChargers(attributes, available), ...this.#renderTariffs(attributes, available));
     view.summary.textContent = summary.join(' ');
-    view.status.textContent = !device ? 'Waiting for device'
-      : !available ? 'Unavailable'
-      : known === 0 ? 'Waiting for readings'
-      : known < 5 ? 'Some readings unavailable' : 'Live readings';
+    view.status.textContent = powerwallStatus(device, available, known);
   }
 }
 
@@ -414,6 +418,14 @@ function appendHistoryChart(target, points, periods, label, formatRange) {
   target.append(range, dates);
 }
 
+function historyUnavailableMessage(history) {
+  return history === undefined ? 'Loading history…' : history === null ? 'History unavailable' : 'Not enough history yet';
+}
+
+function formatPowerReading(watts) {
+  return typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+}
+
 function sortedPowerHistory(records) {
   return records.filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.at)))
     .sort(compareHistoryTimes);
@@ -448,7 +460,7 @@ class TeslemetrySolar extends HTMLElement {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+    const reading = formatPowerReading(watts);
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -461,7 +473,7 @@ class TeslemetrySolar extends HTMLElement {
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
     const points = sortedPowerHistory(this.#history ?? []);
-    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    if (points.length < 2) { target.textContent = historyUnavailableMessage(this.#history); return; }
     appendHistoryChart(target, points, this.#periods, 'Solar power history', formatPowerRange);
   }
 }
@@ -509,7 +521,7 @@ class TeslemetryGrid extends HTMLElement {
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const attributes = device?.available === true ? device.attributes : undefined;
     const watts = attributes?.grid_power_w;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
+    const reading = formatPowerReading(watts);
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -526,7 +538,7 @@ class TeslemetryGrid extends HTMLElement {
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
     const target = this.shadowRoot.querySelector('.history');
     const points = sortedPowerHistory(this.#history ?? []);
-    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    if (points.length < 2) { target.textContent = historyUnavailableMessage(this.#history); return; }
     appendHistoryChart(target, points, this.#periods, 'Grid power history', formatPowerRange);
   }
 }
@@ -573,8 +585,8 @@ class TeslemetryBattery extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort(compareHistoryTimes);
-    if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
+    const points = (this.#history ?? []).filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && point.value >= 0 && point.value <= 100 && Number.isFinite(Date.parse(point.at))).sort(compareHistoryTimes);
+    if (points.length < 2) { target.textContent = historyUnavailableMessage(this.#history); return; }
     appendHistoryChart(target, points, this.#periods, 'Battery charge history', (min, max) => `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`);
   }
 }
@@ -604,14 +616,14 @@ class TeslemetryCombined extends HTMLElement {
     const points=series.flat().sort(compareHistoryTimes);
     const target=this.shadowRoot.querySelector('.graph');target.textContent='';
     if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
-    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(p=>p.value),min=Math.min(...values),max=Math.max(...values);
+    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(point=>point.value),min=Math.min(...values),max=Math.max(...values);
     if(end===start){target.textContent='Not enough history yet';return;}
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 110');svg.setAttribute('role','img');svg.setAttribute('aria-label','Combined power history');
     renderTariffBands(svg,all[4],points);
-    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
+    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(point=>`${(Date.parse(point.at)-start)*300/(end-start)},${95-(point.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
     target.append(svg);
     const range=document.createElement('div');range.className='note';range.textContent=`${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
-    const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
+    const dates=document.createElement('div');dates.className='note';const show=value=>new Date(value).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
     target.append(range,dates);
   }
 }
