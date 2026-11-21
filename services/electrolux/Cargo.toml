@@ -13,6 +13,5 @@ tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "
 
 [dev-dependencies]
 homecore-test-support = { path = "../../crates/test-support" }
-reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
-ring = "=0.17.14"
+reqwest = { version = "=0.12.28", default-features = false }
 base64 = "=0.23.1"

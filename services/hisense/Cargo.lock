@@ -226,7 +226,6 @@ dependencies = [
  "homecore-test-support",
  "quick-xml",
  "reqwest",
- "ring",
  "rumqttc",
  "serde_json",
  "tokio",

@@ -24,6 +24,4 @@ hap-transport = { path = "vendor/hap-transport" }
 
 [dev-dependencies]
 homecore-test-support = { path = "../../crates/test-support" }
-base64 = "=0.23.1"
-reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls"] }
-ring = "=0.17.14"
+reqwest = { version = "=0.12.28", default-features = false }
