@@ -966,7 +966,6 @@ async fn paired_sensors_are_independent_devices_and_withdraw_stale_readings() {
     .await;
 }
 
-
 #[tokio::test]
 #[ignore = "requires Docker and pinned homeCore image"]
 async fn paired_sensor_is_registered_with_real_homecore() {

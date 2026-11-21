@@ -195,7 +195,7 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     let key_path = root.join("fixture-vault-key");
     let mut key = zeroize::Zeroizing::new([0u8; 32]);
     SystemRandom::new().fill(&mut *key).unwrap();
-    std::fs::write(&key_path, &*key).unwrap();
+    std::fs::write(&key_path, &key[..]).unwrap();
     let broker = broker.with_vault_key_file(&key_path).unwrap();
     #[cfg(feature = "extractor")]
     let (broker, worker) = {
@@ -204,7 +204,7 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
         let key_path = root.join("fixture-extractor-key");
         let mut shared_key = zeroize::Zeroizing::new([0u8; 32]);
         SystemRandom::new().fill(&mut *shared_key).unwrap();
-        std::fs::write(&key_path, &*shared_key).unwrap();
+        std::fs::write(&key_path, &shared_key[..]).unwrap();
         let router = homecore_xiaomi::extractor::router(Provider::new(&base).unwrap(), *shared_key);
         let worker = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         (

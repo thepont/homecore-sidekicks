@@ -207,5 +207,5 @@ async fn service_process_registers_without_xiaomi_credentials() {
     let _ = child.kill();
     let _ = child.wait();
     fs::remove_dir_all(root).unwrap();
-    assert_eq!(found.unwrap(), true);
+    assert!(found.unwrap());
 }
