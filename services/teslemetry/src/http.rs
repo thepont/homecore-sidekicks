@@ -1,5 +1,14 @@
 use std::time::Duration;
 
+pub(crate) fn valid_base_url(url: &reqwest::Url) -> bool {
+    (url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path() == "/"
+}
+
 pub fn client() -> reqwest::Result<reqwest::Client> {
     client_builder()
         .timeout(Duration::from_secs(10))

@@ -11,12 +11,7 @@ pub fn load_kw(status: &Value) -> Result<f64, &'static str> {
 
 fn status_url(base: &str, site: u64, token: &str) -> Result<String, &'static str> {
     let url = reqwest::Url::parse(base).map_err(|_| "Invalid Teslemetry configuration")?;
-    if !(url.scheme() == "https" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1")))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
+    if !crate::http::valid_base_url(&url)
         || site == 0
         || token.is_empty()
         || token.len() > 4096
