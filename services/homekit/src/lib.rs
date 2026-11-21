@@ -203,32 +203,28 @@ pub async fn publish_sensors(
             "humidity"
         };
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit climate {aid}"),"device_type":"temperature_sensor"});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":attributes,"primary":[primary]}),
-            ),
-            (
-                format!("homecore/devices/{device}/state"),
-                true,
-                state.clone(),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish sensor")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":[primary]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
     }
     for (aid, state) in outlets {
         let device = format!("homekit_{bridge}_{aid}");
@@ -244,32 +240,28 @@ pub async fn publish_sensors(
             );
         }
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit outlet {aid}"),"device_type":"switch"});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":attributes,"primary":["on"]}),
-            ),
-            (
-                format!("homecore/devices/{device}/state"),
-                true,
-                state.clone(),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish sensor")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["on"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
     }
     for (aid, state) in smoke {
         let device = format!("homekit_{bridge}_{aid}");
@@ -289,32 +281,28 @@ pub async fn publish_sensors(
             );
         }
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit smoke detector {aid}"),"device_type":"smoke_sensor"});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":attributes,"primary":["smoke"]}),
-            ),
-            (
-                format!("homecore/devices/{device}/state"),
-                true,
-                state.clone(),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish sensor")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["smoke"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
     }
     Ok(())
 }
@@ -375,32 +363,28 @@ pub async fn publish_contacts(
             );
         }
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit contact {aid}"),"device_type":"contact_sensor"});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":attributes,"primary":["open"]}),
-            ),
-            (
-                format!("homecore/devices/{device}/state"),
-                true,
-                state.clone(),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish contact")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["open"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish contact",
+        )
+        .await?;
     }
     Ok(())
 }
