@@ -54,22 +54,9 @@ async fn discover(
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let Some(region) = input["region"].as_str().filter(|value| valid_region(value)) else {
+    let Some((region, allowed)) = discovery_selection(&input) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Some(models) = input["models"]
-        .as_array()
-        .filter(|items| items.len() <= MAX_MODELS)
-    else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
-    let mut allowed = BTreeSet::new();
-    for value in models {
-        let Some(model) = value.as_str().filter(|value| valid_identifier(value)) else {
-            return StatusCode::BAD_REQUEST.into_response();
-        };
-        allowed.insert(model.to_owned());
-    }
     let Ok(lease) = worker.slot.clone().try_acquire_owned() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
@@ -120,6 +107,21 @@ async fn discover(
         Body::from_stream(stream::once(async move { qr }).chain(stream::once(result))),
     )
         .into_response()
+}
+
+fn discovery_selection(input: &Value) -> Option<(&str, BTreeSet<String>)> {
+    let region = input["region"]
+        .as_str()
+        .filter(|value| valid_region(value))?;
+    let models = input["models"]
+        .as_array()
+        .filter(|items| items.len() <= MAX_MODELS)?;
+    let mut allowed = BTreeSet::new();
+    for value in models {
+        let model = value.as_str().filter(|value| valid_identifier(value))?;
+        allowed.insert(model.to_owned());
+    }
+    Some((region, allowed))
 }
 
 fn frame(value: Value) -> Result<Bytes, Infallible> {
