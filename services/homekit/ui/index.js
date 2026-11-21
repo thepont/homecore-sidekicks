@@ -7,6 +7,10 @@ function validAccessory(item) {
     && typeof item.paired === 'boolean';
 }
 
+function discoveredAccessories(result) {
+  return result?.ok && Array.isArray(result.data?.accessories) ? result.data.accessories : null;
+}
+
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
@@ -43,7 +47,7 @@ class HomeKitSetup extends HTMLElement {
     let result;try{result=await this.#host.action('discover_accessories');}catch{}
     if(generation!==this.#generation || !this.isConnected)return;
     button.disabled=false;
-    const list=result?.ok && Array.isArray(result.data?.accessories)?result.data.accessories:null;
+    const list=discoveredAccessories(result);
     if(!list){status.textContent='Could not find accessories. Try again.';return;}
     const select=this.shadowRoot.querySelector('#accessory');
     select.replaceChildren(new Option('Choose an accessory',''));

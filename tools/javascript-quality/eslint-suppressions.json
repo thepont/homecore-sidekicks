@@ -1,7 +1,7 @@
 {
   "services/homekit/ui/index.js": {
     "complexity": {
-      "count": 2
+      "count": 1
     }
   },
   "services/teslemetry/ui/index.js": {
