@@ -240,9 +240,11 @@ const template = panel => {
 };
 
 // Keep the inputs typed before running any display or command rules.
+const MIN_VALID_TEMPERATURE = -100;
+const MAX_VALID_TEMPERATURE = 150;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-const temperature = value => number(value) >= -100 && value <= 150 ? value : undefined;
+const temperature = value => number(value) >= MIN_VALID_TEMPERATURE && value <= MAX_VALID_TEMPERATURE ? value : undefined;
 const choice = value => typeof value === 'string' && /^[a-zA-Z0-9_. -]{1,40}$/.test(value) ? value : undefined;
 const lookup = (table, key) => typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined;
 const show = (element, visible) => element.toggleAttribute('hidden', !visible);
