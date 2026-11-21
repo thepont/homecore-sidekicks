@@ -164,46 +164,68 @@ impl RegistryState {
             Some(adapters) => Some(AdapterCatalog::parse(adapters)?),
             None => return Err(DATABASE_ERROR),
         };
-        let stored = data["requests"]
-            .as_array()
-            .filter(|entries| entries.len() <= MAX_REQUESTS)
-            .ok_or(DATABASE_ERROR)?;
-        let mut requests = BTreeSet::new();
-        for entry in stored {
-            let request = AccessRequest::parse(entry)?;
-            if !catalog
-                .as_ref()
-                .is_some_and(|catalog| request.supported_by(catalog))
-                || !requests.insert(request)
-            {
-                return Err(DATABASE_ERROR);
-            }
-        }
-        let mut devices = BTreeMap::new();
-        for entry in optional_entries(&data, "devices", MAX_DEVICES)? {
-            let device = StoredDevice::parse(entry)?;
-            if devices.insert(device.reference.clone(), device).is_some() {
-                return Err(DATABASE_ERROR);
-            }
-        }
-        let mut grants = BTreeSet::new();
-        for entry in optional_entries(&data, "grants", MAX_GRANTS)? {
-            let grant = DeviceGrant::parse(entry)?;
-            let device = devices.get(&grant.device_ref).ok_or(DATABASE_ERROR)?;
-            if !catalog
-                .as_ref()
-                .is_some_and(|catalog| catalog.supports(&grant.plugin_id, &device.model))
-                || !grants.insert(grant)
-            {
-                return Err(DATABASE_ERROR);
-            }
-        }
+        let requests = Self::read_requests(&data["requests"], catalog.as_ref())?;
+        let devices = Self::read_devices(optional_entries(&data, "devices", MAX_DEVICES)?)?;
+        let grants = Self::read_grants(
+            optional_entries(&data, "grants", MAX_GRANTS)?,
+            catalog.as_ref(),
+            &devices,
+        )?;
         Ok(Self {
             catalog,
             requests,
             devices,
             grants,
         })
+    }
+
+    fn read_requests(
+        data: &Value,
+        catalog: Option<&AdapterCatalog>,
+    ) -> Result<BTreeSet<AccessRequest>, &'static str> {
+        let stored = data
+            .as_array()
+            .filter(|entries| entries.len() <= MAX_REQUESTS)
+            .ok_or(DATABASE_ERROR)?;
+        let mut requests = BTreeSet::new();
+        for entry in stored {
+            let request = AccessRequest::parse(entry)?;
+            if !catalog.is_some_and(|catalog| request.supported_by(catalog))
+                || !requests.insert(request)
+            {
+                return Err(DATABASE_ERROR);
+            }
+        }
+        Ok(requests)
+    }
+
+    fn read_devices(entries: &[Value]) -> Result<BTreeMap<String, StoredDevice>, &'static str> {
+        let mut devices = BTreeMap::new();
+        for entry in entries {
+            let device = StoredDevice::parse(entry)?;
+            if devices.insert(device.reference.clone(), device).is_some() {
+                return Err(DATABASE_ERROR);
+            }
+        }
+        Ok(devices)
+    }
+
+    fn read_grants(
+        entries: &[Value],
+        catalog: Option<&AdapterCatalog>,
+        devices: &BTreeMap<String, StoredDevice>,
+    ) -> Result<BTreeSet<DeviceGrant>, &'static str> {
+        let mut grants = BTreeSet::new();
+        for entry in entries {
+            let grant = DeviceGrant::parse(entry)?;
+            let device = devices.get(&grant.device_ref).ok_or(DATABASE_ERROR)?;
+            if !catalog.is_some_and(|catalog| catalog.supports(&grant.plugin_id, &device.model))
+                || !grants.insert(grant)
+            {
+                return Err(DATABASE_ERROR);
+            }
+        }
+        Ok(grants)
     }
 
     fn document(&self) -> Result<String, &'static str> {
