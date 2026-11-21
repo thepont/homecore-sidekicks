@@ -3,6 +3,9 @@ name = "homecore-xiaomi"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+postgres = ["dep:rustls", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:webpki-roots"]
+
 [profile.release]
 strip = "symbols"
 lto = "thin"
@@ -17,6 +20,10 @@ serde_json = "=1.0.145"
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
 rumqttc = { version = "=0.25.1", default-features = false }
 rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+tokio-postgres = { version = "=0.7.18", optional = true }
+tokio-postgres-rustls = { version = "=0.14.0", default-features = false, features = ["ring"], optional = true }
+webpki-roots = { version = "=1.0.12", optional = true }
 rc4 = { version = "=0.2.0", features = ["zeroize"] }
 plugin-sdk-rs = { git = "https://github.com/homeCore-io/homeCore.git", rev = "40a9c649e33bd61d8cbb343eebf20b61bd624ca3", version = "0.6.5" }
 

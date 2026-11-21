@@ -7,6 +7,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "postgres")]
+mod postgres;
+#[cfg(feature = "postgres")]
+pub(crate) use postgres::load_postgres;
+
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS xiaomi_adapter_registry (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -72,6 +77,9 @@ fn open_sqlite(path: &Path) -> Result<Connection, &'static str> {
 fn parse_document(document: Option<&str>) -> Result<Option<AdapterCatalog>, &'static str> {
     document
         .map(|document| {
+            if document.len() > 65536 {
+                return Err(DATABASE_ERROR);
+            }
             let data = serde_json::from_str(document).map_err(|_| DATABASE_ERROR)?;
             AdapterCatalog::parse(&data)
         })

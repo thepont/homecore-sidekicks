@@ -32,6 +32,15 @@ the saved list at startup when `adapters.json` is absent. When neither a
 saved list nor an import file is present, setup uses the single-gateway flow.
 The SQLite connection closes once the catalogue is loaded.
 
+Build with `cargo build --locked --release --features postgres` to enable
+the PostgreSQL driver. Set `XIAOMI_DATABASE=postgres` and
+`XIAOMI_POSTGRES_URL_FILE` to a mounted secret containing the connection URL.
+The database role needs permission to create and update its registration
+table. The connection requires TLS and verifies the
+server certificate. Set `XIAOMI_POSTGRES_CA_FILE` for a private CA. Like
+SQLite, PostgreSQL is used during startup and the setup service serves the
+loaded catalogue from memory.
+
 `Setup` is the Facade for QR sign-in and discovery. The adapter catalogue
 owns model matching, and the Xiaomi provider fetches the account's devices
 once per sign-in. The setup response contains device IDs, names, models and

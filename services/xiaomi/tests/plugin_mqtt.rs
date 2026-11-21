@@ -7,6 +7,25 @@ use std::{fs, time::Duration};
 
 #[tokio::test]
 async fn installed_adapter_list_survives_a_service_restart() {
+    assert_persistent_adapters("sqlite", &[]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable TLS PostgreSQL database and a build with the postgres feature"]
+async fn installed_adapter_list_survives_a_postgres_service_restart() {
+    let database = std::env::var_os("XIAOMI_TEST_POSTGRES_URL_FILE").unwrap();
+    let ca = std::env::var_os("XIAOMI_TEST_POSTGRES_CA_FILE").unwrap();
+    assert_persistent_adapters(
+        "postgres",
+        &[
+            ("XIAOMI_POSTGRES_URL_FILE", database),
+            ("XIAOMI_POSTGRES_CA_FILE", ca),
+        ],
+    )
+    .await;
+}
+
+async fn assert_persistent_adapters(backend: &str, extra_env: &[(&str, std::ffi::OsString)]) {
     struct Process(std::process::Child);
     impl Drop for Process {
         fn drop(&mut self) {
@@ -15,8 +34,17 @@ async fn installed_adapter_list_survives_a_service_restart() {
         }
     }
 
-    let root = std::env::temp_dir().join(format!("xiaomi-adapters-{}", std::process::id()));
+    struct StateDirectory(std::path::PathBuf);
+    impl Drop for StateDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let root =
+        std::env::temp_dir().join(format!("xiaomi-adapters-{backend}-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
+    let _state_directory = StateDirectory(root.clone());
     let passwords = root.join("mqtt-password");
     fs::write(&passwords, "fixture-password").unwrap();
     let registrations = json!([
@@ -38,7 +66,8 @@ async fn installed_adapter_list_survives_a_service_restart() {
                 .env("MQTT_PASSWORD_FILE", &passwords)
                 .env("XIAOMI_STATE_DIR", &root)
                 .env("XIAOMI_UI_DIR", "ui")
-                .env("XIAOMI_DATABASE", "sqlite")
+                .env("XIAOMI_DATABASE", backend)
+                .envs(extra_env.iter().map(|(key, value)| (*key, value)))
                 .spawn()
                 .unwrap(),
         );
@@ -74,7 +103,6 @@ async fn installed_adapter_list_survives_a_service_restart() {
         }
     }
 
-    fs::remove_dir_all(&root).unwrap();
     assert_eq!(results, vec![registrations.clone(), registrations]);
 }
 

@@ -69,6 +69,17 @@ impl Setup {
         self.adapters = AdapterSource::Registry(catalog.map(Arc::new));
         Ok(self)
     }
+
+    #[cfg(feature = "postgres")]
+    pub async fn with_postgres(
+        mut self,
+        dsn_file: &Path,
+        ca_file: Option<&Path>,
+    ) -> Result<Self, &'static str> {
+        let catalog = registry::load_postgres(dsn_file, ca_file, self.store.adapters()?).await?;
+        self.adapters = AdapterSource::Registry(catalog.map(Arc::new));
+        Ok(self)
+    }
     pub async fn status(&self) -> &'static str {
         self.state.lock().await.status()
     }

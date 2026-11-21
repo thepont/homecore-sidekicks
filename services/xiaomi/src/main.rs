@@ -51,6 +51,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok("sqlite") | Err(env::VarError::NotPresent) => {
             setup.with_sqlite(&root.join("xiaomi.sqlite3")).await?
         }
+        #[cfg(feature = "postgres")]
+        Ok("postgres") => {
+            let dsn_file = PathBuf::from(required("XIAOMI_POSTGRES_URL_FILE")?);
+            let ca_file = env::var_os("XIAOMI_POSTGRES_CA_FILE").map(PathBuf::from);
+            setup.with_postgres(&dsn_file, ca_file.as_deref()).await?
+        }
+        #[cfg(not(feature = "postgres"))]
+        Ok("postgres") => {
+            return Err("Xiaomi PostgreSQL support requires the postgres build feature".into())
+        }
         _ => return Err("Invalid Xiaomi database backend".into()),
     };
     runtime::run(host, port, id, password, setup, ui).await
