@@ -1,6 +1,6 @@
-use homecore_test_support::homecore;
 use axum::{http::HeaderMap, routing::post, Router};
 use homecore_hisense::{run, Broker, Hisense};
+use homecore_test_support::homecore;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
