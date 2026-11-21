@@ -336,23 +336,18 @@ async fn publish_vehicle_state(
         .get("vehicle_state")
         .and_then(Value::as_str)
         .is_some_and(|s| s != "online");
-    if mqtt
-        .publish(
-            availability,
-            QoS::AtLeastOnce,
-            true,
-            if fresh && !asleep {
-                "online"
-            } else {
-                "offline"
-            },
-        )
-        .await
-        .is_err()
-    {
-        return false;
-    }
-    true
+    mqtt.publish(
+        availability,
+        QoS::AtLeastOnce,
+        true,
+        if fresh && !asleep {
+            "online"
+        } else {
+            "offline"
+        },
+    )
+    .await
+    .is_ok()
 }
 
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
