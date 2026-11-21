@@ -18,7 +18,7 @@ export MQTT_PASSWORD_FILE=/absolute/private/path/mqtt-password
 cargo run --release --locked --bin electrolux-bridge
 ```
 
-The fixed plugin and device identifiers are `plugin.electrolux.living_room` and `electrolux_living_room`. Run only one bridge with these identifiers on a broker. The credential file is bounded to 4096 bytes and must contain printable ASCII with optional surrounding whitespace. Commands are limited to one recognized field, 1024 bytes and a bounded queue. Commands delivered with the MQTT retained flag and commands received while the device is unavailable are ignored. Setpoints must be whole degrees between 17 and 30°C, matching the existing installation.
+The fixed plugin and device identifiers are `plugin.electrolux.living_room` and `electrolux_living_room`. Run only one bridge with these identifiers on a broker. The credential file is bounded to 4096 bytes and must contain printable ASCII with optional surrounding whitespace. Commands are limited to one recognized field, 1024 bytes and a bounded queue. Commands delivered with the MQTT retained flag and commands received while the device is unavailable are ignored. Setpoints must be whole degrees between 17 and 30°C, matching the controller range.
 
 The broker command topic is `homecore/devices/electrolux_living_room/cmd`. Supported fields are `on` (boolean), `setpoint` (whole degrees Celsius), `hvac_mode` (`off`, `cool`, `heat`, `dry`, `fan_only`, `auto`, `heat_cool`), `fan_mode` (`auto`, `low`, `medium`, `high`, `turbo`, `quiet`), and `swing` (boolean). Only one field can be sent in each message. Commands may be dropped when the bounded queue is full. Successful submission is not confirmation: the subsequent device state is authoritative. Restrict broker access to authorized publishers.
 
@@ -31,7 +31,7 @@ cargo test --locked --test core_command -- --ignored --test-threads=1
 cargo build --release --locked --bin electrolux-bridge
 ```
 
-The MQTT tests require Docker and the pinned Mosquitto image named in `tests/support/mqtt_broker.rs`; they use a simulated AC and isolated broker. `tests/live.rs` is an opt-in, read-only hardware test and requires `ELECTROLUX_LIVE_CONFIG` to point to a private JSON file containing `host` and `mac`. Never commit the file. A real-device on/off test through the homeCore API succeeded, with both homeCore and Home Assistant reporting the changes. Other real-device controls have not yet been exercised.
+The MQTT tests require Docker and the pinned Mosquitto image named in `../../crates/test-support/src/mqtt_broker.rs`; they use a simulated AC and isolated broker. `tests/live.rs` is an opt-in, read-only hardware test and requires `ELECTROLUX_LIVE_CONFIG` to point to a private JSON file containing `host` and `mac`. Never commit the file. A real-device on/off test through the homeCore API succeeded, with both homeCore and Home Assistant reporting the changes. Other real-device controls have not yet been exercised.
 
 The Electrolux frame follows the installed [Electrolux Climate component](https://github.com/jnctech/ElectroluxClimateComponent), and the bridge uses pinned `rbroadlink` for Broadlink packet encryption. Its dependency audit currently reports unmaintained transitive `chrono` and `gcc` crates. Review those dependencies before deployment.
 

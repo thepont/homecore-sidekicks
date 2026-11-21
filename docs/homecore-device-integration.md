@@ -1,6 +1,6 @@
 # HomeCore device types and integration
 
-Reviewed 20 November 2026 against HomeCore Core v0.1.120 and hc-web-svelte v0.1.85, both tagged on 19 November UTC. This repository pins images identified as Core v0.1.118 and web v0.1.84. The frontend comparison between v0.1.84 and v0.1.85 contains no changes to the device/card sources examined here. This inventory describes the shipped examples and app behaviour. HomeCore accepts additional type strings from plugins and site profiles. [Repository image pins](../deploy/compose.yaml) · [Pinned Core source](https://github.com/homeCore-io/homeCore/commit/57aff2c) · [Current Core tag](https://github.com/homeCore-io/homeCore/tree/v0.1.120) · [Web comparison](https://github.com/homeCore-io/hc-web-svelte/compare/v0.1.84...v0.1.85)
+Reviewed 20 November 2026 against HomeCore Core v0.1.120 and hc-web-svelte v0.1.85, both tagged on 19 November UTC. The frontend comparison between v0.1.84 and v0.1.85 contains no changes to the device/card sources examined here. This inventory describes the shipped examples and app behaviour. HomeCore accepts additional type strings from plugins and site profiles. [Pinned Core source](https://github.com/homeCore-io/homeCore/commit/57aff2c) · [Current Core tag](https://github.com/homeCore-io/homeCore/tree/v0.1.120) · [Web comparison](https://github.com/homeCore-io/hc-web-svelte/compare/v0.1.84...v0.1.85)
 
 ## Core's example type catalog
 
