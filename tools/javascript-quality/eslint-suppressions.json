@@ -12,7 +12,7 @@
       "count": 11
     },
     "no-magic-numbers": {
-      "count": 54
+      "count": 46
     }
   },
   "services/xiaomi/ui/index.js": {

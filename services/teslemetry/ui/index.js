@@ -1,4 +1,5 @@
 // homeCore plugin UI host interface v1. The browser owns rendering and live data.
+const WATTS_PER_KILOWATT = 1000;
 const powerwallStyle = `
   :host { display:block; min-width:0; container-type:inline-size; color:var(--ink,#20242b); font-family:var(--font,system-ui,sans-serif); }
   * { box-sizing:border-box; }
@@ -226,7 +227,7 @@ class TeslemetryCard extends HTMLElement {
         .some(suffix => Object.hasOwn(attributes ?? {}, prefix + suffix))) continue;
       const raw = attributes?.[`${prefix}power_w`];
       const watts = available && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
-      const power = this.#format(watts === undefined ? undefined : watts / 1000, 'kW');
+      const power = this.#format(watts === undefined ? undefined : watts / WATTS_PER_KILOWATT, 'kW');
       const state = !available ? 'Unavailable' : watts === undefined ? 'No reading'
         : watts === 0 ? 'Idle' : watts > 0 ? 'Drawing' : 'Reverse flow';
       const name = `Charger ${index}`;
@@ -278,7 +279,7 @@ class TeslemetryCard extends HTMLElement {
   }
 
   #renderConnection(node, watts) {
-    const magnitude = watts === undefined ? undefined : Math.abs(watts) / 1000;
+    const magnitude = watts === undefined ? undefined : Math.abs(watts) / WATTS_PER_KILOWATT;
     const kw = magnitude === undefined ? undefined : Number(magnitude.toFixed(magnitude < 0.1 ? 3 : 2));
     const power = this.#format(kw, 'kW');
     const direction = watts === undefined ? 'No reading'
@@ -362,7 +363,7 @@ function renderTariffBands(svg, records, points) {
   }
 }
 
-const formatPowerRange = (min, max) => `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+const formatPowerRange = (min, max) => `${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
 
 function appendHistoryChart(target, points, periods, label, formatRange) {
   const values = points.map(point => point.value);
@@ -426,7 +427,7 @@ class TeslemetrySolar extends HTMLElement {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const watts = device?.available === true ? device.attributes?.solar_power_w : undefined;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}</style><div class="card"><span>Solar</span><strong></strong><div class="history"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -483,7 +484,7 @@ class TeslemetryGrid extends HTMLElement {
     const device = this.#host?.devices.get('teslemetry_powerwall');
     const a = device?.available === true ? device.attributes : undefined;
     const watts = a?.grid_power_w;
-    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / 1000).toFixed(2))} kW` : 'Unavailable';
+    const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
     const button = this.shadowRoot.querySelector('button');
@@ -585,7 +586,7 @@ class TeslemetryCombined extends HTMLElement {
     renderTariffBands(svg,all[4],points);
     series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
     target.append(svg);
-    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min/1000).toFixed(2))}–${Number((max/1000).toFixed(2))} kW`;
+    const range=document.createElement('div');range.className='note';range.textContent=`${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
     const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
     target.append(range,dates);
   }
