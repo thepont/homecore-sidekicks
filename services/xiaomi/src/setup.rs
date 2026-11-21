@@ -3,6 +3,7 @@ use crate::{
     login::Provider,
     registry::{Operation, Registry, RegistryState},
     store::Store,
+    vault::{valid_region, Vault},
 };
 use std::{path::Path, sync::Arc};
 use tokio::sync::Mutex;
@@ -14,6 +15,7 @@ pub struct Setup {
     region: String,
     state: Arc<Mutex<SetupState>>,
     adapters: AdapterSource,
+    vault: Option<Arc<Vault>>,
 }
 
 #[derive(Clone)]
@@ -66,6 +68,7 @@ impl Setup {
             region: region.to_owned(),
             state: Arc::new(Mutex::new(state)),
             adapters: AdapterSource::File,
+            vault: None,
         }
     }
 
@@ -85,6 +88,20 @@ impl Setup {
             .await
     }
 
+    pub fn with_vault_key_file(mut self, key: &Path) -> Result<Self, &'static str> {
+        if !matches!(self.adapters, AdapterSource::Registry(_)) {
+            return Err("Xiaomi credential storage requires a registry");
+        }
+        self.vault = Some(Arc::new(Vault::from_file(key)?));
+        Ok(self)
+    }
+
+    pub(crate) fn vault(&self) -> Result<Arc<Vault>, &'static str> {
+        self.vault
+            .clone()
+            .ok_or("Xiaomi credential storage is not configured")
+    }
+
     #[cfg(feature = "postgres")]
     pub async fn with_postgres(
         self,
@@ -102,6 +119,13 @@ impl Setup {
         let mut state = registry.state.lock().await;
         *state = registry.repository.run(action).await?;
         Ok(())
+    }
+
+    pub(crate) async fn has_pending_requests(&self) -> bool {
+        match &self.adapters {
+            AdapterSource::File => false,
+            AdapterSource::Registry(registry) => registry.state.lock().await.has_pending_requests(),
+        }
     }
     pub async fn status(&self) -> &'static str {
         self.state.lock().await.status()
@@ -126,6 +150,9 @@ impl Setup {
                 result["registered_adapters"] = catalog.registrations();
             }
             result["access_requests"] = registry.pending_requests();
+            if self.vault.is_some() {
+                result["known_devices"] = registry.known_devices();
+            }
         }
         result
     }
@@ -133,7 +160,7 @@ impl Setup {
         self.begin_with_region(&self.region).await
     }
     pub async fn begin_with_region(&self, region: &str) -> Result<String, &'static str> {
-        if !matches!(region, "cn" | "de" | "i2" | "ru" | "sg" | "us") {
+        if !valid_region(region) {
             return Err("Invalid Xiaomi region");
         }
         let mut state = self.state.lock().await;
@@ -154,11 +181,22 @@ impl Setup {
             let result = tokio::time::timeout(expiry, async {
                 let auth = setup.provider.poll(&challenge).await?;
                 if let Some(catalog) = &adapters {
-                    return setup
+                    let discovered = setup
                         .provider
-                        .discover_registered(&auth, &setup.region, catalog)
-                        .await
-                        .map(Some);
+                        .discover_registered(&auth, &setup.region, catalog, setup.vault.is_some())
+                        .await?;
+                    if let Some(vault) = &setup.vault {
+                        let encrypted = discovered
+                            .iter()
+                            .map(|device| vault.seal(&setup.region, device))
+                            .collect::<Result<_, _>>()?;
+                        setup
+                            .update_registry(Operation::Remember(encrypted))
+                            .await?;
+                    }
+                    return Ok(Some(
+                        discovered.into_iter().map(|record| record.device).collect(),
+                    ));
                 }
                 let gateways = setup.provider.discover(&auth, &setup.region).await?;
                 if gateways.len() != 1 {

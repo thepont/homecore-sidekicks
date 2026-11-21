@@ -1,11 +1,13 @@
 use crate::adapters::{valid_identifier, valid_plugin_id, AdapterCatalog, AdapterRegistration};
+use crate::vault::{valid_device_ref, StoredDevice, Vault};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,6 +16,8 @@ mod postgres;
 
 const MAX_BYTES: usize = 65536;
 const MAX_REQUESTS: usize = 64;
+const MAX_DEVICES: usize = 64;
+const MAX_GRANTS: usize = 128;
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS xiaomi_adapter_registry (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -36,6 +40,10 @@ pub(crate) enum Operation {
     Bootstrap(Option<AdapterCatalog>),
     Register(AdapterRegistration),
     Request(AccessRequest),
+    Remember(Vec<StoredDevice>),
+    Approve(DeviceGrant, Arc<Vault>),
+    Deny(AccessRequest),
+    Revoke(DeviceGrant),
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -69,15 +77,72 @@ impl AccessRequest {
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DeviceGrant {
+    plugin_id: String,
+    device_ref: String,
+}
+
+impl DeviceGrant {
+    pub(crate) fn parse(value: &Value) -> Result<Self, &'static str> {
+        let plugin_id = value["plugin_id"]
+            .as_str()
+            .filter(|id| valid_plugin_id(id))
+            .ok_or("Invalid requesting adapter")?;
+        let device_ref = value["device_ref"]
+            .as_str()
+            .filter(|id| valid_device_ref(id))
+            .ok_or("Invalid Xiaomi device reference")?;
+        Ok(Self {
+            plugin_id: plugin_id.to_owned(),
+            device_ref: device_ref.to_owned(),
+        })
+    }
+
+    fn document(&self) -> Value {
+        json!({"plugin_id":self.plugin_id,"device_ref":self.device_ref})
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct RegistryState {
     pub(crate) catalog: Option<AdapterCatalog>,
     requests: BTreeSet<AccessRequest>,
+    devices: BTreeMap<String, StoredDevice>,
+    grants: BTreeSet<DeviceGrant>,
 }
 
 impl RegistryState {
     pub(crate) fn pending_requests(&self) -> Value {
         Value::Array(self.requests.iter().map(AccessRequest::json).collect())
+    }
+
+    pub(crate) fn has_pending_requests(&self) -> bool {
+        !self.requests.is_empty()
+    }
+
+    pub(crate) fn known_devices(&self) -> Value {
+        let Some(catalog) = &self.catalog else {
+            return json!([]);
+        };
+        Value::Array(
+            self.devices
+                .values()
+                .map(|device| {
+                    let adapters = catalog.adapters(&device.model);
+                    let grants: Vec<_> = self
+                        .grants
+                        .iter()
+                        .filter(|grant| grant.device_ref == device.reference)
+                        .map(|grant| &grant.plugin_id)
+                        .collect();
+                    json!({
+                        "device_ref": device.reference, "name": device.name, "model": device.model,
+                        "adapters": adapters, "granted_adapters": grants,
+                    })
+                })
+                .collect(),
+        )
     }
 
     fn from_document(document: &str) -> Result<Self, &'static str> {
@@ -88,7 +153,7 @@ impl RegistryState {
         if data.is_array() {
             return Ok(Self {
                 catalog: Some(AdapterCatalog::parse(&data)?),
-                requests: BTreeSet::new(),
+                ..Self::default()
             });
         }
         if data["version"].as_u64() != Some(1) {
@@ -114,7 +179,31 @@ impl RegistryState {
                 return Err(DATABASE_ERROR);
             }
         }
-        Ok(Self { catalog, requests })
+        let mut devices = BTreeMap::new();
+        for entry in optional_entries(&data, "devices", MAX_DEVICES)? {
+            let device = StoredDevice::parse(entry)?;
+            if devices.insert(device.reference.clone(), device).is_some() {
+                return Err(DATABASE_ERROR);
+            }
+        }
+        let mut grants = BTreeSet::new();
+        for entry in optional_entries(&data, "grants", MAX_GRANTS)? {
+            let grant = DeviceGrant::parse(entry)?;
+            let device = devices.get(&grant.device_ref).ok_or(DATABASE_ERROR)?;
+            if !catalog
+                .as_ref()
+                .is_some_and(|catalog| catalog.supports(&grant.plugin_id, &device.model))
+                || !grants.insert(grant)
+            {
+                return Err(DATABASE_ERROR);
+            }
+        }
+        Ok(Self {
+            catalog,
+            requests,
+            devices,
+            grants,
+        })
     }
 
     fn document(&self) -> Result<String, &'static str> {
@@ -122,6 +211,8 @@ impl RegistryState {
             "version": 1,
             "adapters": self.catalog.as_ref().map(AdapterCatalog::registrations),
             "requests": self.pending_requests(),
+            "devices": self.devices.values().map(StoredDevice::document).collect::<Vec<_>>(),
+            "grants": self.grants.iter().map(DeviceGrant::document).collect::<Vec<_>>(),
         })
         .to_string();
         if payload.len() > MAX_BYTES {
@@ -155,6 +246,14 @@ impl RegistryState {
                 {
                     return Err("Adapter still has a pending request for a removed model");
                 }
+                if state.grants.iter().any(|grant| {
+                    !state
+                        .devices
+                        .get(&grant.device_ref)
+                        .is_some_and(|device| catalog.supports(&grant.plugin_id, &device.model))
+                }) {
+                    return Err("Adapter still has access to a removed model");
+                }
             }
             Operation::Request(request) => {
                 if !state
@@ -167,14 +266,84 @@ impl RegistryState {
                 if state.requests.contains(&request) {
                     return Ok((state, None));
                 }
+                if state.grants.iter().any(|grant| {
+                    grant.plugin_id == request.plugin_id
+                        && state
+                            .devices
+                            .get(&grant.device_ref)
+                            .is_some_and(|device| device.model == request.model)
+                }) {
+                    return Ok((state, None));
+                }
                 if state.requests.len() >= MAX_REQUESTS {
                     return Err("Too many pending Xiaomi access requests");
                 }
                 state.requests.insert(request);
             }
+            Operation::Remember(devices) => {
+                for device in devices {
+                    if state
+                        .devices
+                        .get(&device.reference)
+                        .is_some_and(|old| old.model != device.model)
+                    {
+                        return Err("Conflicting Xiaomi device model");
+                    }
+                    state.devices.insert(device.reference.clone(), device);
+                }
+                if state.devices.len() > MAX_DEVICES {
+                    return Err("Too many saved Xiaomi devices");
+                }
+            }
+            Operation::Approve(grant, vault) => {
+                let device = state
+                    .devices
+                    .get(&grant.device_ref)
+                    .ok_or("Xiaomi device must be discovered first")?;
+                vault.verify(device)?;
+                if state.grants.contains(&grant) {
+                    return Ok((state, None));
+                }
+                let request = AccessRequest {
+                    plugin_id: grant.plugin_id.clone(),
+                    model: device.model.clone(),
+                };
+                if !state.requests.remove(&request) {
+                    return Err("No pending request for this Xiaomi device");
+                }
+                if state.grants.len() >= MAX_GRANTS {
+                    return Err("Too many Xiaomi access grants");
+                }
+                state.grants.insert(grant);
+            }
+            Operation::Deny(request) => {
+                if !state.requests.remove(&request) {
+                    return Ok((state, None));
+                }
+            }
+            Operation::Revoke(grant) => {
+                if !state.grants.remove(&grant) {
+                    return Ok((state, None));
+                }
+            }
         }
         let updated = state.document()?;
         Ok((state, Some(updated)))
+    }
+}
+
+fn optional_entries<'a>(
+    value: &'a Value,
+    key: &str,
+    limit: usize,
+) -> Result<&'a [Value], &'static str> {
+    match value.get(key) {
+        None => Ok(&[]),
+        Some(entries) => entries
+            .as_array()
+            .filter(|items| items.len() <= limit)
+            .map(Vec::as_slice)
+            .ok_or(DATABASE_ERROR),
     }
 }
 

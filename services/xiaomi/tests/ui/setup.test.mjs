@@ -73,6 +73,43 @@ test('the Xiaomi setup page shows which adapter is waiting for access',async()=>
   } finally {await browser.close();}
 });
 
+test('an admin can approve an adapter for an already saved Xiaomi device',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();
+    await page.setContent('<main></main>');
+    await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{
+      window.calls=[];
+      let approved=false;
+      const plugin='plugin.xiaomi-vacuum';
+      const el=document.createElement('hc-xiaomi-setup');
+      el.host={me:{can:()=>true},action:async(action,params)=>{
+        window.calls.push({action,params});
+        if(action==='approve_access') {
+          approved=true;
+          return {ok:true,data:{status:'ok'}};
+        }
+        return {ok:true,data:{
+          setup_status:'unconfigured',
+          access_requests:approved?[]:[{plugin_id:plugin,model:'ijai.vacuum.v10',status:'pending'}],
+          known_devices:[{name:'Downstairs vacuum',device_ref:'de:22',model:'ijai.vacuum.v10',
+            adapters:[plugin],granted_adapters:approved?[plugin]:[]}],
+        }};
+      }};
+      document.querySelector('main').append(el);
+    });
+    await page.getByRole('button',{name:'Allow Downstairs vacuum'}).click({timeout:3000});
+    await page.getByText('Access approved.',{exact:true}).waitFor({timeout:2000});
+    await page.getByRole('button',{name:'Revoke access for plugin.xiaomi-vacuum'}).waitFor({timeout:2000});
+    const calls=await page.evaluate(()=>window.calls);
+    assert.deepEqual(calls.find(call=>call.action==='approve_access')?.params,{
+      plugin_id:'plugin.xiaomi-vacuum',device_ref:'de:22',
+    });
+    assert.equal(calls.some(call=>call.action==='begin_sign_in'),false);
+  } finally {await browser.close();}
+});
+
 test('reopening setup restores the saved gateway state',async()=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
   try {

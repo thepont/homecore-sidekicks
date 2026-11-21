@@ -63,5 +63,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         _ => return Err("Invalid Xiaomi database backend".into()),
     };
+    let setup = match env::var_os("XIAOMI_VAULT_KEY_FILE") {
+        Some(path) => setup.with_vault_key_file(&PathBuf::from(path))?,
+        None => setup,
+    };
     runtime::run(host, port, id, password, setup, ui).await
 }

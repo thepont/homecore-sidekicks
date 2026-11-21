@@ -1,6 +1,6 @@
 use crate::{
     adapters::AdapterRegistration,
-    registry::{AccessRequest, Operation},
+    registry::{AccessRequest, DeviceGrant, Operation},
     setup::Setup,
 };
 use serde_json::{json, Value};
@@ -10,6 +10,9 @@ pub(crate) enum Command {
     BeginSignIn,
     RegisterAdapter,
     RequestAccess,
+    ApproveAccess,
+    DenyAccess,
+    RevokeAccess,
 }
 
 impl Command {
@@ -19,6 +22,9 @@ impl Command {
             "begin_sign_in" => Some(Self::BeginSignIn),
             "register_adapter" => Some(Self::RegisterAdapter),
             "request_access" => Some(Self::RequestAccess),
+            "approve_access" => Some(Self::ApproveAccess),
+            "deny_access" => Some(Self::DenyAccess),
+            "revoke_access" => Some(Self::RevokeAccess),
             _ => None,
         }
     }
@@ -46,6 +52,17 @@ impl Command {
             }
             Self::RequestAccess => {
                 apply(setup, AccessRequest::parse(params).map(Operation::Request)).await
+            }
+            Self::ApproveAccess => {
+                let operation = DeviceGrant::parse(params)
+                    .and_then(|grant| setup.vault().map(|vault| Operation::Approve(grant, vault)));
+                apply(setup, operation).await
+            }
+            Self::DenyAccess => {
+                apply(setup, AccessRequest::parse(params).map(Operation::Deny)).await
+            }
+            Self::RevokeAccess => {
+                apply(setup, DeviceGrant::parse(params).map(Operation::Revoke)).await
             }
         }
     }

@@ -56,6 +56,19 @@ The request queues one approval per adapter and model. The Xiaomi setup page
 shows pending requests. Reads come from memory. The repository opens a
 database connection for startup and writes, then closes it.
 
+## Save credentials and approve access
+
+Set `XIAOMI_VAULT_KEY_FILE` to a mounted deployment secret containing
+exactly 32 random bytes. Keep the key with the deployment secrets and
+maintain a separate backup of it. Both databases store the LAN address and
+token encrypted with AES-256-GCM. The setup page receives device names,
+models, matching adapters and grants.
+
+Sign in to Xiaomi once to save matching devices. Under **Xiaomi access
+requests**, choose the saved device to grant to the requesting adapter.
+Repeat approvals use the saved encrypted device record. Deny a pending
+request or revoke access for an adapter from the same page.
+
 `Setup` is the Facade for QR sign-in, discovery and access requests.
 Typed Commands dispatch HomeCore actions. The Registry is the Repository
 for adapter registrations and requests. The adapter catalogue
@@ -63,5 +76,5 @@ owns model matching, and the Xiaomi provider fetches the account's devices
 once per sign-in. The setup response contains device IDs, names, models and
 matching plugin IDs. Credentials stay in the provider during matching.
 
-Credential approval, automatic startup and moving extraction to a Knative
-worker are follow-up slices.
+Credential delivery to adapter processes, automatic startup and moving
+extraction to a Knative worker are follow-up slices.

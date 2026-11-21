@@ -111,6 +111,10 @@ impl AdapterCatalog {
             .is_some_and(|plugins| plugins.iter().any(|id| id == plugin_id))
     }
 
+    pub(crate) fn adapters(&self, model: &str) -> &[String] {
+        self.0.get(model).map_or(&[], Vec::as_slice)
+    }
+
     pub(crate) fn registrations(&self) -> Value {
         let mut by_plugin: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for (model, plugins) in &self.0 {
@@ -157,8 +161,8 @@ pub(crate) fn valid_identifier(value: &str) -> bool {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct MatchedDevice {
     pub(crate) id: String,
-    name: String,
-    model: String,
+    pub(crate) name: String,
+    pub(crate) model: String,
     adapters: Vec<String>,
 }
 

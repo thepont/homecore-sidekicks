@@ -25,6 +25,7 @@ tokio-postgres = { version = "=0.7.18", optional = true }
 tokio-postgres-rustls = { version = "=0.14.0", default-features = false, features = ["ring"], optional = true }
 webpki-roots = { version = "=1.0.12", optional = true }
 rc4 = { version = "=0.2.0", features = ["zeroize"] }
+zeroize = "=1.9.2"
 plugin-sdk-rs = { git = "https://github.com/homeCore-io/homeCore.git", rev = "40a9c649e33bd61d8cbb343eebf20b61bd624ca3", version = "0.6.5" }
 
 [dev-dependencies]

@@ -179,6 +179,97 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
     assert!(!public.contains("fixture-session"));
     assert!(!public.contains("0123456789abcdef0123456789abcdef"));
     assert!(!public.contains("fedcba9876543210fedcba9876543210"));
+
+    use homecore_xiaomi::{actions::dispatch_with_params, setup::Setup, store::Store};
+    let database = root.join("xiaomi.sqlite3");
+    let broker = Setup::new(Provider::new(&base).unwrap(), Store::new(&root), "cn")
+        .with_sqlite(&database)
+        .await
+        .unwrap();
+    let approval = json!({"plugin_id":"plugin.xiaomi-vacuum","device_ref":"cn:223456789"});
+    let premature = dispatch_with_params(&broker, "approve_access", &approval)
+        .await
+        .unwrap_or_default();
+    assert_eq!(premature["status"], "error");
+    use ring::rand::{SecureRandom, SystemRandom};
+    let key_path = root.join("fixture-vault-key");
+    let mut key = zeroize::Zeroizing::new([0u8; 32]);
+    SystemRandom::new().fill(&mut *key).unwrap();
+    std::fs::write(&key_path, &*key).unwrap();
+    let broker = broker.with_vault_key_file(&key_path).unwrap();
+    broker.begin().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while broker.status().await == "waiting" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(broker.status().await, "devices_found");
+    let without_request = dispatch_with_params(&broker, "approve_access", &approval)
+        .await
+        .unwrap();
+    assert_eq!(without_request["status"], "error");
+    let request = json!({"plugin_id":"plugin.xiaomi-vacuum","model":"ijai.vacuum.v10"});
+    assert_eq!(
+        dispatch_with_params(&broker, "request_access", &request)
+            .await
+            .unwrap()["status"],
+        "ok"
+    );
+    let wrong_device = json!({"plugin_id":"plugin.xiaomi-vacuum","device_ref":"cn:123456789"});
+    assert_eq!(
+        dispatch_with_params(&broker, "approve_access", &wrong_device)
+            .await
+            .unwrap()["status"],
+        "error"
+    );
+    assert_eq!(
+        dispatch_with_params(&broker, "approve_access", &approval)
+            .await
+            .unwrap()["status"],
+        "ok"
+    );
+    drop(broker);
+
+    let restarted = Setup::new(
+        Provider::new("http://127.0.0.1:1").unwrap(),
+        Store::new(&root),
+        "cn",
+    )
+    .with_sqlite(&database)
+    .await
+    .unwrap()
+    .with_vault_key_file(&key_path)
+    .unwrap();
+    let public = dispatch_with_params(&restarted, "sign_in_status", &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(public["access_requests"], json!([]));
+    assert_eq!(
+        public["known_devices"],
+        json!([
+            {"device_ref":"cn:123456789","name":"Gateway","model":"lumi.gateway.mcn001","adapters":["plugin.xiaomi-gateway"],"granted_adapters":[]},
+            {"device_ref":"cn:223456789","name":"Vacuum","model":"ijai.vacuum.v10","adapters":["plugin.xiaomi-vacuum"],"granted_adapters":["plugin.xiaomi-vacuum"]}
+        ])
+    );
+    let stored = std::fs::read(&database).unwrap();
+    for secret in [
+        b"0123456789abcdef0123456789abcdef",
+        b"fedcba9876543210fedcba9876543210",
+    ] {
+        assert!(!stored.windows(secret.len()).any(|bytes| bytes == secret));
+    }
+    assert_eq!(
+        dispatch_with_params(&restarted, "revoke_access", &approval)
+            .await
+            .unwrap()["status"],
+        "ok"
+    );
+    let public = dispatch_with_params(&restarted, "sign_in_status", &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(public["known_devices"][1]["granted_adapters"], json!([]));
     std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }

@@ -229,6 +229,25 @@ struct LanDevice<'a> {
     token: &'a str,
 }
 
+#[derive(PartialEq, Eq)]
+pub(crate) struct DiscoveredDevice {
+    pub(crate) device: crate::adapters::MatchedDevice,
+    pub(crate) credential: Option<DiscoveredCredential>,
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct DiscoveredCredential {
+    pub(crate) address: Ipv4Addr,
+    pub(crate) token: String,
+}
+
+impl Drop for DiscoveredCredential {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.token.zeroize();
+    }
+}
+
 impl<'a> LanDevice<'a> {
     fn from_cloud(item: &'a Value) -> Option<Self> {
         Some(Self {
@@ -401,15 +420,24 @@ impl Provider {
         auth: &Authentication,
         region: &str,
         catalog: &crate::adapters::AdapterCatalog,
-    ) -> Result<Vec<crate::adapters::MatchedDevice>, &'static str> {
+        capture_credentials: bool,
+    ) -> Result<Vec<DiscoveredDevice>, &'static str> {
         use std::collections::{btree_map::Entry, BTreeMap};
         let mut candidates = BTreeMap::new();
         self.visit_devices(auth, region, |device| {
-            if let Some(candidate) = device
+            if let Some(matched) = device
                 .device_id
                 .and_then(|id| catalog.match_device(id, device.name, device.model))
             {
-                match candidates.entry(candidate.id.clone()) {
+                let id = matched.id.clone();
+                let candidate = DiscoveredDevice {
+                    device: matched,
+                    credential: capture_credentials.then(|| DiscoveredCredential {
+                        address: device.address,
+                        token: device.token.to_owned(),
+                    }),
+                };
+                match candidates.entry(id) {
                     Entry::Occupied(entry) if entry.get() != &candidate => {
                         return Err("Conflicting Xiaomi device identity");
                     }
