@@ -33,9 +33,12 @@ fn nonnegative_finite(value: &Value) -> Option<f64> {
         .filter(|number| number.is_finite() && *number >= 0.0)
 }
 
+fn site_id(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| value.as_str()?.parse().ok())
+}
+
 fn site_date(data: &Value, site: u64) -> Option<chrono::NaiveDate> {
-    let id = data.get("id")?;
-    let id = id.as_u64().or_else(|| id.as_str()?.parse().ok())?;
+    let id = site_id(data.get("id")?)?;
     if id != site {
         return None;
     }
@@ -91,8 +94,7 @@ pub fn parse_connector_totals(data: &str, site: u64) -> Option<Map<String, Value
 
 pub fn parse_site_info(data: &str, site: u64) -> Option<Map<String, Value>> {
     let data: Value = serde_json::from_str(data).ok()?;
-    let id = data.get("site_id")?;
-    if id.as_u64().or_else(|| id.as_str()?.parse().ok())? != site {
+    if site_id(data.get("site_id")?)? != site {
         return None;
     }
     let info = data.get("site_info")?.as_object()?;
