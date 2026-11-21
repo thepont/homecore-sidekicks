@@ -1,6 +1,7 @@
 // homeCore plugin UI host interface v1. The browser owns rendering and live data.
 const WATTS_PER_KILOWATT = 1000;
 const WATT_HOURS_PER_KILOWATT_HOUR = 1000;
+const MAX_HISTORY_POINTS = 1000;
 const powerwallStyle = `
   :host { display:block; min-width:0; container-type:inline-size; color:var(--ink,#20242b); font-family:var(--font,system-ui,sans-serif); }
   * { box-sizing:border-box; }
@@ -337,8 +338,8 @@ customElements.define('hc-teslemetry-card', TeslemetryCard);
 // Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
 async function readTariffPeriods(host) {
   try {
-    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit:1000});
-    return result?.ok && Array.isArray(result.data) ? result.data.slice(0,1000) : [];
+    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit: MAX_HISTORY_POINTS});
+    return result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : [];
   } catch { return []; }
 }
 function renderTariffBands(svg, records, points) {
@@ -416,12 +417,12 @@ class TeslemetrySolar extends HTMLElement {
     const generation = ++this.#generation;
     this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: 1000 }); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'solar_power_w', { limit: MAX_HISTORY_POINTS }); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
@@ -472,12 +473,12 @@ class TeslemetryGrid extends HTMLElement {
     this.#details = true; this.#history = undefined;
     const generation = ++this.#generation; this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit:1000}); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'grid_power_w', {limit: MAX_HISTORY_POINTS}); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
@@ -525,12 +526,12 @@ class TeslemetryBattery extends HTMLElement {
     const generation = ++this.#generation;
     this.#render();
     let result;
-    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: 1000 }); }
+    try { result = await this.#host?.devices.history('teslemetry_powerwall', 'charge_pct', { limit: MAX_HISTORY_POINTS }); }
     catch { result = undefined; }
     const periods = await readTariffPeriods(this.#host);
     if (generation !== this.#generation || !this.isConnected) return;
     this.#periods = periods;
-    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, 1000) : null;
+    this.#history = result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : null;
     this.#render();
   }
   #render() {
@@ -574,7 +575,7 @@ class TeslemetryCombined extends HTMLElement {
     const legend=this.shadowRoot.querySelector('.legend');
     for(const series of combinedSeries){const label=document.createElement('span');label.className='key';label.style.setProperty('--key',series.color);label.textContent=series.name;legend.append(label);}
     const host=this.#host;
-    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit:1000});return r?.ok && Array.isArray(r.data) ? r.data.slice(0,1000):[];}catch{return [];}};
+    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit: MAX_HISTORY_POINTS});return r?.ok && Array.isArray(r.data) ? r.data.slice(0, MAX_HISTORY_POINTS):[];}catch{return [];}};
     const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
     if(generation!==this.#generation || !this.isConnected)return;
     const series=all.slice(0,4).map(sortedPowerHistory);
