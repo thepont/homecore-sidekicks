@@ -362,6 +362,36 @@ function renderTariffBands(svg, records, points) {
   }
 }
 
+const formatPowerRange = (min, max) => `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
+
+function appendHistoryChart(target, points, periods, label, formatRange) {
+  const values = points.map(point => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 300 100');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', label);
+  renderTariffBands(svg, periods, points);
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  const startTime = Date.parse(points[0].at);
+  const endTime = Date.parse(points.at(-1).at);
+  const coordinates = points.map(point => {
+    const x = (Date.parse(point.at) - startTime) * 300 / (endTime - startTime || 1);
+    const y = 90 - (point.value - min) / (max - min || 1) * 80;
+    return `${x},${y}`;
+  });
+  line.setAttribute('points', coordinates.join(' '));
+  svg.append(line);
+  target.append(svg);
+  const range = document.createElement('div');
+  range.textContent = formatRange(min, max);
+  const dates = document.createElement('div');
+  const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+  dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
+  target.append(range, dates);
+}
+
 class TeslemetrySolar extends HTMLElement {
   #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
@@ -405,20 +435,7 @@ class TeslemetrySolar extends HTMLElement {
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
-    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Solar power history');
-    renderTariffBands(svg, this.#periods, points);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
-    svg.append(line); target.append(svg);
-    const range = document.createElement('div');
-    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
-    const dates = document.createElement('div');
-    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
-    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
-    target.append(range, dates);
+    appendHistoryChart(target, points, this.#periods, 'Solar power history', formatPowerRange);
   }
 }
 customElements.define('hc-teslemetry-solar', TeslemetrySolar);
@@ -479,19 +496,7 @@ class TeslemetryGrid extends HTMLElement {
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
-    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox','0 0 300 100'); svg.setAttribute('role','img'); svg.setAttribute('aria-label','Grid power history');
-    renderTariffBands(svg, this.#periods, points);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', values.map((v,i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
-    svg.append(line); target.append(svg);
-    const range = document.createElement('div');
-    range.textContent = `${Number((min / 1000).toFixed(2))}–${Number((max / 1000).toFixed(2))} kW`;
-    const dates = document.createElement('div');
-    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
-    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
-    target.append(range, dates);
+    appendHistoryChart(target, points, this.#periods, 'Grid power history', formatPowerRange);
   }
 }
 customElements.define('hc-teslemetry-grid', TeslemetryGrid);
@@ -539,20 +544,7 @@ class TeslemetryBattery extends HTMLElement {
     const target = this.shadowRoot.querySelector('.history');
     const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
-    const values = points.map(p => p.value), min = Math.min(...values), max = Math.max(...values);
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Battery charge history');
-    renderTariffBands(svg, this.#periods, points);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', values.map((v, i) => `${(Date.parse(points[i].at) - Date.parse(points[0].at)) * 300 / (Date.parse(points.at(-1).at) - Date.parse(points[0].at) || 1)},${90 - (v - min) / (max - min || 1) * 80}`).join(' '));
-    svg.append(line); target.append(svg);
-    const range = document.createElement('div');
-    range.textContent = `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`;
-    const dates = document.createElement('div');
-    const showDate = value => new Date(value).toLocaleString('en-AU', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
-    dates.textContent = `${showDate(points[0].at)} – ${showDate(points.at(-1).at)}`;
-    target.append(range, dates);
+    appendHistoryChart(target, points, this.#periods, 'Battery charge history', (min, max) => `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`);
   }
 }
 customElements.define('hc-teslemetry-battery', TeslemetryBattery);
