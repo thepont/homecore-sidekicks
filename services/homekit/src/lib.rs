@@ -1,6 +1,330 @@
 use serde_json::{json, Map, Value};
 pub mod setup;
 
+struct BridgeId<'a>(&'a str);
+
+impl<'a> BridgeId<'a> {
+    fn parse(value: &'a str) -> Option<Self> {
+        (value.len() == 17
+            && value.bytes().enumerate().all(|(i, b)| {
+                if i % 3 == 2 {
+                    b == b':'
+                } else {
+                    b.is_ascii_hexdigit()
+                }
+            }))
+        .then_some(Self(value))
+    }
+
+    fn compact(&self) -> String {
+        self.0.replace(':', "").to_ascii_lowercase()
+    }
+}
+
+/// Validate a homeCore outlet command and identify its target.
+pub fn outlet_command(bridge_id: &str, topic: &str, value: &Value) -> Option<(u64, bool)> {
+    let bridge_id = BridgeId::parse(bridge_id)?;
+    let prefix = format!("homecore/devices/homekit_{}_", bridge_id.compact());
+    let text = topic.strip_prefix(&prefix)?.strip_suffix("/cmd")?;
+    let aid = text.parse::<u64>().ok()?;
+    if aid == 0 || aid.to_string() != text {
+        return None;
+    }
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "on" | "_hc" | "origin" | "correlation_id"))
+        || object.get("_hc").is_some_and(|v| !v.is_object())
+        || object.get("origin").is_some_and(|v| !v.is_string())
+        || object.get("correlation_id").is_some_and(|v| !v.is_string())
+    {
+        return None;
+    }
+    Some((aid, object.get("on")?.as_bool()?))
+}
+
+async fn publish_messages(
+    mqtt: &rumqttc::AsyncClient,
+    messages: impl IntoIterator<Item = (String, bool, Value)>,
+    error: &'static str,
+) -> Result<(), &'static str> {
+    for (topic, retained, payload) in messages {
+        mqtt.publish(
+            topic,
+            rumqttc::QoS::AtLeastOnce,
+            retained,
+            payload.to_string(),
+        )
+        .await
+        .map_err(|_| error)?;
+    }
+    Ok(())
+}
+
+enum SensorReading<'a> {
+    Contact(&'a Value),
+    Outlet(&'a Value),
+    Smoke(&'a Value),
+    Climate(&'a Value),
+    Unavailable(&'a str),
+}
+
+fn parse_sensor(state: &Value) -> Result<SensorReading<'_>, &'static str> {
+    let object = state.as_object().ok_or("Invalid sensor state")?;
+    if object.contains_key("_offline") {
+        let kind = object
+            .get("_type")
+            .and_then(Value::as_str)
+            .ok_or("Invalid sensor state")?;
+        if object.len() != 2
+            || object.get("_offline").and_then(Value::as_bool) != Some(true)
+            || !matches!(
+                kind,
+                "contact_sensor" | "temperature_sensor" | "smoke_sensor" | "switch"
+            )
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Unavailable(kind))
+    } else if object.contains_key("open") {
+        if object.get("open").and_then(Value::as_bool).is_none()
+            || object.keys().any(|k| k != "open" && k != "battery_pct")
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Contact(state))
+    } else if object.contains_key("on") {
+        if object.get("on").and_then(Value::as_bool).is_none()
+            || object.get("in_use").is_some_and(|v| v.as_bool().is_none())
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "on" | "in_use"))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Outlet(state))
+    } else if object.contains_key("smoke") {
+        if object.get("smoke").and_then(Value::as_bool).is_none()
+            || object.get("fault").is_some_and(|v| v.as_bool().is_none())
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "smoke" | "fault" | "battery_pct"))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Smoke(state))
+    } else {
+        if (!object.contains_key("temperature") && !object.contains_key("humidity"))
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "temperature" | "humidity" | "battery_pct"))
+            || object.get("temperature").is_some_and(|v| {
+                v.as_f64()
+                    .is_none_or(|n| !n.is_finite() || !(-100.0..=100.0).contains(&n))
+            })
+            || object.get("humidity").is_some_and(|v| {
+                v.as_f64()
+                    .is_none_or(|n| !n.is_finite() || !(0.0..=100.0).contains(&n))
+            })
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Climate(state))
+    }
+}
+
+/// Publish supported sensors to homeCore.
+pub async fn publish_sensors(
+    mqtt: &rumqttc::AsyncClient,
+    plugin: &str,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+) -> Result<(), &'static str> {
+    if plugin.is_empty()
+        || plugin.len() > 128
+        || !plugin
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || BridgeId::parse(bridge_id).is_none()
+        || readings.len() > 1024
+    {
+        return Err("Invalid sensor publication");
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut contacts = Vec::new();
+    let mut climate = Vec::new();
+    let mut smoke = Vec::new();
+    let mut outlets = Vec::new();
+    let mut unavailable = Vec::new();
+    for (aid, state) in readings {
+        if *aid == 0 || !seen.insert(*aid) {
+            return Err("Invalid sensor state");
+        }
+        match parse_sensor(state)? {
+            SensorReading::Contact(value) => contacts.push((*aid, value.clone())),
+            SensorReading::Outlet(value) => outlets.push((*aid, value)),
+            SensorReading::Smoke(value) => smoke.push((*aid, value)),
+            SensorReading::Climate(value) => climate.push((*aid, value)),
+            SensorReading::Unavailable(kind) => unavailable.push((*aid, kind)),
+        }
+    }
+    publish_contacts(mqtt, plugin, bridge_id, &contacts).await?;
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, kind) in unavailable {
+        let device = format!("homekit_{bridge}_{aid}");
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit device {aid}"),"device_type":kind});
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":{},"primary":[]}),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
+    }
+    for (aid, state) in climate {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        for (name, label, unit, kind) in [
+            ("temperature", "Temperature", "°C", "float"),
+            ("humidity", "Humidity", "%", "float"),
+            ("battery_pct", "Battery", "%", "integer"),
+        ] {
+            if state.get(name).is_some() {
+                attributes.insert(
+                    name.into(),
+                    json!({"kind":kind,"writable":false,"display_name":label,"unit":unit}),
+                );
+            }
+        }
+        let primary = if state.get("temperature").is_some() {
+            "temperature"
+        } else {
+            "humidity"
+        };
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit climate {aid}"),"device_type":"temperature_sensor"});
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":[primary]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
+    }
+    for (aid, state) in outlets {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        attributes.insert(
+            "on".into(),
+            json!({"kind":"bool","writable":true,"display_name":"On"}),
+        );
+        if state.get("in_use").is_some() {
+            attributes.insert(
+                "in_use".into(),
+                json!({"kind":"bool","writable":false,"display_name":"In use"}),
+            );
+        }
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit outlet {aid}"),"device_type":"switch"});
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["on"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
+    }
+    for (aid, state) in smoke {
+        let device = format!("homekit_{bridge}_{aid}");
+        let mut attributes = Map::new();
+        for (name, label) in [("smoke", "Smoke detected"), ("fault", "Fault")] {
+            if state.get(name).is_some() {
+                attributes.insert(
+                    name.into(),
+                    json!({"kind":"bool","writable":false,"display_name":label}),
+                );
+            }
+        }
+        if state.get("battery_pct").is_some() {
+            attributes.insert(
+                "battery_pct".into(),
+                json!({"kind":"integer","writable":false,"display_name":"Battery","unit":"%"}),
+            );
+        }
+        let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit smoke detector {aid}"),"device_type":"smoke_sensor"});
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["smoke"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Publish a validated contact snapshot using homeCore's device protocol.
 pub async fn publish_contacts(
     mqtt: &rumqttc::AsyncClient,
@@ -13,14 +337,7 @@ pub async fn publish_contacts(
         || !plugin
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        || bridge_id.len() != 17
-        || !bridge_id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
+        || BridgeId::parse(bridge_id).is_none()
         || readings.len() > 1024
     {
         return Err("Invalid contact publication");
@@ -57,32 +374,28 @@ pub async fn publish_contacts(
             );
         }
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit contact {aid}"),"device_type":"contact_sensor"});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":attributes,"primary":["open"]}),
-            ),
-            (
-                format!("homecore/devices/{device}/state"),
-                true,
-                state.clone(),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish contact")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":attributes,"primary":["open"]}),
+                ),
+                (
+                    format!("homecore/devices/{device}/state"),
+                    true,
+                    state.clone(),
+                ),
+            ],
+            "Cannot publish contact",
+        )
+        .await?;
     }
     Ok(())
 }
@@ -111,18 +424,212 @@ pub async fn run_contact_publisher_with_interval(
     state_dir: std::path::PathBuf,
     refresh: std::time::Duration,
 ) -> Result<(), &'static str> {
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(16);
+    run_sensor_publisher_with_commands(
+        mqtt,
+        plugin,
+        bridge_id,
+        state_dir,
+        refresh,
+        &mut commands,
+        None,
+    )
+    .await
+}
+
+/// Publish sensor state and process validated homeCore commands.
+pub struct PublisherRuntime {
+    pub availability_options: rumqttc::MqttOptions,
+    pub tracker: plugin_sdk_rs::DevicePublisher,
+}
+
+pub async fn run_sensor_publisher_with_commands(
+    mqtt: rumqttc::AsyncClient,
+    plugin: String,
+    bridge_id: String,
+    state_dir: std::path::PathBuf,
+    refresh: std::time::Duration,
+    commands: &mut tokio::sync::mpsc::Receiver<(String, Value)>,
+    runtime: Option<PublisherRuntime>,
+) -> Result<(), &'static str> {
     if refresh < std::time::Duration::from_secs(1) || refresh > std::time::Duration::from_secs(3600)
     {
         return Err("Invalid refresh interval");
     }
     let mut watch = watch_contacts_with_interval(&bridge_id, &state_dir, refresh).await?;
-    publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
-    contact_availability(&mqtt, &bridge_id, watch.current(), true).await?;
-    while watch.next().await.is_some() {
-        publish_contacts(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    let prefix = format!(
+        "homecore/devices/homekit_{}_",
+        bridge_id.replace(':', "").to_ascii_lowercase()
+    );
+    let mut guards = std::collections::HashMap::new();
+    let mut tracked = std::collections::HashSet::new();
+    if let Some(runtime) = &runtime {
+        for (aid, state) in watch.current() {
+            if state.get("_offline").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            guards.insert(
+                *aid,
+                AvailabilityGuard::start(runtime.availability_options.clone(), &prefix, *aid)
+                    .await?,
+            );
+        }
+    }
+    for (aid, state) in watch.current() {
+        if state.get("on").is_some() {
+            mqtt.subscribe(format!("{prefix}{aid}/cmd"), rumqttc::QoS::AtLeastOnce)
+                .await
+                .map_err(|_| "Cannot subscribe to outlet commands")?;
+        }
+    }
+    publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    if let Some(runtime) = &runtime {
+        track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+    }
+    for item in watch.current() {
+        contact_availability(
+            &mqtt,
+            &bridge_id,
+            std::slice::from_ref(item),
+            item.1.get("_offline").and_then(Value::as_bool) != Some(true),
+        )
+        .await?;
+    }
+    loop {
+        let update = tokio::select! {
+            update = watch.next() => match update { Some(update) => update, None => break },
+            command = commands.recv() => {
+                let Some((topic, command)) = command else { break };
+                if let Some((aid, on)) = outlet_command(&bridge_id, &topic, &command) { let _ = watch.set_outlet(aid, on).await; }
+                continue;
+            }
+        };
+        if update.1.is_null() {
+            guards.remove(&update.0);
+            contact_availability(&mqtt, &bridge_id, &[update], false).await?;
+            continue;
+        }
+        if update.1.get("_offline").and_then(Value::as_bool) == Some(true) {
+            guards.remove(&update.0);
+            publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+            if let Some(runtime) = &runtime {
+                track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+            }
+            contact_availability(&mqtt, &bridge_id, &[update], false).await?;
+            continue;
+        }
+        if let (std::collections::hash_map::Entry::Vacant(entry), Some(runtime)) =
+            (guards.entry(update.0), &runtime)
+        {
+            entry.insert(
+                AvailabilityGuard::start(runtime.availability_options.clone(), &prefix, update.0)
+                    .await?,
+            );
+        }
+        if update.1.get("on").is_some() {
+            mqtt.subscribe(
+                format!("{prefix}{}/cmd", update.0),
+                rumqttc::QoS::AtLeastOnce,
+            )
+            .await
+            .map_err(|_| "Cannot subscribe to outlet commands")?;
+        }
+        publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+        if let Some(runtime) = &runtime {
+            track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+        }
+        contact_availability(&mqtt, &bridge_id, &[update], true).await?;
     }
     contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
+}
+
+async fn track_devices(
+    tracker: &plugin_sdk_rs::DevicePublisher,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+    tracked: &mut std::collections::HashSet<u64>,
+) -> Result<(), &'static str> {
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, state) in readings {
+        if tracked.contains(aid) {
+            continue;
+        }
+        let (kind, label) = match parse_sensor(state)? {
+            SensorReading::Unavailable(kind) => (kind, "device"),
+            SensorReading::Contact(_) => ("contact_sensor", "contact"),
+            SensorReading::Outlet(_) => ("switch", "outlet"),
+            SensorReading::Smoke(_) => ("smoke_sensor", "smoke detector"),
+            SensorReading::Climate(_) => ("temperature_sensor", "climate"),
+        };
+        let id = format!("homekit_{bridge}_{aid}");
+        tracker
+            .register_device_full(
+                &id,
+                &format!("HomeKit {label} {aid}"),
+                Some(kind),
+                None,
+                None,
+            )
+            .await
+            .map_err(|_| "Cannot track device")?;
+        tracked.insert(*aid);
+    }
+    Ok(())
+}
+
+struct AvailabilityGuard(tokio::task::JoinHandle<()>);
+
+impl AvailabilityGuard {
+    async fn start(
+        mut options: rumqttc::MqttOptions,
+        prefix: &str,
+        aid: u64,
+    ) -> Result<Self, &'static str> {
+        let topic = format!("{prefix}{aid}/availability");
+        options.set_client_id(format!("hc-availability-{}-{aid}", uuid::Uuid::new_v4()));
+        options.set_last_will(rumqttc::LastWill::new(
+            topic.clone(),
+            "offline",
+            rumqttc::QoS::AtLeastOnce,
+            true,
+        ));
+        let (client, mut events) = rumqttc::AsyncClient::new(options, 8);
+        let (ready, received) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut ready = Some(ready);
+            loop {
+                match events.poll().await {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Incoming::ConnAck(_))) => {
+                        if client
+                            .publish(&topic, rumqttc::QoS::AtLeastOnce, true, "online")
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        if let Some(ready) = ready.take() {
+                            let _ = ready.send(());
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                }
+            }
+        });
+        match tokio::time::timeout(std::time::Duration::from_secs(10), received).await {
+            Ok(Ok(())) => Ok(Self(task)),
+            _ => {
+                task.abort();
+                Err("Cannot establish device availability")
+            }
+        }
+    }
+}
+impl Drop for AvailabilityGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 async fn contact_availability(
@@ -255,14 +762,7 @@ pub async fn pair_and_read(
     };
     if !allowed_address
         || address.port() == 0
-        || id.len() != 17
-        || !id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
+        || BridgeId::parse(id).is_none()
         || pin.len() != 10
         || !pin.bytes().enumerate().all(|(i, b)| {
             if i == 3 || i == 6 {
@@ -438,15 +938,7 @@ pub async fn stored_bridge_id(state_dir: &std::path::Path) -> Result<Option<Stri
         [] => Ok(None),
         [one] => {
             let id = &one.pairing.pairing_id;
-            if id.len() != 17
-                || !id.bytes().enumerate().all(|(i, b)| {
-                    if i % 3 == 2 {
-                        b == b':'
-                    } else {
-                        b.is_ascii_hexdigit()
-                    }
-                })
-            {
+            if BridgeId::parse(id).is_none() {
                 return Err("Invalid pairing identity");
             }
             Ok(Some(id.clone()))
@@ -541,6 +1033,140 @@ pub async fn read_contacts_saved(
     read_contacts(&mut handle).await
 }
 
+/// Read supported sensor states from a saved bridge.
+pub async fn read_sensors_saved(
+    id: &str,
+    state_dir: &std::path::Path,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    let (_lock, mut handle) = connect_saved(id, state_dir).await?;
+    read_sensors(&mut handle).await
+}
+
+async fn read_sensor_value(
+    handle: &mut hap_controller::AccessoryHandle,
+    aid: u64,
+    iid: u64,
+    offline_type: &str,
+    readings: &mut Vec<(u64, Value)>,
+) -> Option<Value> {
+    match handle.read(aid, iid).await {
+        Ok(value) => Some(value.to_json()),
+        Err(_) => {
+            readings.push((aid, json!({"_offline":true,"_type":offline_type})));
+            None
+        }
+    }
+}
+
+async fn read_sensors(
+    handle: &mut hap_controller::AccessoryHandle,
+) -> Result<Vec<(u64, Value)>, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    let mut readings = read_contacts(handle).await?;
+    let accessories = handle
+        .accessories()
+        .await
+        .map_err(|_| "Cannot read HomeKit accessories")?
+        .to_vec();
+    'accessory: for accessory in accessories {
+        let mut temperature = None;
+        let mut humidity = None;
+        let mut battery = None;
+        let mut smoke = None;
+        let mut fault = None;
+        let mut on = None;
+        let mut in_use = None;
+        for service in accessory.services {
+            for characteristic in service.characteristics {
+                let target = match (&service.service_type, &characteristic.char_type) {
+                    (ServiceType::TemperatureSensor, CharacteristicType::CurrentTemperature) => {
+                        &mut temperature
+                    }
+                    (ServiceType::HumiditySensor, CharacteristicType::CurrentRelativeHumidity) => {
+                        &mut humidity
+                    }
+                    (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut battery,
+                    (ServiceType::SmokeSensor, CharacteristicType::SmokeDetected) => &mut smoke,
+                    (ServiceType::SmokeSensor, CharacteristicType::StatusFault) => &mut fault,
+                    (ServiceType::Outlet, CharacteristicType::On) => &mut on,
+                    (ServiceType::Outlet, CharacteristicType::OutletInUse) => &mut in_use,
+                    _ => continue,
+                };
+                if target.replace(characteristic.iid).is_some() {
+                    return Err("Ambiguous sensor characteristic");
+                }
+            }
+        }
+        if temperature.is_none() && humidity.is_none() && smoke.is_none() && on.is_none() {
+            continue;
+        }
+        if (smoke.is_some() && (temperature.is_some() || humidity.is_some() || on.is_some()))
+            || (on.is_some() && (temperature.is_some() || humidity.is_some()))
+        {
+            return Err("Ambiguous sensor type");
+        }
+        let offline_type = if on.is_some() {
+            "switch"
+        } else if smoke.is_some() {
+            "smoke_sensor"
+        } else {
+            "temperature_sensor"
+        };
+        let mut state = Map::new();
+        for (name, iid) in [("on", on), ("in_use", in_use)] {
+            if let Some(iid) = iid {
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
+                };
+                let value = value.as_bool().ok_or("Invalid outlet reading")?;
+                state.insert(name.into(), json!(value));
+            }
+        }
+        for (name, iid) in [("smoke", smoke), ("fault", fault)] {
+            if let Some(iid) = iid {
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
+                };
+                let detected = match value.as_u64() {
+                    Some(0) => false,
+                    Some(1) => true,
+                    _ => return Err("Invalid sensor reading"),
+                };
+                state.insert(name.to_owned(), json!(detected));
+            }
+        }
+        for (name, iid, min, max) in [
+            ("temperature", temperature, -100.0, 100.0),
+            ("humidity", humidity, 0.0, 100.0),
+            ("battery_pct", battery, 0.0, 100.0),
+        ] {
+            if let Some(iid) = iid {
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
+                };
+                if value
+                    .as_f64()
+                    .is_none_or(|v| !v.is_finite() || v < min || v > max)
+                {
+                    return Err("Invalid sensor reading");
+                }
+                state.insert(name.to_owned(), value);
+            }
+        }
+        readings.push((accessory.aid, Value::Object(state)));
+    }
+    Ok(readings)
+}
+
 async fn read_contacts(
     handle: &mut hap_controller::AccessoryHandle,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
@@ -600,15 +1226,7 @@ async fn connect_saved(
 ) -> Result<(std::fs::File, hap_controller::AccessoryHandle), &'static str> {
     use hap_controller::{HapController, JsonFileStore, PairingStore};
     use std::os::unix::fs::PermissionsExt;
-    if id.len() != 17
-        || !id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
-    {
+    if BridgeId::parse(id).is_none() {
         return Err("Invalid pairing identity");
     }
     let lock = lock_pairing_directory(state_dir)?;
@@ -784,19 +1402,39 @@ pub async fn watch_saved(
     })
 }
 
+type OutletCommand = (
+    u64,
+    bool,
+    tokio::sync::oneshot::Sender<Result<(), &'static str>>,
+);
+
 pub struct ContactsWatch {
     current: Vec<(u64, Value)>,
     updates: tokio::sync::mpsc::Receiver<(u64, Value)>,
+    commands: tokio::sync::mpsc::Sender<OutletCommand>,
     task: tokio::task::JoinHandle<()>,
 }
 impl ContactsWatch {
+    /// Set an outlet attached to this bridge.
+    pub async fn set_outlet(&mut self, aid: u64, on: bool) -> Result<(), &'static str> {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        self.commands
+            .send((aid, on, reply))
+            .await
+            .map_err(|_| "Outlet unavailable")?;
+        received.await.map_err(|_| "Outlet unavailable")?
+    }
     pub fn current(&self) -> &Vec<(u64, Value)> {
         &self.current
     }
     pub async fn next(&mut self) -> Option<(u64, Value)> {
         let update = self.updates.recv().await?;
-        if let Some((_, state)) = self.current.iter_mut().find(|(aid, _)| *aid == update.0) {
+        if update.1.is_null() {
+            self.current.retain(|(aid, _)| *aid != update.0);
+        } else if let Some((_, state)) = self.current.iter_mut().find(|(aid, _)| *aid == update.0) {
             *state = update.1.clone();
+        } else {
+            self.current.push(update.clone());
         }
         Some(update)
     }
@@ -815,6 +1453,75 @@ pub async fn watch_contacts_saved(
     watch_contacts_with_interval(id, state_dir, std::time::Duration::from_secs(30)).await
 }
 
+async fn execute_outlet_command(
+    handle: &mut hap_controller::AccessoryHandle,
+    outlets: &[(u64, u64)],
+    state: &mut [(u64, Value)],
+    send: &tokio::sync::mpsc::Sender<(u64, Value)>,
+    aid: u64,
+    on: bool,
+) -> Option<Result<(), &'static str>> {
+    let result = if let Some((_, iid)) = outlets.iter().find(|(outlet, _)| *outlet == aid) {
+        match handle
+            .write(aid, *iid, hap_controller::CharValue::Bool(on))
+            .await
+        {
+            Ok(()) => match handle.read(aid, *iid).await {
+                Ok(value) => match value.to_json().as_bool() {
+                    Some(actual) => {
+                        if let Some((_, state)) = state.iter_mut().find(|(item, _)| *item == aid) {
+                            state["on"] = json!(actual);
+                            if send.try_send((aid, state.clone())).is_err() {
+                                return None;
+                            }
+                        }
+                        Ok(())
+                    }
+                    None => Err("Invalid outlet reading"),
+                },
+                Err(_) => Err("Cannot read outlet"),
+            },
+            Err(_) => Err("Cannot set outlet"),
+        }
+    } else {
+        Err("Outlet unavailable")
+    };
+    Some(result)
+}
+
+fn send_snapshot_changes(
+    state: &[(u64, Value)],
+    refreshed: &[(u64, Value)],
+    send: &tokio::sync::mpsc::Sender<(u64, Value)>,
+) -> Result<(), ()> {
+    let mut changed = false;
+    for (aid, _) in state {
+        if !refreshed.iter().any(|(new, _)| new == aid) {
+            changed = true;
+            send.try_send((*aid, Value::Null)).map_err(|_| ())?;
+        }
+    }
+    for (aid, value) in refreshed {
+        if state
+            .iter()
+            .find(|(old, _)| old == aid)
+            .is_none_or(|(_, old)| old != value)
+        {
+            changed = true;
+            send.try_send((*aid, value.clone())).map_err(|_| ())?;
+        }
+    }
+    if !changed {
+        if let Some((aid, value)) = refreshed
+            .iter()
+            .find(|(_, value)| value.get("_offline").and_then(Value::as_bool) != Some(true))
+        {
+            send.try_send((*aid, value.clone())).map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
 async fn watch_contacts_with_interval(
     id: &str,
     state_dir: &std::path::Path,
@@ -830,10 +1537,16 @@ async fn watch_contacts_with_interval(
         .to_vec();
     let mut contacts = Vec::new();
     let mut batteries = Vec::new();
+    let mut outlets = Vec::new();
     for accessory in accessories {
         for service in accessory.services {
             for characteristic in service.characteristics {
-                if service.service_type == ServiceType::ContactSensor
+                if service.service_type == ServiceType::Outlet
+                    && characteristic.char_type == CharacteristicType::On
+                    && characteristic.perms.write
+                {
+                    outlets.push((accessory.aid, characteristic.iid));
+                } else if service.service_type == ServiceType::ContactSensor
                     && characteristic.char_type == CharacteristicType::ContactSensorState
                 {
                     contacts.push((accessory.aid, characteristic.iid));
@@ -854,8 +1567,9 @@ async fn watch_contacts_with_interval(
             .await
             .map_err(|_| "Cannot subscribe to contact")?;
     }
-    let current = read_contacts(&mut handle).await?;
+    let current = read_sensors(&mut handle).await?;
     let (send, updates) = tokio::sync::mpsc::channel(32);
+    let (commands, mut command_rx) = tokio::sync::mpsc::channel::<OutletCommand>(16);
     let mut state = current.clone();
     let task = tokio::spawn(async move {
         let _lock = lock;
@@ -863,15 +1577,19 @@ async fn watch_contacts_with_interval(
         timer.tick().await;
         loop {
             let event = tokio::select! {
+                command = command_rx.recv() => {
+                    let Some((aid, on, reply)) = command else { break };
+                    let Some(result) = execute_outlet_command(&mut handle, &outlets, &mut state, &send, aid, on).await else { return };
+                    let _ = reply.send(result);
+                    continue;
+                }
                 event = events.next() => match event { Some(event) => event, None => break },
                 _ = timer.tick() => {
-                    let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_contacts(&mut handle)).await {
+                    let refreshed = match tokio::time::timeout(std::time::Duration::from_secs(3), read_sensors(&mut handle)).await {
                         Ok(Ok(refreshed)) => refreshed,
                         _ => break,
                     };
-                    for (aid, value) in &refreshed {
-                        if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) && send.try_send((*aid, value.clone())).is_err() { return; }
-                    }
+                    if send_snapshot_changes(&state, &refreshed, &send).is_err() { return; }
                     state = refreshed;
                     continue;
                 }
@@ -906,6 +1624,7 @@ async fn watch_contacts_with_interval(
     Ok(ContactsWatch {
         current,
         updates,
+        commands,
         task,
     })
 }

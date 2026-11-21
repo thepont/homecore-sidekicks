@@ -48,6 +48,8 @@ Accessory.prototype.handleInitialPairSetupFinished=function(...args){
   return paired.apply(this,args);
 };
 const bridgeMode = process.env.HAP_BRIDGE === '1';
+let smokeOffline = false;
+let outletOn = true;
 const accessory = bridgeMode ? new Bridge('Fixture bridge', uuid.generate('homecore.fixture.bridge')) : new Accessory('Fixture contact', uuid.generate('homecore.fixture.contact'));
 const first = bridgeMode ? new Accessory('First contact', uuid.generate('homecore.fixture.contact')) : accessory;
 if (bridgeMode) accessory.addBridgedAccessory(first);
@@ -61,6 +63,8 @@ state.on('subscribe',()=>{
   console.log('SUBSCRIBED');
 });
 require('readline').createInterface({input:process.stdin}).on('line',line=>{
+  if(line==='smoke-offline'){smokeOffline=true;}
+  if(line==='smoke-online'){smokeOffline=false;}
   if(line==='close'){contactValue=0;state.updateValue(contactValue);}
   if(line==='open'){contactValue=1;state.updateValue(contactValue);}
   if(line==='battery=50'){batteryValue=50;batteryState.updateValue(batteryValue);}
@@ -75,6 +79,31 @@ if (bridgeMode) {
   const second = new Accessory('Second contact', uuid.generate('homecore.fixture.second'));
   second.addService(Service.ContactSensor, 'Second contact').getCharacteristic(Characteristic.ContactSensorState).onGet(() => 0);
   accessory.addBridgedAccessory(second);
+  const climate = new Accessory('Climate sensor', uuid.generate('homecore.fixture.climate'));
+  climate.addService(Service.TemperatureSensor, 'Temperature').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => 21.5);
+  climate.addService(Service.HumiditySensor, 'Humidity').getCharacteristic(Characteristic.CurrentRelativeHumidity).onGet(() => 42);
+  const climateBattery = climate.addService(Service.Battery, 'Climate battery');
+  climateBattery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 83);
+  climateBattery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);
+  climateBattery.getCharacteristic(Characteristic.StatusLowBattery).onGet(() => 0);
+  accessory.addBridgedAccessory(climate);
+  const offline = new Accessory('Offline climate sensor', uuid.generate('homecore.fixture.offline-climate'));
+  offline.addService(Service.TemperatureSensor, 'Offline temperature').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => {throw new Error('unavailable');});
+  accessory.addBridgedAccessory(offline);
+  const smoke = new Accessory('Smoke detector', uuid.generate('homecore.fixture.smoke'));
+  const smokeService = smoke.addService(Service.SmokeSensor, 'Smoke detector');
+  smokeService.getCharacteristic(Characteristic.SmokeDetected).onGet(() => {if(smokeOffline) throw new Error('unavailable');return 1;});
+  smokeService.getCharacteristic(Characteristic.StatusFault).onGet(() => 0);
+  const smokeBattery = smoke.addService(Service.Battery, 'Smoke battery');
+  smokeBattery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 74);
+  smokeBattery.getCharacteristic(Characteristic.ChargingState).onGet(() => 0);
+  smokeBattery.getCharacteristic(Characteristic.StatusLowBattery).onGet(() => 0);
+  accessory.addBridgedAccessory(smoke);
+  const outlet = new Accessory('Outlet', uuid.generate('homecore.fixture.outlet'));
+  const outletService = outlet.addService(Service.Outlet, 'Outlet');
+  outletService.getCharacteristic(Characteristic.On).onGet(() => outletOn).onSet(value => {outletOn=value;});
+  outletService.getCharacteristic(Characteristic.OutletInUse).onGet(() => false);
+  accessory.addBridgedAccessory(outlet);
 }
 accessory.on('listening',port=>{boundPort=port;console.log(`PORT=${port}`)});
 accessory.publish({username:'02:11:22:33:44:55',pincode:'123-45-678',category:Categories.SENSOR,port:Number(process.env.HAP_PORT||0),bind:'127.0.0.1',addIdentifyingMaterial:false}).catch(()=>process.exit(1));

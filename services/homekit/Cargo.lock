@@ -719,6 +719,8 @@ dependencies = [
  "hap-pairing",
  "hap-transport",
  "homecore-test-support",
+ "if-addrs",
+ "mdns-sd",
  "plugin-sdk-rs",
  "reqwest",
  "rumqttc",

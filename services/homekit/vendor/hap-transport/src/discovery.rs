@@ -89,7 +89,7 @@ pub async fn discover(timeout: Duration) -> Result<Vec<DiscoveredAccessory>> {
                     .iter()
                     .find(|ip| ip.is_ipv4())
                     .or_else(|| info.get_addresses().iter().next())
-                    .map(|ip| SocketAddr::new(ip.to_ip_addr(), info.get_port()))
+                    .map(|ip| socket_address(ip, info.get_port()))
                 else {
                     continue;
                 };
@@ -155,7 +155,7 @@ pub async fn discover_stream(
                                 .iter()
                                 .find(|ip| ip.is_ipv4())
                                 .or_else(|| info.get_addresses().iter().next())
-                                .map(|ip| SocketAddr::new(ip.to_ip_addr(), info.get_port()))
+                                .map(|ip| socket_address(ip, info.get_port()))
                             else {
                                 continue;
                             };
@@ -173,6 +173,15 @@ pub async fn discover_stream(
         let _ = daemon.shutdown();
     });
     Ok(rx)
+}
+
+/// Convert an mDNS address into a connection endpoint.
+#[doc(hidden)]
+pub fn socket_address(ip: &mdns_sd::ScopedIp, port: u16) -> SocketAddr {
+    match ip {
+        mdns_sd::ScopedIp::V6(v6) => SocketAddr::V6(std::net::SocketAddrV6::new(*v6.addr(), port, 0, v6.scope_id().index)),
+        _ => SocketAddr::new(ip.to_ip_addr(), port),
+    }
 }
 
 /// Derive the human-readable name from an mDNS fullname like
@@ -299,5 +308,5 @@ mod tests {
 /// a live network.
 #[doc(hidden)]
 pub mod discovery_test_support {
-    pub use super::parse_txt;
+    pub use super::{parse_txt, socket_address};
 }

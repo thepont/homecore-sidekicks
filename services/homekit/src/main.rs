@@ -21,6 +21,7 @@ struct Settings {
     state_dir: PathBuf,
     ui: PathBuf,
     refresh: u64,
+    heartbeat: u64,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +102,7 @@ fn managed_settings(path: &Path) -> Result<Settings, &'static str> {
         state_dir,
         ui,
         refresh: homekit.refresh_secs,
+        heartbeat: 30,
     })
 }
 
@@ -147,6 +149,13 @@ fn legacy_settings() -> Result<Settings, &'static str> {
     if !(1..=3600).contains(&refresh) {
         return Err("Invalid refresh interval");
     }
+    let heartbeat = env::var("HOMEKIT_HEARTBEAT_SECS")
+        .unwrap_or_else(|_| "30".into())
+        .parse::<u64>()
+        .map_err(|_| "Invalid heartbeat interval")?;
+    if !(1..=3600).contains(&heartbeat) {
+        return Err("Invalid heartbeat interval");
+    }
     Ok(Settings {
         host,
         port,
@@ -157,6 +166,7 @@ fn legacy_settings() -> Result<Settings, &'static str> {
         state_dir,
         ui,
         refresh,
+        heartbeat,
     })
 }
 
@@ -187,27 +197,42 @@ async fn run(settings: Settings) -> Result<(), &'static str> {
         state_dir,
         ui,
         refresh,
+        heartbeat,
     } = settings;
-    let management = homecore_homekit::setup::run(
-        host.clone(),
-        port,
-        username.clone(),
-        password.clone(),
-        state_dir.clone(),
-        ui,
+    let (tracker_tx, tracker_rx) = tokio::sync::oneshot::channel();
+    let management = homecore_homekit::setup::run_with_tracking(
+        homecore_homekit::setup::ManagementConfig {
+            host: host.clone(),
+            port,
+            id: username.clone(),
+            password: password.to_owned(),
+            state_dir: state_dir.clone(),
+            ui,
+        },
+        heartbeat,
+        tracker_tx,
     );
     let mut options = MqttOptions::new(format!("{plugin}-publisher"), host, port);
     if !password.is_empty() {
         options.set_credentials(username, password);
     }
     options.set_keep_alive(Duration::from_secs(15));
+    let availability_options = options.clone();
     let (mqtt, mut events) = AsyncClient::new(options, 32);
     let (ready, mut connection) = watch::channel(false);
+    let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(32);
     let worker = tokio::spawn(async move {
         loop {
             match events.poll().await {
                 Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                     ready.send_replace(true);
+                }
+                Ok(Event::Incoming(Incoming::Publish(message))) => {
+                    if !message.retain && message.payload.len() <= 4096 {
+                        if let Ok(value) = serde_json::from_slice(&message.payload) {
+                            let _ = command_tx.try_send((message.topic, value));
+                        }
+                    }
                 }
                 Ok(_) => {}
                 Err(_) => {
@@ -218,6 +243,7 @@ async fn run(settings: Settings) -> Result<(), &'static str> {
         }
     });
     let publisher = async move {
+        let tracker = tracker_rx.await.map_err(|_| "Device tracker unavailable")?;
         loop {
             while !*connection.borrow_and_update() {
                 if connection.changed().await.is_err() {
@@ -237,7 +263,7 @@ async fn run(settings: Settings) -> Result<(), &'static str> {
                 continue;
             };
             tokio::select! {
-            _ = homecore_homekit::run_contact_publisher_with_interval(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh)) => {
+            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx, Some(homecore_homekit::PublisherRuntime { availability_options: availability_options.clone(), tracker: tracker.clone() })) => {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 _ = connection.changed() => {}
