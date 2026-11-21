@@ -1,6 +1,9 @@
+use hc_types::{AttributeKind, Capabilities, PROTOCOL_VERSION};
 use quick_xml::{events::Event, Reader};
+use serde_json::{json, Value};
 use std::{net::SocketAddr, time::Duration};
 
+const MAX_VOLUME: u8 = 100;
 const MAX_RESPONSE: usize = 16 * 1024;
 const SERVICE: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 
@@ -57,7 +60,7 @@ impl Hisense {
             .await?
             .parse::<u8>()
             .map_err(|_| "Invalid volume")?;
-        if volume > 100 {
+        if volume > MAX_VOLUME {
             return Err("Invalid volume");
         }
         let muted = match self.query("GetMute", b"CurrentMute").await?.as_str() {
@@ -132,6 +135,22 @@ pub struct Broker {
 const PLUGIN: &str = "plugin.hisense";
 const DEVICE: &str = "hisense_living_room";
 
+fn media_schema() -> Value {
+    json!({
+        "attributes": {
+            "volume": {
+                "kind": AttributeKind::Integer,
+                "writable": false,
+                "min": 0,
+                "max": MAX_VOLUME,
+                "unit": "%",
+            },
+            "muted": {"kind": AttributeKind::Bool, "writable": false},
+        },
+        "primary": ["volume", "muted"],
+    })
+}
+
 async fn send(
     client: &rumqttc::AsyncClient,
     topic: &str,
@@ -149,7 +168,6 @@ async fn send(
 
 pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), &'static str> {
     use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS};
-    use serde_json::json;
     if interval.is_zero() || broker.port == 0 {
         return Err("Invalid broker configuration");
     }
@@ -197,8 +215,13 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 changed.map_err(|_| "MQTT driver stopped")?;
                 if *ready_rx.borrow_and_update() {
                     send(&mqtt, &format!("homecore/plugins/{PLUGIN}/register"), json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room TV","device_type":"media_player"}).to_string(), true).await?;
-                    send(&mqtt, &format!("homecore/plugins/{PLUGIN}/capabilities"), json!({"spec":"1","plugin_id":PLUGIN,"actions":[]}).to_string(), true).await?;
-                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), json!({"attributes":{"volume":{"kind":"integer","writable":false,"min":0,"max":100,"unit":"%"},"muted":{"kind":"bool","writable":false}},"primary":["volume","muted"]}).to_string(), true).await?;
+                    let capabilities = Capabilities {
+                        spec: "1".into(),
+                        plugin_id: PLUGIN.into(),
+                        ..Default::default()
+                    };
+                    send(&mqtt, &format!("homecore/plugins/{PLUGIN}/capabilities"), json!(capabilities).to_string(), true).await?;
+                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), media_schema().to_string(), true).await?;
                     previous = None;
                     available = false;
                     send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "offline".into(), true).await?;
@@ -225,7 +248,7 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 }
             }
             _ = heartbeat.tick(), if *ready_rx.borrow() => {
-                send(&mqtt, &format!("homecore/plugins/{PLUGIN}/heartbeat"), json!({"version":env!("CARGO_PKG_VERSION"),"protocol_version":"0.1.5","uptime_secs":started.elapsed().as_secs(),"notices":[]}).to_string(), false).await?;
+                send(&mqtt, &format!("homecore/plugins/{PLUGIN}/heartbeat"), json!({"version":env!("CARGO_PKG_VERSION"),"protocol_version":PROTOCOL_VERSION,"uptime_secs":started.elapsed().as_secs(),"notices":[]}).to_string(), false).await?;
             }
         }
     }
