@@ -1476,6 +1476,42 @@ pub async fn watch_contacts_saved(
     watch_contacts_with_interval(id, state_dir, std::time::Duration::from_secs(30)).await
 }
 
+async fn execute_outlet_command(
+    handle: &mut hap_controller::AccessoryHandle,
+    outlets: &[(u64, u64)],
+    state: &mut [(u64, Value)],
+    send: &tokio::sync::mpsc::Sender<(u64, Value)>,
+    aid: u64,
+    on: bool,
+) -> Option<Result<(), &'static str>> {
+    let result = if let Some((_, iid)) = outlets.iter().find(|(outlet, _)| *outlet == aid) {
+        match handle
+            .write(aid, *iid, hap_controller::CharValue::Bool(on))
+            .await
+        {
+            Ok(()) => match handle.read(aid, *iid).await {
+                Ok(value) => match value.to_json().as_bool() {
+                    Some(actual) => {
+                        if let Some((_, state)) = state.iter_mut().find(|(item, _)| *item == aid) {
+                            state["on"] = json!(actual);
+                            if send.try_send((aid, state.clone())).is_err() {
+                                return None;
+                            }
+                        }
+                        Ok(())
+                    }
+                    None => Err("Invalid outlet reading"),
+                },
+                Err(_) => Err("Cannot read outlet"),
+            },
+            Err(_) => Err("Cannot set outlet"),
+        }
+    } else {
+        Err("Outlet unavailable")
+    };
+    Some(result)
+}
+
 fn send_snapshot_changes(
     state: &[(u64, Value)],
     refreshed: &[(u64, Value)],
@@ -1566,24 +1602,7 @@ async fn watch_contacts_with_interval(
             let event = tokio::select! {
                 command = command_rx.recv() => {
                     let Some((aid, on, reply)) = command else { break };
-                    let result = if let Some((_, iid)) = outlets.iter().find(|(outlet, _)| *outlet == aid) {
-                        match handle.write(aid, *iid, hap_controller::CharValue::Bool(on)).await {
-                            Ok(()) => match handle.read(aid, *iid).await {
-                                Ok(value) => match value.to_json().as_bool() {
-                                    Some(actual) => {
-                                        if let Some((_, state)) = state.iter_mut().find(|(item, _)| *item == aid) {
-                                            state["on"] = json!(actual);
-                                            if send.try_send((aid, state.clone())).is_err() { return; }
-                                        }
-                                        Ok(())
-                                    },
-                                    None => Err("Invalid outlet reading"),
-                                },
-                                Err(_) => Err("Cannot read outlet"),
-                            },
-                            Err(_) => Err("Cannot set outlet"),
-                        }
-                    } else { Err("Outlet unavailable") };
+                    let Some(result) = execute_outlet_command(&mut handle, &outlets, &mut state, &send, aid, on).await else { return };
                     let _ = reply.send(result);
                     continue;
                 }
