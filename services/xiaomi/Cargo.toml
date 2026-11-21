@@ -25,6 +25,7 @@ lto = "thin"
 codegen-units = 1
 
 [dependencies]
+homecore-bounded-http = { path = "../../crates/bounded-http" }
 base64 = "=0.23.1"
 ring = "=0.17.14"
 libc = "=0.2.191"

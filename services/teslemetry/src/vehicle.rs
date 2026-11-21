@@ -165,14 +165,8 @@ pub fn parse_event(
     }
 }
 
-async fn bounded_json(mut response: reqwest::Response) -> Option<Value> {
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.ok()? {
-        if body.len() + chunk.len() > 65_536 {
-            return None;
-        }
-        body.extend_from_slice(&chunk);
-    }
+async fn bounded_json(response: reqwest::Response) -> Option<Value> {
+    let body = homecore_bounded_http::read_bounded(response, 65_536).await.ok()?;
     serde_json::from_slice(&body).ok()
 }
 

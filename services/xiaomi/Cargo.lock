@@ -720,6 +720,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "homecore-bounded-http"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+]
+
+[[package]]
 name = "homecore-test-support"
 version = "0.1.0"
 dependencies = [
@@ -738,6 +745,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "futures-util",
+ "homecore-bounded-http",
  "homecore-test-support",
  "libc",
  "plugin-sdk-rs",

@@ -120,24 +120,19 @@ pub async fn fetch_energy_async(
     token: &str,
 ) -> Result<(Powerwall, serde_json::Map<String, Value>), &'static str> {
     let url = status_url(base, site, token)?;
-    let mut response = client
+    let response = client
         .get(url)
         .bearer_auth(token)
         .send()
         .await
         .and_then(|response| response.error_for_status())
         .map_err(|_| "Teslemetry request failed")?;
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    let body = homecore_bounded_http::read_bounded(response, 65_536)
         .await
-        .map_err(|_| "Teslemetry request failed")?
-    {
-        if body.len() + chunk.len() > 65_536 {
-            return Err("Invalid Teslemetry response");
-        }
-        body.extend_from_slice(&chunk);
-    }
+        .map_err(|error| match error {
+            homecore_bounded_http::BodyReadError::Transfer => "Teslemetry request failed",
+            homecore_bounded_http::BodyReadError::TooLarge => "Invalid Teslemetry response",
+        })?;
     let status = serde_json::from_slice(&body).map_err(|_| "Invalid Teslemetry response")?;
     energy(&status)
 }

@@ -142,19 +142,12 @@ impl Provider {
         })
     }
 }
-async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, &'static str> {
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "Xiaomi response failed")?
-    {
-        if bytes.len().saturating_add(chunk.len()) > limit {
-            return Err("Xiaomi response too large");
-        }
-        bytes.extend_from_slice(&chunk);
+async fn bounded(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, &'static str> {
+    match homecore_bounded_http::read_bounded(response, limit).await {
+        Ok(bytes) => Ok(bytes),
+        Err(homecore_bounded_http::BodyReadError::Transfer) => Err("Xiaomi response failed"),
+        Err(homecore_bounded_http::BodyReadError::TooLarge) => Err("Xiaomi response too large"),
     }
-    Ok(bytes)
 }
 
 fn provider_json(data: &[u8]) -> Result<Value, &'static str> {

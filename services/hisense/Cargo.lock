@@ -211,10 +211,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "homecore-bounded-http"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+]
+
+[[package]]
 name = "homecore-hisense"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "homecore-bounded-http",
  "homecore-test-support",
  "quick-xml",
  "reqwest",

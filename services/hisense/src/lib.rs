@@ -30,7 +30,7 @@ impl Hisense {
 
     async fn query(&self, action: &str, element: &[u8]) -> Result<String, &'static str> {
         let body = format!("<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{SERVICE}\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:{action}></s:Body></s:Envelope>");
-        let mut response = self
+        let response = self
             .client
             .post(format!("http://{}/upnp/control/mingusrcr", self.address))
             .header("Content-Type", "text/xml; charset=\"utf-8\"")
@@ -42,13 +42,12 @@ impl Hisense {
         if !response.status().is_success() {
             return Err("TV returned an error");
         }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| "TV response failed")? {
-            if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
-                return Err("TV response too large");
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let bytes = homecore_bounded_http::read_bounded(response, MAX_RESPONSE)
+            .await
+            .map_err(|error| match error {
+                homecore_bounded_http::BodyReadError::Transfer => "TV response failed",
+                homecore_bounded_http::BodyReadError::TooLarge => "TV response too large",
+            })?;
         let mut reader = Reader::from_reader(bytes.as_slice());
         let mut within = false;
         let mut depth = 0usize;
