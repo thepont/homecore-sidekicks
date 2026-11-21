@@ -27,6 +27,12 @@ const FIELDS: &[&str] = &[
     "total_grid_energy_exported",
 ];
 
+fn nonnegative_finite(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
 fn site_date(data: &Value, site: u64) -> Option<chrono::NaiveDate> {
     let id = data.get("id")?;
     let id = id.as_u64().or_else(|| id.as_str()?.parse().ok())?;
@@ -49,7 +55,7 @@ pub fn parse_event(data: &str, site: u64) -> Option<Map<String, Value>> {
     let mut fields = Map::new();
     for name in FIELDS {
         if let Some(value) = totals.get(*name).filter(|v| !v.is_null()) {
-            let value = value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+            let value = nonnegative_finite(value)?;
             fields.insert(format!("{name}_wh"), value.into());
         }
     }
@@ -69,7 +75,7 @@ pub fn parse_connector_totals(data: &str, site: u64) -> Option<Map<String, Value
     }
     let mut sum = 0.0;
     for value in totals.values() {
-        sum += value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+        sum += nonnegative_finite(value)?;
         if !sum.is_finite() {
             return None;
         }
@@ -98,7 +104,7 @@ pub fn parse_site_info(data: &str, site: u64) -> Option<Map<String, Value>> {
         ("nameplate_power", "site_nameplate_power_w"),
     ] {
         if let Some(value) = info.get(source).filter(|v| !v.is_null()) {
-            let value = value.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+            let value = nonnegative_finite(value)?;
             if target.ends_with("_pct") && value > 100.0 {
                 return None;
             }
