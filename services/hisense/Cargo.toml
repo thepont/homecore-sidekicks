@@ -9,7 +9,7 @@ lto = "thin"
 codegen-units = 1
 
 [dependencies]
-hc-types = { git = "https://github.com/homeCore-io/homeCore.git", rev = "40a9c649e33bd61d8cbb343eebf20b61bd624ca3", version = "0.1.5" }
+plugin-sdk-rs = { path = "../../crates/vendor/plugin-sdk-rs" }
 homecore-bounded-http = { path = "../../crates/bounded-http" }
 quick-xml = "=0.39.4"
 reqwest = { version = "=0.12.28", default-features = false }

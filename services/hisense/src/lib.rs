@@ -1,7 +1,10 @@
-use hc_types::{AttributeKind, Capabilities, PROTOCOL_VERSION};
+use plugin_sdk_rs::{
+    types::{AttributeKind, Capabilities},
+    DevicePublisher,
+};
 use quick_xml::{events::Event, Reader};
 use serde_json::{json, Value};
-use std::{net::SocketAddr, time::Duration};
+use std::{future::Future, net::SocketAddr, time::Duration};
 
 const MAX_VOLUME: u8 = 100;
 const MAX_RESPONSE: usize = 16 * 1024;
@@ -151,19 +154,11 @@ fn media_schema() -> Value {
     })
 }
 
-async fn send(
-    client: &rumqttc::AsyncClient,
-    topic: &str,
-    payload: String,
-    retain: bool,
-) -> Result<(), &'static str> {
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        client.publish(topic, rumqttc::QoS::AtLeastOnce, retain, payload),
-    )
-    .await
-    .map_err(|_| "MQTT publish timed out")?
-    .map_err(|_| "MQTT publish failed")
+async fn send<E>(publish: impl Future<Output = Result<(), E>>) -> Result<(), &'static str> {
+    tokio::time::timeout(Duration::from_secs(2), publish)
+        .await
+        .map_err(|_| "MQTT publish timed out")?
+        .map_err(|_| "MQTT publish failed")
 }
 
 pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), &'static str> {
@@ -181,6 +176,7 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
         true,
     ));
     let (mqtt, mut eventloop) = AsyncClient::new(opts, 16);
+    let publisher = DevicePublisher::from_mqtt_client(mqtt, PLUGIN).with_retained_registration();
     let (ready_tx, mut ready_rx) = tokio::sync::watch::channel(false);
     let driver = tokio::spawn(async move {
         loop {
@@ -214,33 +210,36 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
             changed = ready_rx.changed() => {
                 changed.map_err(|_| "MQTT driver stopped")?;
                 if *ready_rx.borrow_and_update() {
-                    send(&mqtt, &format!("homecore/plugins/{PLUGIN}/register"), json!({"device_id":DEVICE,"plugin_id":PLUGIN,"name":"Living room TV","device_type":"media_player"}).to_string(), true).await?;
+                    send(publisher.register_device_full(
+                        DEVICE, "Living room TV", Some("media_player"), None, None,
+                    )).await?;
                     let capabilities = Capabilities {
                         spec: "1".into(),
                         plugin_id: PLUGIN.into(),
                         ..Default::default()
                     };
-                    send(&mqtt, &format!("homecore/plugins/{PLUGIN}/capabilities"), json!(capabilities).to_string(), true).await?;
-                    send(&mqtt, &format!("homecore/devices/{DEVICE}/schema"), media_schema().to_string(), true).await?;
+                    send(publisher.publish_capabilities(&capabilities)).await?;
+                    send(publisher.register_device_schema_json(DEVICE, &media_schema())).await?;
                     previous = None;
                     available = false;
-                    send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "offline".into(), true).await?;
+                    send(publisher.publish_availability(DEVICE, false)).await?;
                 }
             }
             _ = ticks.tick(), if *ready_rx.borrow() => {
                 match tv.read().await {
                     Ok(reading) => {
                         if previous.as_ref() != Some(&reading) {
-                            send(&mqtt, &format!("homecore/devices/{DEVICE}/state"), json!({"volume":reading.volume,"muted":reading.muted}).to_string(), true).await?;
+                            let state = json!({"volume": reading.volume, "muted": reading.muted});
+                            send(publisher.publish_state(DEVICE, &state)).await?;
                             previous = Some(reading);
                         }
                         if !available {
-                            send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "online".into(), true).await?;
+                            send(publisher.publish_availability(DEVICE, true)).await?;
                             available = true;
                         }
                     }
                     Err(_) if available => {
-                        send(&mqtt, &format!("homecore/devices/{DEVICE}/availability"), "offline".into(), true).await?;
+                        send(publisher.publish_availability(DEVICE, false)).await?;
                         available = false;
                         previous = None;
                     }
@@ -248,7 +247,9 @@ pub async fn run(tv: Hisense, broker: Broker, interval: Duration) -> Result<(), 
                 }
             }
             _ = heartbeat.tick(), if *ready_rx.borrow() => {
-                send(&mqtt, &format!("homecore/plugins/{PLUGIN}/heartbeat"), json!({"version":env!("CARGO_PKG_VERSION"),"protocol_version":PROTOCOL_VERSION,"uptime_secs":started.elapsed().as_secs(),"notices":[]}).to_string(), false).await?;
+                send(publisher.publish_heartbeat(
+                    env!("CARGO_PKG_VERSION"), started.elapsed().as_secs(), &[], QoS::AtLeastOnce,
+                )).await?;
             }
         }
     }
