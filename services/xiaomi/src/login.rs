@@ -268,6 +268,20 @@ impl<'a> LanDevice<'a> {
             token: cloud_device_token(item)?,
         })
     }
+
+    #[cfg(feature = "setup")]
+    pub(crate) fn match_adapter(
+        &self,
+        catalog: &crate::adapters::AdapterCatalog,
+        capture_credentials: bool,
+    ) -> Option<DiscoveredDevice> {
+        let device = catalog.match_device(self.device_id?, self.name, self.model)?;
+        let credential = capture_credentials.then(|| DiscoveredCredential {
+            address: self.address,
+            token: self.token.to_owned(),
+        });
+        Some(DiscoveredDevice { device, credential })
+    }
 }
 
 fn cloud_device_token(item: &Value) -> Option<&str> {
@@ -435,19 +449,8 @@ impl Provider {
         use std::collections::{btree_map::Entry, BTreeMap};
         let mut candidates = BTreeMap::new();
         self.visit_devices(auth, region, |device| {
-            if let Some(matched) = device
-                .device_id
-                .and_then(|id| catalog.match_device(id, device.name, device.model))
-            {
-                let id = matched.id.clone();
-                let candidate = DiscoveredDevice {
-                    device: matched,
-                    credential: capture_credentials.then(|| DiscoveredCredential {
-                        address: device.address,
-                        token: device.token.to_owned(),
-                    }),
-                };
-                match candidates.entry(id) {
+            if let Some(candidate) = device.match_adapter(catalog, capture_credentials) {
+                match candidates.entry(candidate.device.id.clone()) {
                     Entry::Occupied(entry) if entry.get() != &candidate => {
                         return Err("Conflicting Xiaomi device identity");
                     }

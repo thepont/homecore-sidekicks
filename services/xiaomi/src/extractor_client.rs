@@ -1,6 +1,6 @@
 use crate::{
     adapters::AdapterCatalog,
-    login::{DiscoveredCredential, DiscoveredDevice, LanDevice},
+    login::{DiscoveredDevice, LanDevice},
     transport::{bearer, read_service_key, MAX_MODELS, MAX_SESSION},
 };
 use reqwest::{Client, Response, Url};
@@ -127,15 +127,11 @@ impl Extraction {
         for item in devices {
             let lan = LanDevice::from_cloud(item).ok_or(ERROR)?;
             let id = lan.device_id.ok_or(ERROR)?;
-            let device = catalog.match_device(id, lan.name, lan.model).ok_or(ERROR)?;
+            let device = lan.match_adapter(catalog, capture).ok_or(ERROR)?;
             if !ids.insert(id) {
                 return Err(ERROR);
             }
-            let credential = capture.then(|| DiscoveredCredential {
-                address: lan.address,
-                token: lan.token.to_owned(),
-            });
-            result.push(DiscoveredDevice { device, credential });
+            result.push(device);
         }
         Ok(result)
     }
