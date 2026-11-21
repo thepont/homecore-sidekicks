@@ -199,3 +199,21 @@ async fn async_source_rejects_non_root_endpoint_even_when_it_would_return_valid_
     .is_err());
     server.abort();
 }
+
+#[tokio::test]
+async fn async_source_rejects_unsafe_base_urls_before_requesting_data() {
+    let client = homecore_teslemetry::http::client().unwrap();
+    for base in [
+        "http://192.0.2.1",
+        "https://user@example.invalid",
+        concat!("https://user:", "fixture", "@example.invalid"),
+        "https://example.invalid/path",
+        "https://example.invalid/?query=value",
+        "https://example.invalid/#fragment",
+    ] {
+        let result =
+            homecore_teslemetry::teslemetry::fetch_energy_async(&client, base, 42, "fixture-token")
+                .await;
+        assert_eq!(result, Err("Invalid Teslemetry configuration"), "{base}");
+    }
+}
