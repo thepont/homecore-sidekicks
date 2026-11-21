@@ -562,18 +562,12 @@ async fn track_devices(
         if tracked.contains(aid) {
             continue;
         }
-        let (kind, label) = if let Some(kind) = state.get("_type").and_then(Value::as_str) {
-            (kind, "device")
-        } else if state.get("open").is_some() {
-            ("contact_sensor", "contact")
-        } else if state.get("on").is_some() {
-            ("switch", "outlet")
-        } else if state.get("smoke").is_some() {
-            ("smoke_sensor", "smoke detector")
-        } else if state.get("temperature").is_some() || state.get("humidity").is_some() {
-            ("temperature_sensor", "climate")
-        } else {
-            return Err("Invalid sensor state");
+        let (kind, label) = match parse_sensor(state)? {
+            SensorReading::Unavailable(kind) => (kind, "device"),
+            SensorReading::Contact(_) => ("contact_sensor", "contact"),
+            SensorReading::Outlet(_) => ("switch", "outlet"),
+            SensorReading::Smoke(_) => ("smoke_sensor", "smoke detector"),
+            SensorReading::Climate(_) => ("temperature_sensor", "climate"),
         };
         let id = format!("homekit_{bridge}_{aid}");
         tracker
