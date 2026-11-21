@@ -40,7 +40,7 @@ tokio-postgres-rustls = { version = "=0.14.0", default-features = false, feature
 webpki-roots = { version = "=1.0.12", optional = true }
 rc4 = { version = "=0.2.0", features = ["zeroize"] }
 zeroize = "=1.9.2"
-plugin-sdk-rs = { git = "https://github.com/homeCore-io/homeCore.git", rev = "40a9c649e33bd61d8cbb343eebf20b61bd624ca3", version = "0.6.5", optional = true }
+plugin-sdk-rs = { path = "../../crates/vendor/plugin-sdk-rs", optional = true }
 axum = { version = "=0.8.8", default-features = false, features = ["http1", "json", "tokio"], optional = true }
 futures-util = { version = "=0.3.34", default-features = false, optional = true }
 subtle = { version = "=2.6.1", default-features = false, optional = true }

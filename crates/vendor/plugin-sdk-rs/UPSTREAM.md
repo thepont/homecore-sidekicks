@@ -7,5 +7,5 @@ session and preserve opt-in registration retention and heartbeat QoS.
 The upstream license files accompany this copy.
 
 The standalone manifest pins the homeCore library dependencies to the same
-revision. It keeps rumqttc's optional TLS support out of Hisense's localhost
-MQTT build. The other services use their existing SDK pin.
+revision. It keeps rumqttc's optional TLS support out of the local MQTT
+connections used by Hisense, HomeKit and Xiaomi.
