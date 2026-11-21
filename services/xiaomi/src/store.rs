@@ -31,13 +31,25 @@ impl Store {
         if !valid_token(token) {
             return Err("Invalid gateway token");
         }
+        self.write_secret("gateway-token", ".gateway-", |file| {
+            file.write_all(token.as_bytes())
+                .map_err(|_| "Cannot write secret")
+        })
+    }
+
+    fn write_secret(
+        &self,
+        filename: &str,
+        temporary_prefix: &str,
+        write: impl FnOnce(&mut File) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
         if !fs::symlink_metadata(&self.root)
             .map_err(|_| "Secret directory unavailable")?
             .is_dir()
         {
             return Err("Secret directory unavailable");
         }
-        let final_path = self.root.join("gateway-token");
+        let final_path = self.root.join(filename);
         if fs::symlink_metadata(&final_path).is_ok_and(|m| !m.is_file()) {
             return Err("Invalid secret path");
         }
@@ -49,7 +61,7 @@ impl Store {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        let tmp = Temp(self.root.join(format!(".gateway-{suffix}")));
+        let tmp = Temp(self.root.join(format!("{temporary_prefix}{suffix}")));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -57,9 +69,8 @@ impl Store {
             .custom_flags(libc::O_NOFOLLOW)
             .open(&tmp.0)
             .map_err(|_| "Cannot create secret")?;
-        file.write_all(token.as_bytes())
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "Cannot write secret")?;
+        write(&mut file)?;
+        file.sync_all().map_err(|_| "Cannot write secret")?;
         fs::rename(&tmp.0, final_path).map_err(|_| "Cannot save secret")?;
         File::open(&self.root)
             .and_then(|f| f.sync_all())
@@ -169,40 +180,17 @@ impl GatewayConfig {
 }
 impl Store {
     pub fn save_gateway(&self, config: &GatewayConfig) -> Result<(), &'static str> {
-        if !fs::symlink_metadata(&self.root)
-            .map_err(|_| "Secret directory unavailable")?
-            .is_dir()
-        {
-            return Err("Secret directory unavailable");
-        }
-        let destination = self.root.join("gateway.json");
-        if fs::symlink_metadata(&destination).is_ok_and(|m| !m.is_file()) {
-            return Err("Invalid secret path");
-        }
-        let mut random = [0u8; 16];
-        SystemRandom::new()
-            .fill(&mut random)
-            .map_err(|_| "Cannot create secret")?;
-        let suffix = random
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        let tmp = Temp(self.root.join(format!(".gateway-config-{suffix}")));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&tmp.0)
-            .map_err(|_| "Cannot create secret")?;
-        let data = serde_json::json!({"address":config.address, "model":config.model, "token":config.token, "device_id":config.device_id, "alternate_token":config.alternate_token, "cloud_comparison":config.cloud_comparison});
-        serde_json::to_writer(&mut file, &data).map_err(|_| "Cannot write secret")?;
-        file.sync_all().map_err(|_| "Cannot write secret")?;
-        fs::rename(&tmp.0, destination).map_err(|_| "Cannot save secret")?;
-        File::open(&self.root)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| "Cannot sync secret")?;
-        Ok(())
+        self.write_secret("gateway.json", ".gateway-config-", |file| {
+            let data = serde_json::json!({
+                "address": config.address,
+                "model": config.model,
+                "token": config.token,
+                "device_id": config.device_id,
+                "alternate_token": config.alternate_token,
+                "cloud_comparison": config.cloud_comparison,
+            });
+            serde_json::to_writer(file, &data).map_err(|_| "Cannot write secret")
+        })
     }
     pub fn load_gateway(&self) -> Result<Option<GatewayConfig>, &'static str> {
         let file = match OpenOptions::new()
