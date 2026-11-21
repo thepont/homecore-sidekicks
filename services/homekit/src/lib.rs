@@ -1476,6 +1476,39 @@ pub async fn watch_contacts_saved(
     watch_contacts_with_interval(id, state_dir, std::time::Duration::from_secs(30)).await
 }
 
+fn send_snapshot_changes(
+    state: &[(u64, Value)],
+    refreshed: &[(u64, Value)],
+    send: &tokio::sync::mpsc::Sender<(u64, Value)>,
+) -> Result<(), ()> {
+    let mut changed = false;
+    for (aid, _) in state {
+        if !refreshed.iter().any(|(new, _)| new == aid) {
+            changed = true;
+            send.try_send((*aid, Value::Null)).map_err(|_| ())?;
+        }
+    }
+    for (aid, value) in refreshed {
+        if state
+            .iter()
+            .find(|(old, _)| old == aid)
+            .is_none_or(|(_, old)| old != value)
+        {
+            changed = true;
+            send.try_send((*aid, value.clone())).map_err(|_| ())?;
+        }
+    }
+    if !changed {
+        if let Some((aid, value)) = refreshed
+            .iter()
+            .find(|(_, value)| value.get("_offline").and_then(Value::as_bool) != Some(true))
+        {
+            send.try_send((*aid, value.clone())).map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
 async fn watch_contacts_with_interval(
     id: &str,
     state_dir: &std::path::Path,
@@ -1560,24 +1593,7 @@ async fn watch_contacts_with_interval(
                         Ok(Ok(refreshed)) => refreshed,
                         _ => break,
                     };
-                    let mut changed = false;
-                    for (aid, _) in &state {
-                        if !refreshed.iter().any(|(new, _)| new == aid) {
-                            changed = true;
-                            if send.try_send((*aid, Value::Null)).is_err() { return; }
-                        }
-                    }
-                    for (aid, value) in &refreshed {
-                        if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) {
-                            changed = true;
-                            if send.try_send((*aid, value.clone())).is_err() { return; }
-                        }
-                    }
-                    if !changed {
-                        if let Some((aid, value)) = refreshed.iter().find(|(_, value)| value.get("_offline").and_then(Value::as_bool) != Some(true)) {
-                            if send.try_send((*aid, value.clone())).is_err() { return; }
-                        }
-                    }
+                    if send_snapshot_changes(&state, &refreshed, &send).is_err() { return; }
                     state = refreshed;
                     continue;
                 }
