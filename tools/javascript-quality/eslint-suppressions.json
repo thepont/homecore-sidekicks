@@ -24,9 +24,6 @@
     "complexity": {
       "count": 4
     },
-    "id-length": {
-      "count": 2
-    },
     "no-magic-numbers": {
       "count": 23
     }

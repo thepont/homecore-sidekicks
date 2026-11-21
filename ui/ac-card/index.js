@@ -664,9 +664,9 @@ class AcCard extends HTMLElement {
         point.y - Number(marker.getAttribute('cy')));
       return { marker, slot, control, distance };
     });
-    const nearest = handles.reduce((a, b) => {
-      if (!b.control) return a;
-      return !a?.control || b.distance < a.distance ? b : a;
+    const nearest = handles.reduce((closest, candidate) => {
+      if (!candidate.control) return closest;
+      return !closest?.control || candidate.distance < closest.distance ? candidate : closest;
     }, undefined);
     if (!nearest?.control) return;
     // A touch can grab the arc in a 44 px band, even away from the target dot.
