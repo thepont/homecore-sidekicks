@@ -50,6 +50,34 @@ network access disabled. CI runs the same scan on the checked-out tree and
 checks Rust formatting, Clippy warnings, tests and release builds for all six
 services. It also builds the Xiaomi extractor with only its own features.
 
+CI compares Rust readability warnings and Rust/JavaScript function complexity
+with the pull request's base revision. New or increased findings fail the
+check; existing findings remain as candidates for refactoring. Complexity
+limits are 15 cognitive and 12 cyclomatic, with existing higher scores allowed
+only up to their base values. Clippy compares counts per file and rule, so a
+replacement finding can be masked by another finding being removed in the same
+file. CI also uploads Bluecheese duplicate-code and long-method reports for
+review; these reports are not automatic failures.
+
+JavaScript uses a pinned ESLint and records existing violations per file and
+rule in `tools/javascript-quality/eslint-suppressions.json`. The baseline
+includes complexity, long functions, short names, unused variables, magic
+numbers and suspicious `for` loops. CI rejects increased counts. To run it:
+
+```sh
+npm ci --prefix tools/javascript-quality --ignore-scripts
+node tools/javascript-quality/node_modules/eslint/bin/eslint.js \
+  --config tools/javascript-quality/eslint.config.mjs \
+  --suppressions-location tools/javascript-quality/eslint-suppressions.json \
+  'services/*/ui/**/*.js' 'ui/**/*.js' --ignore-pattern '**/tests/**'
+```
+
+After removing existing JavaScript violations, update the recorded counts with
+the same command plus `--prune-suppressions` and commit the result. Rust Clippy
+does not provide a general magic-number rule; review those as refactoring
+candidates. Third-party and test fixtures are excluded from the complexity and
+Bluecheese reports.
+
 The dependency security workflow audits the Rust and npm lockfiles on dependency
 changes and once a week. Dependabot proposes weekly updates for Rust, npm and
 GitHub Actions dependencies.

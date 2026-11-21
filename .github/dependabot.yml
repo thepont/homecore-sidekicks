@@ -9,6 +9,7 @@ updates:
       - /services/mitsubishi
       - /services/teslemetry
       - /services/xiaomi
+      - /tools/quality-gate
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
@@ -18,6 +19,7 @@ updates:
       - /services/homekit/tests/hap
       - /services/teslemetry/tests/ui
       - /services/xiaomi/tests/ui
+      - /tools/javascript-quality
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
