@@ -1,7 +1,7 @@
 {
   "services/teslemetry/ui/index.js": {
     "complexity": {
-      "count": 3
+      "count": 2
     },
     "id-length": {
       "count": 4
