@@ -28,24 +28,33 @@ pub(crate) fn bearer(key: &[u8; 32]) -> Zeroizing<String> {
 }
 
 pub fn read_service_key(path: &Path) -> Result<[u8; 32], &'static str> {
+    read_key_file(path)
+        .map(|key| *key)
+        .map_err(|error| match error {
+            KeyFileError::Read => "Cannot read extractor key",
+            KeyFileError::InvalidLength => "Extractor key must be 32 bytes",
+        })
+}
+
+pub(crate) enum KeyFileError {
+    Read,
+    InvalidLength,
+}
+
+pub(crate) fn read_key_file(path: &Path) -> Result<Zeroizing<[u8; 32]>, KeyFileError> {
     let mut file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
-        .map_err(|_| "Cannot read extractor key")?;
-    let metadata = file.metadata().map_err(|_| "Cannot read extractor key")?;
+        .map_err(|_| KeyFileError::Read)?;
+    let metadata = file.metadata().map_err(|_| KeyFileError::Read)?;
     if !metadata.is_file() || metadata.len() != 32 {
-        return Err("Extractor key must be 32 bytes");
+        return Err(KeyFileError::InvalidLength);
     }
     let mut key = Zeroizing::new([0; 32]);
-    file.read_exact(&mut *key)
-        .map_err(|_| "Cannot read extractor key")?;
-    if file
-        .read(&mut [0])
-        .map_err(|_| "Cannot read extractor key")?
-        != 0
-    {
-        return Err("Extractor key must be 32 bytes");
+    file.read_exact(&mut *key).map_err(|_| KeyFileError::Read)?;
+    if file.read(&mut [0]).map_err(|_| KeyFileError::Read)? != 0 {
+        return Err(KeyFileError::InvalidLength);
     }
-    Ok(*key)
+    Ok(key)
 }

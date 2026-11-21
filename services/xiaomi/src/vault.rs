@@ -1,11 +1,15 @@
-use crate::{adapters::valid_identifier, login::DiscoveredDevice, transport::valid_region};
+use crate::{
+    adapters::valid_identifier,
+    login::DiscoveredDevice,
+    transport::{read_key_file, valid_region, KeyFileError},
+};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ring::{
     aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM},
     rand::{SecureRandom, SystemRandom},
 };
 use serde_json::{json, Value};
-use std::{fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::Path};
+use std::path::Path;
 use zeroize::Zeroizing;
 
 const INVALID: &str = "Invalid Xiaomi credential record";
@@ -21,27 +25,10 @@ pub(crate) fn valid_device_ref(reference: &str) -> bool {
 
 impl Vault {
     pub(crate) fn from_file(path: &Path) -> Result<Self, &'static str> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|_| "Cannot read Xiaomi vault key")?;
-        let metadata = file
-            .metadata()
-            .map_err(|_| "Cannot read Xiaomi vault key")?;
-        if !metadata.is_file() || metadata.len() != 32 {
-            return Err("Xiaomi vault key must be 32 bytes");
-        }
-        let mut key = Zeroizing::new([0; 32]);
-        file.read_exact(&mut *key)
-            .map_err(|_| "Cannot read Xiaomi vault key")?;
-        if file
-            .read(&mut [0])
-            .map_err(|_| "Cannot read Xiaomi vault key")?
-            != 0
-        {
-            return Err("Xiaomi vault key must be 32 bytes");
-        }
+        let key = read_key_file(path).map_err(|error| match error {
+            KeyFileError::Read => "Cannot read Xiaomi vault key",
+            KeyFileError::InvalidLength => "Xiaomi vault key must be 32 bytes",
+        })?;
         Ok(Self(LessSafeKey::new(
             UnboundKey::new(&AES_256_GCM, &*key).map_err(|_| "Invalid Xiaomi vault key")?,
         )))
