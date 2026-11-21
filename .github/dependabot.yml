@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /services/electrolux
+      - /services/hisense
+      - /services/homekit
+      - /services/mitsubishi
+      - /services/teslemetry
+      - /services/xiaomi
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: npm
+    directories:
+      - /services/homekit/tests/hap
+      - /services/teslemetry/tests/ui
+      - /services/xiaomi/tests/ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      browser-tests:
+        patterns: [playwright]
+        group-by: dependency-name
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
