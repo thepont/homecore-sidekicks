@@ -8,6 +8,9 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
+#[path = "../../teslemetry/tests/support/homecore.rs"]
+#[allow(dead_code)]
+mod homecore;
 #[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
 #[allow(dead_code)]
 mod mqtt_broker;
@@ -28,6 +31,108 @@ impl Drop for Fixture {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker and the pinned homeCore image"]
+async fn homecore_receives_typed_homekit_devices_from_a_fake_bridge() {
+    let core = homecore::Core::start().await;
+    let root = core.root.join("homekit-contract");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let accessory_root = root.join("accessory");
+    let state = root.join("state");
+    fs::create_dir(&accessory_root).unwrap();
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(std::env::var("HAP_NODE_BIN").unwrap_or_else(|_| "node".into()))
+        .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/hap/accessory.cjs"))
+        .env("HAP_STORE_DIR", &accessory_root)
+        .env("HAP_BRIDGE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port = line
+        .trim()
+        .strip_prefix("PORT=")
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let _fixture = Fixture {
+        child,
+        root: root.clone(),
+    };
+    let txt = std::collections::HashMap::from([
+        ("id".to_owned(), "02:11:22:33:44:55".to_owned()),
+        ("sf".to_owned(), "1".to_owned()),
+    ]);
+    let discovered = hap_transport::discovery_test_support::parse_txt(
+        "Fixture._hap._tcp.local.",
+        SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
+        &txt,
+    )
+    .unwrap();
+    homecore_homekit::pair_and_read(
+        hap_controller::Discovered::Ip(discovered),
+        "123-45-678",
+        &state,
+    )
+    .await
+    .unwrap();
+    let devices = homecore_homekit::read_sensors_saved("02:11:22:33:44:55", &state)
+        .await
+        .unwrap();
+    let climate = devices
+        .iter()
+        .find(|(_, state)| state.get("temperature").is_some())
+        .unwrap()
+        .0;
+    let smoke = devices
+        .iter()
+        .find(|(_, state)| state.get("smoke").is_some())
+        .unwrap()
+        .0;
+    let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
+    let _service = Process(
+        Command::new(env!("CARGO_BIN_EXE_homecore-homekit"))
+            .env("MQTT_HOST", "127.0.0.1")
+            .env("MQTT_PORT", core.mqtt_port.to_string())
+            .env("MQTT_USERNAME", "plugin.teslemetry-powerwall")
+            .env("MQTT_PASSWORD_FILE", core.root.join("mqtt-password"))
+            .env("HOMEKIT_PLUGIN_ID", "plugin.teslemetry-powerwall")
+            .env("HOMEKIT_STATE_DIR", &state)
+            .env("HOMEKIT_UI_DIR", ui)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    for (aid, expected_type) in [(climate, "temperature_sensor"), (smoke, "smoke_sensor")] {
+        let path = format!("/devices/homekit_021122334455_{aid}");
+        let device: serde_json::Value = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Ok(response) = core.get(&path).send().await {
+                    if response.status().is_success() {
+                        if let Ok(value) = response.json::<serde_json::Value>().await {
+                            if value["device_type"] == expected_type {
+                                break value;
+                            }
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("homeCore did not receive device");
+        assert_eq!(device["device_type"], expected_type);
     }
 }
 
