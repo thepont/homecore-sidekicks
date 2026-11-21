@@ -336,11 +336,14 @@ class TeslemetryCard extends HTMLElement {
 customElements.define('hc-teslemetry-card', TeslemetryCard);
 
 // Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
-async function readTariffPeriods(host) {
+async function readHistoryOrEmpty(host, field) {
   try {
-    const result = await host.devices.history('teslemetry_powerwall', 'tariff_buy_period', {limit: MAX_HISTORY_POINTS});
+    const result = await host.devices.history('teslemetry_powerwall', field, {limit: MAX_HISTORY_POINTS});
     return result?.ok && Array.isArray(result.data) ? result.data.slice(0, MAX_HISTORY_POINTS) : [];
   } catch { return []; }
+}
+function readTariffPeriods(host) {
+  return readHistoryOrEmpty(host, 'tariff_buy_period');
 }
 function renderTariffBands(svg, records, points) {
   const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
@@ -575,8 +578,7 @@ class TeslemetryCombined extends HTMLElement {
     const legend=this.shadowRoot.querySelector('.legend');
     for(const series of combinedSeries){const label=document.createElement('span');label.className='key';label.style.setProperty('--key',series.color);label.textContent=series.name;legend.append(label);}
     const host=this.#host;
-    const read=async field=>{try {const r=await host.devices.history('teslemetry_powerwall',field,{limit: MAX_HISTORY_POINTS});return r?.ok && Array.isArray(r.data) ? r.data.slice(0, MAX_HISTORY_POINTS):[];}catch{return [];}};
-    const all=await Promise.all([...combinedSeries.map(s=>read(s.field)),readTariffPeriods(host)]);
+    const all=await Promise.all([...combinedSeries.map(series=>readHistoryOrEmpty(host,series.field)),readTariffPeriods(host)]);
     if(generation!==this.#generation || !this.isConnected)return;
     const series=all.slice(0,4).map(sortedPowerHistory);
     const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));

@@ -9,7 +9,7 @@
       "count": 4
     },
     "id-length": {
-      "count": 11
+      "count": 9
     },
     "no-magic-numbers": {
       "count": 40
