@@ -83,6 +83,12 @@ const powerwallConnections = [
     paths: ['M170 222V164', 'M170 164V222'] }
 ];
 
+function tariffCurrency(attributes) {
+  const currency = attributes?.tariff_currency;
+  return typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)
+    ? currency.toUpperCase() : undefined;
+}
+
 class TeslemetryCard extends HTMLElement {
   #host;
   #deviceId;
@@ -254,9 +260,7 @@ class TeslemetryCard extends HTMLElement {
 
   #renderTariffs(attributes, available) {
     const active = available && attributes?.tariff_available === true;
-    const rawCurrency = attributes?.tariff_currency;
-    const currency = typeof rawCurrency === 'string' && /^[A-Za-z]{3}$/.test(rawCurrency)
-      ? rawCurrency.toUpperCase() : undefined;
+    const currency = tariffCurrency(attributes);
     const descriptions = [];
     const missing = [];
     for (const tariff of this.#view.tariffs) {
