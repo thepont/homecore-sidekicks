@@ -178,35 +178,7 @@ async fn main() -> Result<(), &'static str> {
     });
     let (tx, mut rx) = watch::channel(None);
     let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<Command>(8);
-    tokio::task::spawn_blocking(move || loop {
-        if let Ok(mut client) = Client::connect(address, mac, Duration::from_secs(2)) {
-            loop {
-                let state = client.status().ok();
-                let available = state.is_some();
-                let off = state.as_ref().is_some_and(|s| s.mode == "off");
-                if tx.send(state).is_err() {
-                    return;
-                }
-                if !available {
-                    break;
-                }
-                match command_rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(command) => {
-                        let result = command.execute(&mut client, off);
-                        if result.is_err() {
-                            let _ = tx.send(None);
-                            break;
-                        }
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                }
-            }
-        } else if tx.send(None).is_err() {
-            return;
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    });
+    tokio::task::spawn_blocking(move || run_controller(address, mac, tx, command_rx));
     loop {
         tokio::select! {
             event=events.poll() => match event {
@@ -229,6 +201,43 @@ async fn main() -> Result<(), &'static str> {
         }
     }
 }
+fn run_controller(
+    address: SocketAddr,
+    mac: [u8; 6],
+    status: watch::Sender<Option<homecore_electrolux::ClimateStatus>>,
+    commands: std::sync::mpsc::Receiver<Command>,
+) {
+    loop {
+        if let Ok(mut client) = Client::connect(address, mac, Duration::from_secs(2)) {
+            loop {
+                let state = client.status().ok();
+                let available = state.is_some();
+                let off = state.as_ref().is_some_and(|s| s.mode == "off");
+                if status.send(state).is_err() {
+                    return;
+                }
+                if !available {
+                    break;
+                }
+                match commands.recv_timeout(Duration::from_secs(5)) {
+                    Ok(command) => {
+                        let result = command.execute(&mut client, off);
+                        if result.is_err() {
+                            let _ = status.send(None);
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            }
+        } else if status.send(None).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
 async fn publish(
     mqtt: &AsyncClient,
     state: Option<&homecore_electrolux::ClimateStatus>,
