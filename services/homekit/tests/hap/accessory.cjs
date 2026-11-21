@@ -1,11 +1,10 @@
 'use strict';
-const {Accessory, Bridge, Service, Characteristic, Categories, HAPStorage, uuid} = require('hap-nodejs');
+const {Accessory, Bridge, Service, Characteristic, Categories, HAPStorage, HAPServer, uuid} = require('@homebridge/hap-nodejs');
 HAPStorage.setCustomStoragePath(process.env.HAP_STORE_DIR);
-const {HAPServer}=require('hap-nodejs/dist/lib/HAPServer');
 const pairings=HAPServer.prototype.handlePairings;
 HAPServer.prototype.handlePairings=function(connection,url,request,data,response){
   if(process.env.HAP_STRICT_CONTROLLER_ID === '1'){
-    const fields=require('hap-nodejs/dist/lib/util/tlv').decode(data);
+    const fields=require('@homebridge/hap-nodejs/dist/lib/util/tlv.js').decode(data);
     if(fields[0]?.[0] === 3 && fields[1]?.length > 36){response.writeHead(400);response.end();return;}
   }
   return pairings.call(this,connection,url,request,data,response);
