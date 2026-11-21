@@ -487,8 +487,8 @@ class TeslemetryGrid extends HTMLElement {
   #render() {
     const hadFocus = this.shadowRoot.activeElement?.tagName === 'BUTTON';
     const device = this.#host?.devices.get('teslemetry_powerwall');
-    const a = device?.available === true ? device.attributes : undefined;
-    const watts = a?.grid_power_w;
+    const attributes = device?.available === true ? device.attributes : undefined;
+    const watts = attributes?.grid_power_w;
     const reading = typeof watts === 'number' && Number.isFinite(watts) ? `${Number((watts / WATTS_PER_KILOWATT).toFixed(2))} kW` : 'Unavailable';
     this.shadowRoot.innerHTML = '<style>:host{display:block;font:inherit;color:var(--ink,#20242b)}.card{padding:16px;border:1px solid var(--card-line,#dedede);border-radius:14px;background:var(--surface,#fff)}strong{display:block;font-size:22px;margin:8px 0}button{font:inherit;cursor:pointer}svg{width:100%;height:100px}polyline{stroke:var(--accent,#9a4a07);stroke-width:2;fill:none;vector-effect:non-scaling-stroke}.cost{margin:8px 0;font-size:13px}</style><div class="card"><span>Grid</span><strong></strong><div class="history"></div><div class="cost"></div><div class="cost-note"></div><button type="button"></button></div>';
     this.shadowRoot.querySelector('strong').textContent = reading;
@@ -500,8 +500,8 @@ class TeslemetryGrid extends HTMLElement {
       else void this.#showHistory();
     });
     if (!this.#details) return;
-    const date = typeof a?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.energy_totals_date) && !Number.isNaN(Date.parse(a.energy_totals_date)) && new Date(a.energy_totals_date).toISOString().startsWith(a.energy_totals_date) ? a.energy_totals_date : undefined;
-    const cost = a?.tariff_available === true && date ? estimateEnergyCost(a.grid_energy_imported_wh, a.tariff_buy_price_per_kwh, a.tariff_currency) : undefined;
+    const date = typeof attributes?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(attributes.energy_totals_date) && !Number.isNaN(Date.parse(attributes.energy_totals_date)) && new Date(attributes.energy_totals_date).toISOString().startsWith(attributes.energy_totals_date) ? attributes.energy_totals_date : undefined;
+    const cost = attributes?.tariff_available === true && date ? estimateEnergyCost(attributes.grid_energy_imported_wh, attributes.tariff_buy_price_per_kwh, attributes.tariff_currency) : undefined;
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
     const target = this.shadowRoot.querySelector('.history');
