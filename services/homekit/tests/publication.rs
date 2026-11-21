@@ -6,6 +6,59 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
 
 #[tokio::test]
+async fn publication_registers_before_schema_and_keeps_current_state_for_new_subscribers() {
+    let broker = mqtt_broker::Broker::start().await;
+    let mut probe = mqtt_broker::Probe::start(broker.port).await;
+    homecore_homekit::publish_sensors(
+        &probe.client,
+        "plugin.homekit",
+        "02:11:22:33:44:55",
+        &[(2, json!({"on":true}))],
+    )
+    .await
+    .unwrap();
+
+    let topics = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut topics = Vec::new();
+        for _ in 0..3 {
+            topics.push(probe.messages.recv().await.unwrap().topic);
+        }
+        topics
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        topics,
+        [
+            "homecore/plugins/plugin.homekit/register",
+            "homecore/devices/homekit_021122334455_2/schema",
+            "homecore/devices/homekit_021122334455_2/state",
+        ]
+    );
+
+    let mut late = mqtt_broker::Probe::start(broker.port).await;
+    let retained = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut values = HashMap::new();
+        for _ in 0..2 {
+            let msg = late.messages.recv().await.unwrap();
+            assert!(msg.retain);
+            values.insert(
+                msg.topic,
+                serde_json::from_slice::<Value>(&msg.payload).unwrap(),
+            );
+        }
+        values
+    })
+    .await
+    .unwrap();
+    assert!(retained.contains_key("homecore/devices/homekit_021122334455_2/schema"));
+    assert_eq!(
+        retained["homecore/devices/homekit_021122334455_2/state"],
+        json!({"on":true})
+    );
+}
+
+#[tokio::test]
 async fn unavailable_sensor_is_registered_with_its_type_without_inventing_a_reading() {
     let broker = mqtt_broker::Broker::start().await;
     let mut probe = mqtt_broker::Probe::start(broker.port).await;
