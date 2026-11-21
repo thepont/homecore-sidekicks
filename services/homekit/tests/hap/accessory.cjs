@@ -80,6 +80,9 @@ if (bridgeMode) {
   accessory.addBridgedAccessory(second);
   const climate = new Accessory('Climate sensor', uuid.generate('homecore.fixture.climate'));
   climate.addService(Service.TemperatureSensor, 'Temperature').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => 21.5);
+  if (process.env.HAP_DUPLICATE_TEMPERATURE === '1') {
+    climate.addService(Service.TemperatureSensor, 'Duplicate temperature', 'duplicate').getCharacteristic(Characteristic.CurrentTemperature).onGet(() => 22);
+  }
   climate.addService(Service.HumiditySensor, 'Humidity').getCharacteristic(Characteristic.CurrentRelativeHumidity).onGet(() => 42);
   const climateBattery = climate.addService(Service.Battery, 'Climate battery');
   climateBattery.getCharacteristic(Characteristic.BatteryLevel).onGet(() => 83);

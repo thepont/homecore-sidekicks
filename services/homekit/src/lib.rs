@@ -1068,10 +1068,49 @@ fn sensor_types_conflict(
         || (on.is_some() && (temperature.is_some() || humidity.is_some()))
 }
 
+#[derive(Default)]
+struct SensorCharacteristics {
+    temperature: Option<u64>,
+    humidity: Option<u64>,
+    battery: Option<u64>,
+    smoke: Option<u64>,
+    fault: Option<u64>,
+    on: Option<u64>,
+    in_use: Option<u64>,
+}
+
+fn sensor_characteristics(
+    accessory: &hap_controller::Accessory,
+) -> Result<SensorCharacteristics, &'static str> {
+    use hap_controller::{CharacteristicType, ServiceType};
+    let mut ids = SensorCharacteristics::default();
+    for service in &accessory.services {
+        for characteristic in &service.characteristics {
+            let target = match (&service.service_type, &characteristic.char_type) {
+                (ServiceType::TemperatureSensor, CharacteristicType::CurrentTemperature) => {
+                    &mut ids.temperature
+                }
+                (ServiceType::HumiditySensor, CharacteristicType::CurrentRelativeHumidity) => {
+                    &mut ids.humidity
+                }
+                (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut ids.battery,
+                (ServiceType::SmokeSensor, CharacteristicType::SmokeDetected) => &mut ids.smoke,
+                (ServiceType::SmokeSensor, CharacteristicType::StatusFault) => &mut ids.fault,
+                (ServiceType::Outlet, CharacteristicType::On) => &mut ids.on,
+                (ServiceType::Outlet, CharacteristicType::OutletInUse) => &mut ids.in_use,
+                _ => continue,
+            };
+            if target.replace(characteristic.iid).is_some() {
+                return Err("Ambiguous sensor characteristic");
+            }
+        }
+    }
+    Ok(ids)
+}
+
 async fn read_sensors(
     handle: &mut hap_controller::AccessoryHandle,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
-    use hap_controller::{CharacteristicType, ServiceType};
     let mut readings = read_contacts(handle).await?;
     let accessories = handle
         .accessories()
@@ -1079,34 +1118,15 @@ async fn read_sensors(
         .map_err(|_| "Cannot read HomeKit accessories")?
         .to_vec();
     'accessory: for accessory in accessories {
-        let mut temperature = None;
-        let mut humidity = None;
-        let mut battery = None;
-        let mut smoke = None;
-        let mut fault = None;
-        let mut on = None;
-        let mut in_use = None;
-        for service in accessory.services {
-            for characteristic in service.characteristics {
-                let target = match (&service.service_type, &characteristic.char_type) {
-                    (ServiceType::TemperatureSensor, CharacteristicType::CurrentTemperature) => {
-                        &mut temperature
-                    }
-                    (ServiceType::HumiditySensor, CharacteristicType::CurrentRelativeHumidity) => {
-                        &mut humidity
-                    }
-                    (ServiceType::Battery, CharacteristicType::BatteryLevel) => &mut battery,
-                    (ServiceType::SmokeSensor, CharacteristicType::SmokeDetected) => &mut smoke,
-                    (ServiceType::SmokeSensor, CharacteristicType::StatusFault) => &mut fault,
-                    (ServiceType::Outlet, CharacteristicType::On) => &mut on,
-                    (ServiceType::Outlet, CharacteristicType::OutletInUse) => &mut in_use,
-                    _ => continue,
-                };
-                if target.replace(characteristic.iid).is_some() {
-                    return Err("Ambiguous sensor characteristic");
-                }
-            }
-        }
+        let SensorCharacteristics {
+            temperature,
+            humidity,
+            battery,
+            smoke,
+            fault,
+            on,
+            in_use,
+        } = sensor_characteristics(&accessory)?;
         if temperature.is_none() && humidity.is_none() && smoke.is_none() && on.is_none() {
             continue;
         }
