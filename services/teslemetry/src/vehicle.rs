@@ -365,6 +365,28 @@ async fn open_vehicle_stream(
         .then_some(response)
 }
 
+fn update_vehicle_event(
+    data: &str,
+    vin: &str,
+    state: &mut Map<String, Value>,
+    field_times: &mut HashMap<String, chrono::DateTime<chrono::FixedOffset>>,
+    latest: &mut Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    let (observed, fields) = parse_event(data, vin)?;
+    let mut changed = false;
+    for (key, value) in fields {
+        if apply_observation(state, field_times, key, value, observed) {
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    let updated = latest.map_or(observed, |previous| previous.max(observed));
+    *latest = Some(updated);
+    Some(updated)
+}
+
 async fn follow(base: String, token: String, broker: Broker, vin: String, name: String) {
     let id = device_id(&vin);
     let availability = format!("homecore/devices/{id}/availability");
@@ -429,37 +451,17 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
                     };
                     let line = line.strip_suffix('\r').unwrap_or(line);
                     if line.is_empty() {
-                        if let Some((observed, fields)) = parse_event(&data, &vin) {
-                            let mut changed = false;
-                            for (key, value) in fields {
-                                if apply_observation(
-                                    &mut state,
-                                    &mut field_times,
-                                    key,
-                                    value,
-                                    observed,
-                                ) {
-                                    changed = true;
-                                }
-                            }
-                            if changed {
-                                latest = Some(latest.map_or(
-                                    observed,
-                                    |previous: chrono::DateTime<chrono::FixedOffset>| {
-                                        previous.max(observed)
-                                    },
-                                ));
-                                if !publish_vehicle_state(
-                                    &mqtt,
-                                    &id,
-                                    &availability,
-                                    &state,
-                                    latest.unwrap(),
-                                )
+                        if let Some(updated) = update_vehicle_event(
+                            &data,
+                            &vin,
+                            &mut state,
+                            &mut field_times,
+                            &mut latest,
+                        ) {
+                            if !publish_vehicle_state(&mqtt, &id, &availability, &state, updated)
                                 .await
-                                {
-                                    return;
-                                }
+                            {
+                                return;
                             }
                         }
                         data.clear();
