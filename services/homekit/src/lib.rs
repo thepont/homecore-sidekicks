@@ -36,6 +36,24 @@ pub fn outlet_command(bridge_id: &str, topic: &str, value: &Value) -> Option<(u6
     Some((aid, object.get("on")?.as_bool()?))
 }
 
+async fn publish_messages(
+    mqtt: &rumqttc::AsyncClient,
+    messages: impl IntoIterator<Item = (String, bool, Value)>,
+    error: &'static str,
+) -> Result<(), &'static str> {
+    for (topic, retained, payload) in messages {
+        mqtt.publish(
+            topic,
+            rumqttc::QoS::AtLeastOnce,
+            retained,
+            payload.to_string(),
+        )
+        .await
+        .map_err(|_| error)?;
+    }
+    Ok(())
+}
+
 /// Publish supported sensors to homeCore.
 pub async fn publish_sensors(
     mqtt: &rumqttc::AsyncClient,
@@ -146,27 +164,23 @@ pub async fn publish_sensors(
     for (aid, kind) in unavailable {
         let device = format!("homekit_{bridge}_{aid}");
         let register = json!({"device_id":device,"plugin_id":plugin,"name":format!("HomeKit device {aid}"),"device_type":kind});
-        for (topic, retained, payload) in [
-            (
-                format!("homecore/plugins/{plugin}/register"),
-                false,
-                register,
-            ),
-            (
-                format!("homecore/devices/{device}/schema"),
-                true,
-                json!({"attributes":{},"primary":[]}),
-            ),
-        ] {
-            mqtt.publish(
-                topic,
-                rumqttc::QoS::AtLeastOnce,
-                retained,
-                payload.to_string(),
-            )
-            .await
-            .map_err(|_| "Cannot publish sensor")?;
-        }
+        publish_messages(
+            mqtt,
+            [
+                (
+                    format!("homecore/plugins/{plugin}/register"),
+                    false,
+                    register,
+                ),
+                (
+                    format!("homecore/devices/{device}/schema"),
+                    true,
+                    json!({"attributes":{},"primary":[]}),
+                ),
+            ],
+            "Cannot publish sensor",
+        )
+        .await?;
     }
     for (aid, state) in climate {
         let device = format!("homekit_{bridge}_{aid}");
