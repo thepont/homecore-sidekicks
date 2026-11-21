@@ -70,6 +70,17 @@ beforeEach(async () => {
 
 const text = () => page.getByRole('button').textContent();
 
+async function accessibleDescription() {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { nodes } = await session.send('Accessibility.getFullAXTree');
+    const button = nodes.find(node => node.role?.value === 'button' && node.name?.value === 'Open Garage Powerwall details');
+    return button?.description?.value;
+  } finally {
+    await session.detach();
+  }
+}
+
 test('registers the sensor card and shows current readings with their units', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ui), 'utf8'));
   assert.equal(manifest.host_api, 1);
@@ -150,15 +161,15 @@ test('opens details with pointer, Enter and Space without device commands', asyn
 });
 
 test('exposes current readings to a screen reader when the card is focused', async () => {
-  const button = await page.getByRole('button').elementHandle();
-  const accessible = await page.accessibility.snapshot({ root: button });
-  assert.match(accessible.description, /65.2%/);
-  assert.match(accessible.description, /1.19 kW/);
-  assert.match(accessible.description, /2.41 kW/);
+  await page.getByRole('button').focus();
+  const description = await accessibleDescription();
+  assert.match(description, /65.2%/);
+  assert.match(description, /1.19 kW/);
+  assert.match(description, /2.41 kW/);
   await page.evaluate(() => host.update({ available: false }));
-  const unavailable = await page.accessibility.snapshot({ root: button });
-  assert.match(unavailable.description, /Unavailable/);
-  assert.doesNotMatch(unavailable.description, /65.2%/);
+  const unavailable = await accessibleDescription();
+  assert.match(unavailable, /Unavailable/);
+  assert.doesNotMatch(unavailable, /65.2%/);
 });
 
 test('shows net direction for each connection and treats missing readings as unknown', async () => {
@@ -217,9 +228,9 @@ test('shows source buy and sell rates with currency and their independent period
     assert.ok(content.includes(expected), `${expected} must be shown`);
   }
   assert.doesNotMatch(content, /2025-06-12|just updated|fresh/i);
-  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
-  assert.match(accessible.description, /0.4906 AUD\/kWh/);
-  assert.match(accessible.description, /0.07125 AUD\/kWh/);
+  const description = await accessibleDescription();
+  assert.match(description, /0.4906 AUD\/kWh/);
+  assert.match(description, /0.07125 AUD\/kWh/);
 });
 
 test('preserves zero and negative rates without inventing missing currency or sell rates', async () => {
@@ -279,8 +290,8 @@ test('shows bounded charger details without changing the reported Home total', a
   assert.equal(await page.locator('[data-charger]').count(), 3);
   assert.equal(await page.locator('[data-node="home"] .value').textContent(), '4.1 kW');
   assert.doesNotMatch(await chargers.textContent(), /43|Connected|Unplugged|Charger 17|Charger 99999/);
-  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
-  assert.match(accessible.description, /Charger 1.*3.12 kW.*Drawing/);
+  const description = await accessibleDescription();
+  assert.match(description, /Charger 1.*3.12 kW.*Drawing/);
 });
 
 test('keeps unknown, reverse and unavailable charger readings distinct and removes withdrawn chargers', async () => {
@@ -400,9 +411,9 @@ test('withdrawing both optional sections clears their previous values while live
   assert.match(await page.locator('.tariff-note').textContent(), /Tariff unavailable/);
   assert.equal(await page.locator('.charge').textContent(), '65.3%');
   assert.equal(await page.locator('[data-node="home"] .value').textContent(), '4.2 kW');
-  const accessible = await page.accessibility.snapshot({ root: await page.getByRole('button').elementHandle() });
-  assert.doesNotMatch(accessible.description, /Charger 1|3.12|0.4906|0.05 AUD/);
-  assert.match(accessible.description, /65.3%/);
+  const description = await accessibleDescription();
+  assert.doesNotMatch(description, /Charger 1|3.12|0.4906|0.05 AUD/);
+  assert.match(description, /65.3%/);
 });
 
 test('rounds a high precision battery charge on the Powerwall flow card', async () => {
