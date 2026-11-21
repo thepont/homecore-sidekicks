@@ -229,12 +229,13 @@ impl RegistryState {
             .map(Self::from_document)
             .transpose()?
             .unwrap_or_default();
-        match action {
+        let changed = match action {
             Operation::Bootstrap(import) => {
                 if state.catalog.is_some() || (document.is_some() && import.is_none()) {
                     return Ok((state, None));
                 }
                 state.catalog = import;
+                true
             }
             Operation::Register(registration) => {
                 let catalog = state.catalog.get_or_insert_with(AdapterCatalog::default);
@@ -254,32 +255,9 @@ impl RegistryState {
                 }) {
                     return Err("Adapter still has access to a removed model");
                 }
+                true
             }
-            Operation::Request(request) => {
-                if !state
-                    .catalog
-                    .as_ref()
-                    .is_some_and(|catalog| request.supported_by(catalog))
-                {
-                    return Err("Adapter does not support the requested model");
-                }
-                if state.requests.contains(&request) {
-                    return Ok((state, None));
-                }
-                if state.grants.iter().any(|grant| {
-                    grant.plugin_id == request.plugin_id
-                        && state
-                            .devices
-                            .get(&grant.device_ref)
-                            .is_some_and(|device| device.model == request.model)
-                }) {
-                    return Ok((state, None));
-                }
-                if state.requests.len() >= MAX_REQUESTS {
-                    return Err("Too many pending Xiaomi access requests");
-                }
-                state.requests.insert(request);
-            }
+            Operation::Request(request) => state.queue_request(request)?,
             Operation::Remember(devices) => {
                 for device in devices {
                     if state
@@ -294,41 +272,63 @@ impl RegistryState {
                 if state.devices.len() > MAX_DEVICES {
                     return Err("Too many saved Xiaomi devices");
                 }
+                true
             }
-            Operation::Approve(grant, vault) => {
-                let device = state
-                    .devices
-                    .get(&grant.device_ref)
-                    .ok_or("Xiaomi device must be discovered first")?;
-                vault.verify(device)?;
-                if state.grants.contains(&grant) {
-                    return Ok((state, None));
-                }
-                let request = AccessRequest {
-                    plugin_id: grant.plugin_id.clone(),
-                    model: device.model.clone(),
-                };
-                if !state.requests.remove(&request) {
-                    return Err("No pending request for this Xiaomi device");
-                }
-                if state.grants.len() >= MAX_GRANTS {
-                    return Err("Too many Xiaomi access grants");
-                }
-                state.grants.insert(grant);
-            }
-            Operation::Deny(request) => {
-                if !state.requests.remove(&request) {
-                    return Ok((state, None));
-                }
-            }
-            Operation::Revoke(grant) => {
-                if !state.grants.remove(&grant) {
-                    return Ok((state, None));
-                }
-            }
+            Operation::Approve(grant, vault) => state.approve_access(grant, &vault)?,
+            Operation::Deny(request) => state.requests.remove(&request),
+            Operation::Revoke(grant) => state.grants.remove(&grant),
+        };
+        let updated = changed.then(|| state.document()).transpose()?;
+        Ok((state, updated))
+    }
+
+    fn queue_request(&mut self, request: AccessRequest) -> Result<bool, &'static str> {
+        if !self
+            .catalog
+            .as_ref()
+            .is_some_and(|catalog| request.supported_by(catalog))
+        {
+            return Err("Adapter does not support the requested model");
         }
-        let updated = state.document()?;
-        Ok((state, Some(updated)))
+        if self.requests.contains(&request)
+            || self.grants.iter().any(|grant| {
+                grant.plugin_id == request.plugin_id
+                    && self
+                        .devices
+                        .get(&grant.device_ref)
+                        .is_some_and(|device| device.model == request.model)
+            })
+        {
+            return Ok(false);
+        }
+        if self.requests.len() >= MAX_REQUESTS {
+            return Err("Too many pending Xiaomi access requests");
+        }
+        self.requests.insert(request);
+        Ok(true)
+    }
+
+    fn approve_access(&mut self, grant: DeviceGrant, vault: &Vault) -> Result<bool, &'static str> {
+        let device = self
+            .devices
+            .get(&grant.device_ref)
+            .ok_or("Xiaomi device must be discovered first")?;
+        vault.verify(device)?;
+        if self.grants.contains(&grant) {
+            return Ok(false);
+        }
+        let request = AccessRequest {
+            plugin_id: grant.plugin_id.clone(),
+            model: device.model.clone(),
+        };
+        if !self.requests.remove(&request) {
+            return Err("No pending request for this Xiaomi device");
+        }
+        if self.grants.len() >= MAX_GRANTS {
+            return Err("Too many Xiaomi access grants");
+        }
+        self.grants.insert(grant);
+        Ok(true)
     }
 }
 
