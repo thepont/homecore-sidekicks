@@ -9,6 +9,10 @@ on:
       - 'crates/**/Cargo.toml'
       - 'services/**/package.json'
       - 'services/**/package-lock.json'
+      - 'tools/**/Cargo.toml'
+      - 'tools/**/Cargo.lock'
+      - 'tools/**/package.json'
+      - 'tools/**/package-lock.json'
       - '.github/workflows/dependencies.yml'
   pull_request:
     paths: *dependency_paths
@@ -44,7 +48,7 @@ jobs:
       - name: Audit Rust lockfiles
         run: |
           status=0
-          for lockfile in services/*/Cargo.lock; do
+          for lockfile in services/*/Cargo.lock tools/quality-gate/Cargo.lock; do
             printf '\nAuditing %s\n' "$lockfile"
             cargo-audit audit --file "$lockfile" || status=1
           done
@@ -63,7 +67,7 @@ jobs:
       - name: Audit npm lockfiles
         run: |
           status=0
-          for lockfile in services/*/tests/*/package-lock.json; do
+          for lockfile in services/*/tests/*/package-lock.json tools/javascript-quality/package-lock.json; do
             printf '\nAuditing %s\n' "$lockfile"
             npm audit --prefix "${lockfile%/*}" --package-lock-only --audit-level=low || status=1
           done
