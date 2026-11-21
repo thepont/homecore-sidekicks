@@ -89,6 +89,11 @@ function tariffCurrency(attributes) {
     ? currency.toUpperCase() : undefined;
 }
 
+function tariffPeriodLabel(price, period) {
+  return price !== undefined && typeof period === 'string'
+    ? period.replaceAll('_', ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '';
+}
+
 class TeslemetryCard extends HTMLElement {
   #host;
   #deviceId;
@@ -269,8 +274,7 @@ class TeslemetryCard extends HTMLElement {
       // Rates are already currency units/kWh. Preserve source precision, including zero and negatives.
       tariff.rate.textContent = price === undefined ? '—' : `${price} ${currency ?? ''}/kWh`;
       const period = attributes?.[`tariff_${tariff.side}_period`];
-      tariff.period.textContent = price !== undefined && typeof period === 'string'
-        ? period.replaceAll('_', ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '';
+      tariff.period.textContent = tariffPeriodLabel(price, period);
       if (price === undefined) missing.push(tariff.side === 'buy' ? 'Buy' : 'Sell');
       descriptions.push(`Tariff ${tariff.side}: ${tariff.rate.textContent} ${tariff.period.textContent}.`);
     }
