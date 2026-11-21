@@ -200,8 +200,12 @@ test('permission gates all controls and failed commands preserve reported values
 test('targets and airflow fit a phone card and keep their labels aligned', async () => {
   await mount({ writable: true });
   await selected('Horizontal vane').waitFor();
-  for (const width of [174, 304]) {
-    await page.locator('main').evaluate((main, width) => { main.style.width = width + 'px'; }, width);
+  const layouts = [{ width: 174 }, { width: 304 }, { width: 174, font: 'monospace' }];
+  for (const { width, font } of layouts) {
+    await page.locator('main').evaluate((main, { width, font }) => {
+      main.style.width = width + 'px';
+      main.style.setProperty('--font', font ?? '');
+    }, { width, font });
     const layout = await page.evaluate(() => {
       const root = card.shadowRoot;
       const get = selector => root.querySelector(selector);
@@ -224,7 +228,7 @@ test('targets and airflow fit a phone card and keep their labels aligned', async
         box('.modes').bottom <= box('.airflow').top &&
         document.documentElement.scrollWidth <= innerWidth;
     });
-    assert(layout, width + 'px tile');
+    assert(layout, [width + 'px tile', font].filter(Boolean).join(' '));
   }
 });
 

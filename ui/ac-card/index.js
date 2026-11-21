@@ -162,7 +162,10 @@ const style = `
   .diagnostics summary{width:fit-content;margin-inline:auto;min-height:35px;cursor:pointer;font-weight:550}
   .diagnostics dl{display:grid;grid-template-columns:1fr auto;gap:6px 10px;text-align:left}
   .diagnostics dd{text-align:right}
-  @container (max-width:225px){.card{padding:9px}}
+  @container (max-width:225px){
+    .card{padding:9px}
+    output{font-size:clamp(13px,7.5cqi,17px)}
+  }
   @media (any-pointer:coarse) {.target-dot[role="slider"]{r:8}}
   @media(forced-colors:active){
     .airflow-field select{appearance:auto;background:var(--ac-surface);padding-inline:3px}
