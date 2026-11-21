@@ -73,7 +73,12 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
       .route("/app/v2/{*path}",axum::routing::post(|axum::extract::Path(path):axum::extract::Path<String>,RawQuery(query):RawQuery|async move {
           let parsed=reqwest::Url::parse(&format!("http://localhost/?{}",query.unwrap())).unwrap();let nonce=parsed.query_pairs().find(|(k,_)|k=="_nonce").unwrap().1.into_owned();
           let mut material=STANDARD.decode("Zml4dHVyZS1zZWN1cml0eSE=").unwrap();material.extend(STANDARD.decode(nonce).unwrap());let hash=digest(&SHA256,&material);let key:[u8;32]=hash.as_ref().try_into().unwrap();
-          let body=if path=="homeroom/gethome" {json!({"result":{"homelist":[{"id":42}]}})} else {json!({"result":{"device_info":[{"did":"123456789","name":"Gateway","model":"lumi.gateway.mcn001","localip":"192.168.10.2","token":"0123456789abcdef0123456789abcdef"}]}})};
+          let body=if path=="homeroom/gethome" {json!({"result":{"homelist":[{"id":42}]}})} else {json!({"result":{"device_info":[
+              {"did":"123456789","name":"Gateway","model":"lumi.gateway.mcn001","localip":"192.168.10.2","token":"0123456789abcdef0123456789abcdef"},
+              {"did":"223456789","name":"Vacuum","model":"ijai.vacuum.v10","localip":"192.168.10.3","token":"fedcba9876543210fedcba9876543210"},
+              {"did":"323456789","name":"Unknown plug","model":"example.plug.v1","localip":"192.168.10.4","token":"fedcba9876543210fedcba9876543210"},
+              {"did":"423456789","name":"Vacuum without token","model":"ijai.vacuum.v10","localip":"192.168.10.5"}
+          ]}})};
           STANDARD.encode(homecore_xiaomi::cloud::legacy_encrypt(&key,body.to_string().as_bytes()))
       })).with_state(base.clone());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -143,6 +148,37 @@ async fn authenticated_setup_discovers_gateway_without_exposing_its_token() {
         "cn",
     );
     assert_eq!(restarted.status().await, "gateway_saved");
+    std::fs::write(
+        root.join("adapters.json"),
+        br#"[
+            {"plugin_id":"plugin.xiaomi-gateway","models":["lumi.gateway.mcn001"]},
+            {"plugin_id":"plugin.xiaomi-vacuum","models":["ijai.vacuum.v10"]}
+        ]"#,
+    )
+    .unwrap();
+    restarted.begin().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while restarted.status().await == "waiting" {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let reply = homecore_xiaomi::actions::dispatch(&restarted, "sign_in_status")
+        .await
+        .unwrap();
+    assert_eq!(reply["setup_status"], "devices_found");
+    assert_eq!(
+        reply["devices"],
+        json!([
+            {"id":"123456789","name":"Gateway","model":"lumi.gateway.mcn001","adapters":["plugin.xiaomi-gateway"]},
+            {"id":"223456789","name":"Vacuum","model":"ijai.vacuum.v10","adapters":["plugin.xiaomi-vacuum"]}
+        ])
+    );
+    let public = reply.to_string();
+    assert!(!public.contains("fixture-session"));
+    assert!(!public.contains("0123456789abcdef0123456789abcdef"));
+    assert!(!public.contains("fedcba9876543210fedcba9876543210"));
     std::fs::remove_dir_all(root).unwrap();
     server.abort();
 }

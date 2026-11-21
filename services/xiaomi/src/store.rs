@@ -15,7 +15,7 @@ impl Drop for Temp {
         let _ = fs::remove_file(&self.0);
     }
 }
-fn valid(token: &str) -> bool {
+pub(crate) fn valid(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 impl Store {
@@ -23,6 +23,9 @@ impl Store {
         Self {
             root: root.to_path_buf(),
         }
+    }
+    pub(crate) fn adapters(&self) -> Result<Option<crate::adapters::AdapterCatalog>, &'static str> {
+        crate::adapters::AdapterCatalog::load(&self.root.join("adapters.json"))
     }
     pub fn save(&self, token: &str) -> Result<(), &'static str> {
         if !valid(token) {

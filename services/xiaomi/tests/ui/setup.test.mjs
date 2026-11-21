@@ -62,6 +62,44 @@ test('reopening setup restores the saved gateway state',async()=>{
   } finally {await browser.close();}
 });
 
+test('one Xiaomi sign-in shows each discovered device and its matching adapter',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage({viewport:{width:390,height:700}});
+    await page.setContent('<main></main>');
+    await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{
+      let started=false;
+      const host={me:{can:()=>true},action:async name=>{
+        if(name==='begin_sign_in') {
+          started=true;
+          return {ok:true,data:{qr_png:'iVBORw0KGgo='}};
+        }
+        return {ok:true,data:started?{setup_status:'devices_found',devices:[
+          {id:'123456789',name:'Hallway gateway',model:'lumi.gateway.mcn001',adapters:['plugin.xiaomi-gateway']},
+          {id:'223456789',name:'Downstairs vacuum',model:'ijai.vacuum.v10',adapters:['plugin.xiaomi-vacuum']},
+        ]}:{setup_status:'unconfigured'}};
+      }};
+      window.openSetup=()=>{
+        const el=document.createElement('hc-xiaomi-setup');
+        el.host=host;
+        document.querySelector('main').replaceChildren(el);
+      };
+      window.openSetup();
+    });
+    await page.getByLabel('Mi Home region').selectOption('cn');
+    await page.getByRole('button',{name:'Sign in with Mi Home'}).click();
+    const vacuum=page.getByRole('listitem').filter({hasText:'Downstairs vacuum'});
+    await vacuum.getByText('plugin.xiaomi-vacuum',{exact:true}).waitFor({timeout:4000});
+    const gateway=page.getByRole('listitem').filter({hasText:'Hallway gateway'});
+    assert.equal(await gateway.getByText('plugin.xiaomi-gateway',{exact:true}).count(),1);
+    assert.equal(await page.getByRole('img',{name:'Mi Home sign-in QR code'}).count(),0);
+    await page.evaluate(()=>window.openSetup());
+    await vacuum.waitFor({timeout:3000});
+    assert.equal(await page.getByRole('button',{name:'Sign in again'}).count(),1);
+  } finally {await browser.close();}
+});
+
 test('the selected Mi Home region is sent when sign-in starts',async()=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
   try {

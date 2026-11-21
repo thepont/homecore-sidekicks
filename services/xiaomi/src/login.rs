@@ -320,11 +320,12 @@ impl Provider {
         let data = crate::cloud::legacy_encrypt(&key, &encrypted);
         serde_json::from_slice(&data).map_err(|_| "Invalid discovery response")
     }
-    pub async fn discover(
+    async fn visit_devices(
         &self,
         auth: &Authentication,
         region: &str,
-    ) -> Result<Vec<Gateway>, &'static str> {
+        mut visit: impl FnMut(&Value) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
         let homes=self.cloud_call(auth,region,"/v2/homeroom/gethome",serde_json::json!({"fg":true,"fetch_share":true,"fetch_share_dev":true,"limit":300,"app_ver":7})).await?;
         let homes = homes
             .pointer("/result/homelist")
@@ -337,7 +338,6 @@ impl Provider {
             .user_id
             .parse::<u64>()
             .map_err(|_| "Invalid cloud session")?;
-        let mut gateways = Vec::new();
         for home in homes {
             let id = home
                 .get("id")
@@ -352,46 +352,91 @@ impl Provider {
                 return Err("Invalid discovery response");
             }
             for item in devices {
-                let Some(model) = item.get("model").and_then(Value::as_str) else {
-                    continue;
-                };
-                if !model.starts_with("lumi.gateway.") || model.len() > 64 {
-                    continue;
-                }
-                let Some(address) = item
-                    .get("localip")
-                    .and_then(Value::as_str)
-                    .and_then(|s| s.parse::<std::net::Ipv4Addr>().ok())
-                    .filter(|ip| ip.is_private())
-                else {
-                    continue;
-                };
-                let Some(token) = item
-                    .get("token")
-                    .and_then(Value::as_str)
-                    .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-                else {
-                    continue;
-                };
-                let Some(name) = item.get("name").and_then(Value::as_str).filter(|s| {
-                    !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)
-                }) else {
-                    continue;
-                };
-                gateways.push(Gateway {
-                    name: name.to_owned(),
-                    model: model.to_owned(),
-                    address: address.to_string(),
-                    device_id: item.get("did").and_then(Value::as_str).map(str::to_owned),
-                    token: token.to_owned(),
-                    alternate_token: None,
-                    cloud_comparison: "unavailable",
-                });
-                if gateways.len() > 64 {
-                    return Err("Too many gateways");
-                }
+                visit(item)?;
             }
         }
+        Ok(())
+    }
+
+    pub(crate) async fn discover_registered(
+        &self,
+        auth: &Authentication,
+        region: &str,
+        catalog: &crate::adapters::AdapterCatalog,
+    ) -> Result<Vec<crate::adapters::MatchedDevice>, &'static str> {
+        use std::collections::{btree_map::Entry, BTreeMap};
+        let mut candidates = BTreeMap::new();
+        self.visit_devices(auth, region, |item| {
+            if let Some(candidate) = catalog.candidate(item) {
+                match candidates.entry(candidate.id.clone()) {
+                    Entry::Occupied(entry) if entry.get() != &candidate => {
+                        return Err("Conflicting Xiaomi device identity");
+                    }
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(entry) => {
+                        entry.insert(candidate);
+                    }
+                }
+                if candidates.len() > 64 {
+                    return Err("Too many Xiaomi devices");
+                }
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(candidates.into_values().collect())
+    }
+
+    pub async fn discover(
+        &self,
+        auth: &Authentication,
+        region: &str,
+    ) -> Result<Vec<Gateway>, &'static str> {
+        let mut gateways = Vec::new();
+        self.visit_devices(auth, region, |item| {
+            let Some(model) = item.get("model").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            if !model.starts_with("lumi.gateway.") || model.len() > 64 {
+                return Ok(());
+            }
+            let Some(address) = item
+                .get("localip")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<std::net::Ipv4Addr>().ok())
+                .filter(|ip| ip.is_private())
+            else {
+                return Ok(());
+            };
+            let Some(token) = item
+                .get("token")
+                .and_then(Value::as_str)
+                .filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            else {
+                return Ok(());
+            };
+            let Some(name) = item
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control))
+            else {
+                return Ok(());
+            };
+            gateways.push(Gateway {
+                name: name.to_owned(),
+                model: model.to_owned(),
+                address: address.to_string(),
+                device_id: item.get("did").and_then(Value::as_str).map(str::to_owned),
+                token: token.to_owned(),
+                alternate_token: None,
+                cloud_comparison: "unavailable",
+            });
+            if gateways.len() > 64 {
+                return Err("Too many gateways");
+            }
+            Ok(())
+        })
+        .await?;
         if !gateways.is_empty() {
             let payload = serde_json::json!({"getVirtualModel":true,"getHuamiDevices":1,"get_split_device":false,"support_smart_home":true});
             if let Ok(result) = self

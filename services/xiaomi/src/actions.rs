@@ -6,10 +6,7 @@ pub async fn dispatch(setup: &Setup, action: &str) -> Option<Value> {
 }
 pub async fn dispatch_with_params(setup: &Setup, action: &str, params: &Value) -> Option<Value> {
     match action {
-        "sign_in_status" => {
-            let (status, qr) = setup.snapshot().await;
-            Some(json!({"status":"ok", "setup_status":status, "qr_png":qr}))
-        }
+        "sign_in_status" => Some(setup.action_status().await),
         "begin_sign_in" => {
             let result = match params.get("region") {
                 None => setup.begin().await,
