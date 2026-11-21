@@ -1,0 +1,77 @@
+name: Dependency security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**/Cargo.toml'
+      - 'services/**/Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'services/**/package.json'
+      - 'services/**/package-lock.json'
+      - '.github/workflows/dependencies.yml'
+  pull_request:
+    paths:
+      - 'services/**/Cargo.toml'
+      - 'services/**/Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'services/**/package.json'
+      - 'services/**/package-lock.json'
+      - '.github/workflows/dependencies.yml'
+  schedule:
+    - cron: '25 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Install cargo-audit
+        env:
+          CARGO_AUDIT_VERSION: '0.22.2'
+          CARGO_AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
+        run: |
+          release="cargo-audit-x86_64-unknown-linux-gnu-v$CARGO_AUDIT_VERSION"
+          archive="$RUNNER_TEMP/$release.tgz"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' \
+            --output "$archive" "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v$CARGO_AUDIT_VERSION/$release.tgz"
+          printf '%s  %s\n' "$CARGO_AUDIT_SHA256" "$archive" | sha256sum --check
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" "$release/cargo-audit"
+          printf '%s\n' "$RUNNER_TEMP/$release" >> "$GITHUB_PATH"
+      - name: Audit Rust lockfiles
+        run: |
+          status=0
+          for lockfile in services/*/Cargo.lock; do
+            printf '\nAuditing %s\n' "$lockfile"
+            cargo-audit audit --file "$lockfile" || status=1
+          done
+          exit "$status"
+
+  npm:
+    name: npm advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Audit npm lockfiles
+        run: |
+          status=0
+          for lockfile in services/*/tests/*/package-lock.json; do
+            printf '\nAuditing %s\n' "$lockfile"
+            npm audit --prefix "${lockfile%/*}" --package-lock-only --audit-level=low || status=1
+          done
+          exit "$status"

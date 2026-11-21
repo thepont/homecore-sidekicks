@@ -49,3 +49,7 @@ The commit hook scans staged files using a pinned TruffleHog container with
 network access disabled. CI runs the same scan on the checked-out tree and
 checks Rust formatting, Clippy warnings, tests and release builds for all six
 services. It also builds the Xiaomi extractor with only its own features.
+
+The dependency security workflow audits the Rust and npm lockfiles on dependency
+changes and once a week. Dependabot proposes weekly updates for Rust, npm and
+GitHub Actions dependencies.
