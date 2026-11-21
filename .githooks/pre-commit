@@ -16,3 +16,13 @@ if ! docker run --rm --network none --read-only --cap-drop ALL \
     printf '%s\n' 'TruffleHog found a possible secret or could not complete the staged scan; commit blocked.' >&2
     exit 1
 fi
+
+if ! git diff --cached --quiet -- services/homekit/src services/homekit/tests \
+    services/homekit/Cargo.toml services/homekit/Cargo.lock \
+    services/homekit/vendor/hap-transport; then
+    manifest="$staged/services/homekit/Cargo.toml"
+    printf '%s\n' 'Checking staged HomeKit Rust formatting and Clippy warnings...'
+    cargo fmt --manifest-path "$manifest" --package homecore-homekit -- --check
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/homekit-lint}" \
+        cargo clippy --manifest-path "$manifest" --locked --all-targets -- -D warnings
+fi

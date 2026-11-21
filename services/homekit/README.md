@@ -9,10 +9,11 @@ The Xiaomi DMWG03LM hub has accepted a second, non-admin controller alongside
 Home Assistant, and both controller identities read the same contact and
 battery values. This hub rejected controller identifiers longer than 36 bytes;
 new controller identities use UUIDs. Kubernetes discovery and live deployment
-still need verification. The current implementation handles contact sensors
-and their batteries; it does not yet cover temperature, humidity, smoke alarms,
-or outlets. Do not transfer or remove the existing Home Assistant pairing until
-the remaining devices and recovery path are verified.
+still need verification. The controller publishes contacts, temperature,
+humidity, smoke alarm and fault states, batteries, and outlet state. Outlet
+commands are tested against a simulated accessory; the real outlet has not
+been switched. Do not transfer or remove the existing Home Assistant pairing
+until live deployment and recovery have been verified.
 
 The pairing test starts a HAP-NodeJS accessory bound to loopback, with an
 isolated temporary identity. Node.js 24 and the pinned fixture dependencies are
@@ -22,7 +23,15 @@ required:
 npm ci --prefix tests/hap --ignore-scripts
 HAP_NODE_BIN=node cargo test --locked --test pairing
 cargo test --locked --test contact
+cargo fmt --package homecore-homekit -- --check
+cargo clippy --locked --all-targets -- -D warnings
 ```
+
+Enable the repository hook with `git config core.hooksPath .githooks` from the
+repository root. When HomeKit Rust files, its manifest, lockfile or vendored
+transport change, the hook checks formatting and Clippy against the staged
+snapshot. Install the Rust `rustfmt` and `clippy` components first. The hook
+also runs the repository's staged secret scan.
 
 The local `hap-transport` patch and its upstream source are documented in
 [vendor/hap-transport/PATCH.md](vendor/hap-transport/PATCH.md). Pairing uses a
