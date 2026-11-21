@@ -1,8 +1,19 @@
 use axum::{http::HeaderMap, routing::post, Router};
-use homecore_hisense::{run, Broker, Hisense};
 use homecore_test_support::homecore;
-use std::time::Duration;
+use std::{
+    process::{Child, Command},
+    time::Duration,
+};
 use tokio::net::TcpListener;
+
+struct Service(Child);
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
@@ -31,17 +42,18 @@ async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
         .await
         .unwrap()
     });
-    let password = std::fs::read_to_string(core.root.join("mqtt-password")).unwrap();
-    let task = tokio::spawn(run(
-        Hisense::new(addr, Duration::from_secs(1)).unwrap(),
-        Broker {
-            host: "127.0.0.1".into(),
-            port: core.mqtt_port,
-            username: "plugin.electrolux.living_room".into(),
-            password,
-        },
-        Duration::from_millis(100),
-    ));
+    let _service = Service(
+        Command::new(env!("CARGO_BIN_EXE_homecore-hisense"))
+            .env("HISENSE_IP", addr.ip().to_string())
+            .env("HISENSE_PORT", addr.port().to_string())
+            .env("HISENSE_POLL_SECS", "5")
+            .env("MQTT_HOST", "127.0.0.1")
+            .env("MQTT_PORT", core.mqtt_port.to_string())
+            .env("MQTT_USERNAME", "plugin.electrolux.living_room")
+            .env("MQTT_PASSWORD_FILE", core.root.join("mqtt-password"))
+            .spawn()
+            .expect("start the Hisense binary"),
+    );
     let device = tokio::time::timeout(Duration::from_secs(12), async {
         loop {
             if let Ok(response) = core.get("/devices/hisense_living_room").send().await {
@@ -68,6 +80,5 @@ async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
     let schema: serde_json::Value = schema.json().await.unwrap();
     assert_eq!(schema["attributes"]["volume"]["writable"], false);
     assert_eq!(schema["attributes"]["muted"]["writable"], false);
-    task.abort();
     server.abort();
 }
