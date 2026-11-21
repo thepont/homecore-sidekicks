@@ -1040,6 +1040,22 @@ pub async fn read_sensors_saved(
     read_sensors(&mut handle).await
 }
 
+async fn read_sensor_value(
+    handle: &mut hap_controller::AccessoryHandle,
+    aid: u64,
+    iid: u64,
+    offline_type: &str,
+    readings: &mut Vec<(u64, Value)>,
+) -> Option<Value> {
+    match handle.read(aid, iid).await {
+        Ok(value) => Some(value.to_json()),
+        Err(_) => {
+            readings.push((aid, json!({"_offline":true,"_type":offline_type})));
+            None
+        }
+    }
+}
+
 async fn read_sensors(
     handle: &mut hap_controller::AccessoryHandle,
 ) -> Result<Vec<(u64, Value)>, &'static str> {
@@ -1097,13 +1113,11 @@ async fn read_sensors(
         let mut state = Map::new();
         for (name, iid) in [("on", on), ("in_use", in_use)] {
             if let Some(iid) = iid {
-                let value = match handle.read(accessory.aid, iid).await {
-                    Ok(value) => value.to_json(),
-                    Err(_) => {
-                        readings
-                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
-                        continue 'accessory;
-                    }
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
                 };
                 let value = value.as_bool().ok_or("Invalid outlet reading")?;
                 state.insert(name.into(), json!(value));
@@ -1111,13 +1125,11 @@ async fn read_sensors(
         }
         for (name, iid) in [("smoke", smoke), ("fault", fault)] {
             if let Some(iid) = iid {
-                let value = match handle.read(accessory.aid, iid).await {
-                    Ok(value) => value.to_json(),
-                    Err(_) => {
-                        readings
-                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
-                        continue 'accessory;
-                    }
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
                 };
                 let detected = match value.as_u64() {
                     Some(0) => false,
@@ -1133,13 +1145,11 @@ async fn read_sensors(
             ("battery_pct", battery, 0.0, 100.0),
         ] {
             if let Some(iid) = iid {
-                let value = match handle.read(accessory.aid, iid).await {
-                    Ok(value) => value.to_json(),
-                    Err(_) => {
-                        readings
-                            .push((accessory.aid, json!({"_offline":true,"_type":offline_type})));
-                        continue 'accessory;
-                    }
+                let Some(value) =
+                    read_sensor_value(handle, accessory.aid, iid, offline_type, &mut readings)
+                        .await
+                else {
+                    continue 'accessory;
                 };
                 if value
                     .as_f64()
