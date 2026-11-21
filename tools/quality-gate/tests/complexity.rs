@@ -38,3 +38,27 @@ fn rejects_new_complexity_and_accepts_existing_findings() {
     fs::remove_file(current).unwrap();
     fs::remove_dir(root).unwrap();
 }
+
+#[test]
+fn rejects_empty_or_partially_parsed_reports() {
+    let root =
+        std::env::temp_dir().join(format!("sidekicks-quality-errors-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let report = root.join("report.json");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_sidekicks-quality-gate"))
+            .args([
+                "complexity",
+                report.to_str().unwrap(),
+                report.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap()
+    };
+    fs::write(&report, r#"{"summary":{"parse_error_count":0},"files":[]}"#).unwrap();
+    assert!(!run().status.success(), "an empty scan must not pass");
+    fs::write(&report, r#"{"summary":{"parse_error_count":1},"files":[]}"#).unwrap();
+    assert!(!run().status.success(), "a partial scan must not pass");
+    fs::remove_file(report).unwrap();
+    fs::remove_dir(root).unwrap();
+}

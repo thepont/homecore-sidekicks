@@ -46,12 +46,15 @@ fn read_report(path: &str) -> Result<Scores, String> {
     {
         return Err(format!("{path} has source parse errors"));
     }
-    let mut scores = Scores::new();
-    for file in report
+    let files = report
         .get("files")
         .and_then(Value::as_array)
-        .ok_or("invalid files")?
-    {
+        .ok_or("invalid files")?;
+    if files.is_empty() {
+        return Err(format!("{path} contains no scanned files"));
+    }
+    let mut scores = Scores::new();
+    for file in files {
         let path = file
             .get("path")
             .and_then(Value::as_str)
