@@ -1,5 +1,5 @@
 use crate::{
-    login::Provider,
+    login::{insert_discovered_device, Provider},
     transport::{bearer, valid_identifier, valid_region, MAX_MODELS, MAX_SESSION},
 };
 use axum::{
@@ -97,20 +97,7 @@ async fn discover(
                             "did": id, "name": device.name, "model": device.model,
                             "localip": device.address.to_string(), "token": device.token,
                         });
-                        match devices.entry(id.to_owned()) {
-                            std::collections::btree_map::Entry::Occupied(entry)
-                                if entry.get() != &value =>
-                            {
-                                return Err("Conflicting Xiaomi device identity")
-                            }
-                            std::collections::btree_map::Entry::Occupied(_) => (),
-                            std::collections::btree_map::Entry::Vacant(entry) => {
-                                entry.insert(value);
-                            }
-                        }
-                        if devices.len() > 64 {
-                            return Err("Too many Xiaomi devices");
-                        }
+                        insert_discovered_device(&mut devices, id.to_owned(), value)?;
                     }
                     Ok(())
                 })

@@ -1,6 +1,6 @@
 use crate::{
     adapters::AdapterCatalog,
-    login::{DiscoveredDevice, LanDevice},
+    login::{DiscoveredDevice, LanDevice, MAX_DISCOVERED_DEVICES},
     transport::{bearer, read_service_key, MAX_MODELS, MAX_SESSION},
 };
 use reqwest::{Client, Response, Url};
@@ -120,7 +120,7 @@ impl Extraction {
         }
         let devices = frame["devices"]
             .as_array()
-            .filter(|rows| rows.len() <= 64)
+            .filter(|rows| rows.len() <= MAX_DISCOVERED_DEVICES)
             .ok_or(ERROR)?;
         let mut ids = BTreeSet::new();
         let mut result = Vec::with_capacity(devices.len());

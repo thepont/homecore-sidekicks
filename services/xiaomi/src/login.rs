@@ -2,9 +2,32 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Client, Url};
 use serde_json::Value;
 use std::{
+    collections::{btree_map::Entry, BTreeMap},
     net::Ipv4Addr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+pub(crate) const MAX_DISCOVERED_DEVICES: usize = 64;
+
+pub(crate) fn insert_discovered_device<T: PartialEq>(
+    devices: &mut BTreeMap<String, T>,
+    id: String,
+    device: T,
+) -> Result<(), &'static str> {
+    match devices.entry(id) {
+        Entry::Occupied(entry) if entry.get() != &device => {
+            return Err("Conflicting Xiaomi device identity");
+        }
+        Entry::Occupied(_) => {}
+        Entry::Vacant(entry) => {
+            entry.insert(device);
+        }
+    }
+    if devices.len() > MAX_DISCOVERED_DEVICES {
+        return Err("Too many Xiaomi devices");
+    }
+    Ok(())
+}
 
 pub struct Provider {
     base: Url,
@@ -446,22 +469,10 @@ impl Provider {
         catalog: &crate::adapters::AdapterCatalog,
         capture_credentials: bool,
     ) -> Result<Vec<DiscoveredDevice>, &'static str> {
-        use std::collections::{btree_map::Entry, BTreeMap};
         let mut candidates = BTreeMap::new();
         self.visit_devices(auth, region, |device| {
             if let Some(candidate) = device.match_adapter(catalog, capture_credentials) {
-                match candidates.entry(candidate.device.id.clone()) {
-                    Entry::Occupied(entry) if entry.get() != &candidate => {
-                        return Err("Conflicting Xiaomi device identity");
-                    }
-                    Entry::Occupied(_) => {}
-                    Entry::Vacant(entry) => {
-                        entry.insert(candidate);
-                    }
-                }
-                if candidates.len() > 64 {
-                    return Err("Too many Xiaomi devices");
-                }
+                insert_discovered_device(&mut candidates, candidate.device.id.clone(), candidate)?;
             }
             Ok(())
         })
