@@ -47,5 +47,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Store::new(&root),
         &region,
     );
+    let setup = match env::var("XIAOMI_DATABASE").as_deref() {
+        Ok("sqlite") | Err(env::VarError::NotPresent) => {
+            setup.with_sqlite(&root.join("xiaomi.sqlite3")).await?
+        }
+        _ => return Err("Invalid Xiaomi database backend".into()),
+    };
     runtime::run(host, port, id, password, setup, ui).await
 }

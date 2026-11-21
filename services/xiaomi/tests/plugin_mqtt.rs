@@ -6,6 +6,79 @@ use serde_json::{json, Value};
 use std::{fs, time::Duration};
 
 #[tokio::test]
+async fn installed_adapter_list_survives_a_service_restart() {
+    struct Process(std::process::Child);
+    impl Drop for Process {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let root = std::env::temp_dir().join(format!("xiaomi-adapters-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let passwords = root.join("mqtt-password");
+    fs::write(&passwords, "fixture-password").unwrap();
+    let registrations = json!([
+        {"plugin_id":"plugin.xiaomi-gateway","models":["lumi.gateway.mcn001"]},
+        {"plugin_id":"plugin.xiaomi-vacuum","models":["ijai.vacuum.v10"]}
+    ]);
+    let source = root.join("adapters.json");
+    fs::write(&source, registrations.to_string()).unwrap();
+    let mut results = Vec::new();
+
+    for attempt in 0..2 {
+        let broker = mqtt_broker::Broker::start().await;
+        let mut probe = mqtt_broker::Probe::start(broker.port).await;
+        let _process = Process(
+            std::process::Command::new(env!("CARGO_BIN_EXE_homecore-xiaomi"))
+                .env("MQTT_HOST", "127.0.0.1")
+                .env("MQTT_PORT", broker.port.to_string())
+                .env("MQTT_USERNAME", "fixture-user")
+                .env("MQTT_PASSWORD_FILE", &passwords)
+                .env("XIAOMI_STATE_DIR", &root)
+                .env("XIAOMI_UI_DIR", "ui")
+                .env("XIAOMI_DATABASE", "sqlite")
+                .spawn()
+                .unwrap(),
+        );
+        let reply = tokio::time::timeout(Duration::from_secs(10), async {
+            while probe.messages.recv().await.unwrap().topic
+                != "homecore/plugins/fixture-user/capabilities"
+            {}
+            probe
+                .client
+                .publish(
+                    "homecore/plugins/fixture-user/manage/cmd",
+                    QoS::AtLeastOnce,
+                    false,
+                    json!({"action":"sign_in_status", "request_id":"stored_adapters"}).to_string(),
+                )
+                .await
+                .unwrap();
+            loop {
+                let message = probe.messages.recv().await.unwrap();
+                if message.topic == "homecore/plugins/fixture-user/manage/response" {
+                    let value: Value = serde_json::from_slice(&message.payload).unwrap();
+                    if value["request_id"] == "stored_adapters" {
+                        break value;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("Xiaomi setup status should reply");
+        results.push(reply["registered_adapters"].clone());
+        if attempt == 0 {
+            fs::remove_file(&source).unwrap();
+        }
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+    assert_eq!(results, vec![registrations.clone(), registrations]);
+}
+
+#[tokio::test]
 async fn unconfigured_plugin_exposes_admin_setup_actions() {
     tokio::task::LocalSet::new()
         .run_until(async {

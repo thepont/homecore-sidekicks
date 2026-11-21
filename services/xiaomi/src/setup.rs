@@ -1,5 +1,10 @@
-use crate::{adapters::MatchedDevice, login::Provider, store::Store};
-use std::sync::Arc;
+use crate::{
+    adapters::{AdapterCatalog, MatchedDevice},
+    login::Provider,
+    registry,
+    store::Store,
+};
+use std::{path::Path, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -8,6 +13,13 @@ pub struct Setup {
     store: Arc<Store>,
     region: String,
     state: Arc<Mutex<SetupState>>,
+    adapters: AdapterSource,
+}
+
+#[derive(Clone)]
+enum AdapterSource {
+    File,
+    Registry(Option<Arc<AdapterCatalog>>),
 }
 enum SetupState {
     Unconfigured,
@@ -48,7 +60,14 @@ impl Setup {
             store: Arc::new(store),
             region: region.to_owned(),
             state: Arc::new(Mutex::new(state)),
+            adapters: AdapterSource::File,
         }
+    }
+
+    pub async fn with_sqlite(mut self, database: &Path) -> Result<Self, &'static str> {
+        let catalog = registry::load_sqlite(database.to_path_buf(), self.store.adapters()?).await?;
+        self.adapters = AdapterSource::Registry(catalog.map(Arc::new));
+        Ok(self)
     }
     pub async fn status(&self) -> &'static str {
         self.state.lock().await.status()
@@ -66,6 +85,9 @@ impl Setup {
             result["devices"] =
                 serde_json::Value::Array(devices.iter().map(MatchedDevice::to_json).collect());
         }
+        if let AdapterSource::Registry(Some(catalog)) = &self.adapters {
+            result["registered_adapters"] = catalog.registrations();
+        }
         result
     }
     pub async fn begin(&self) -> Result<String, &'static str> {
@@ -79,7 +101,10 @@ impl Setup {
         if matches!(*state, SetupState::Waiting { .. }) {
             return Err("Sign-in already in progress");
         }
-        let adapters = self.store.adapters()?;
+        let adapters = match &self.adapters {
+            AdapterSource::File => self.store.adapters()?.map(Arc::new),
+            AdapterSource::Registry(catalog) => catalog.clone(),
+        };
         let challenge = self.provider.begin().await?;
         let qr = challenge.qr_png.clone();
         *state = SetupState::Waiting { qr_png: qr.clone() };

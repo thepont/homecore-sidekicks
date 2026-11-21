@@ -9,7 +9,7 @@ registrations that match each model.
 
 The deployment can supply a read-only `adapters.json` in `XIAOMI_STATE_DIR`.
 Each entry declares an installed adapter's HomeCore plugin ID and the exact
-Xiaomi model IDs it supports. The setup plugin reads the file at sign-in, so
+Xiaomi model IDs it supports. The setup plugin imports the file at startup, so
 an adapter can be registered before its process starts. These entries show
 the format using example plugin IDs.
 
@@ -20,12 +20,17 @@ the format using example plugin IDs.
 ]
 ```
 
-Only deployment or installation tooling should write this file. Replace it
-atomically if updating it while the setup plugin is running. Duplicate plugin
+Only deployment or installation tooling should write this file. Restart the
+setup plugin after updating the file. Duplicate plugin
 IDs and repeated models in one registration are rejected. Multiple plugins
 can support the same model, in which case the setup page lists all of them.
-Omit the file to use the current single-gateway setup. An empty array enables
-shared setup with no registered models.
+An empty array enables shared setup with no registered models.
+
+The default `XIAOMI_DATABASE=sqlite` stores the registration list in
+`xiaomi.sqlite3` in the persistent state directory. The setup plugin reads
+the saved list at startup when `adapters.json` is absent. When neither a
+saved list nor an import file is present, setup uses the single-gateway flow.
+The SQLite connection closes once the catalogue is loaded.
 
 `Setup` is the Facade for QR sign-in and discovery. The adapter catalogue
 owns model matching, and the Xiaomi provider fetches the account's devices

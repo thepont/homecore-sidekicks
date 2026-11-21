@@ -38,7 +38,7 @@ impl AdapterCatalog {
         Self::parse(&value).map(Some)
     }
 
-    fn parse(value: &Value) -> Result<Self, &'static str> {
+    pub(crate) fn parse(value: &Value) -> Result<Self, &'static str> {
         let registrations = value
             .as_array()
             .filter(|xs| xs.len() <= 32)
@@ -76,6 +76,21 @@ impl AdapterCatalog {
             adapters.sort_unstable();
         }
         Ok(Self(by_model))
+    }
+
+    pub(crate) fn registrations(&self) -> Value {
+        let mut by_plugin: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (model, plugins) in &self.0 {
+            for plugin in plugins {
+                by_plugin.entry(plugin).or_default().push(model);
+            }
+        }
+        Value::Array(
+            by_plugin
+                .into_iter()
+                .map(|(plugin_id, models)| json!({"plugin_id": plugin_id, "models": models}))
+                .collect(),
+        )
     }
 
     pub(crate) fn match_device(&self, id: &str, name: &str, model: &str) -> Option<MatchedDevice> {
