@@ -10,11 +10,6 @@
       "count": 40
     }
   },
-  "services/xiaomi/ui/index.js": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "ui/ac-card/index.js": {
     "complexity": {
       "count": 4

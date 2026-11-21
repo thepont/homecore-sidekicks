@@ -1,6 +1,10 @@
 const MAX_QR_BASE64_LENGTH = 262144;
 const SIGN_IN_POLL_INTERVAL_MS = 1500;
 
+function hasSetupStatus(result, status) {
+  return result?.ok && result.data?.setup_status === status;
+}
+
 class XiaomiSetup extends HTMLElement {
   #host; #generation=0; #timer;
   constructor() { super(); this.attachShadow({mode:'open'}); }
@@ -177,17 +181,17 @@ class XiaomiSetup extends HTMLElement {
     if(generation!==this.#generation || !this.isConnected)return;
     if(result?.ok) this.#showAccess(result.data);
     const status=this.shadowRoot.querySelector('.status'), button=this.shadowRoot.querySelector('button');
-    if(result?.ok && result.data?.setup_status==='devices_found') {
+    if(hasSetupStatus(result, 'devices_found')) {
       this.#showDevices(result.data.devices);
       return;
     }
-    if(result?.ok && result.data?.setup_status==='gateway_saved') {
+    if(hasSetupStatus(result, 'gateway_saved')) {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;button.textContent='Sign in again';status.textContent='Gateway saved. Connection needs verification.';return;
     }
-    if(result?.ok && result.data?.setup_status==='connected') {
+    if(hasSetupStatus(result, 'connected')) {
       this.shadowRoot.querySelector('.qr').replaceChildren();button.hidden=true;status.textContent='Xiaomi connected';return;
     }
-    if(result?.ok && result.data?.setup_status==='waiting') {
+    if(hasSetupStatus(result, 'waiting')) {
       this.#timer=setTimeout(()=>void this.#check(generation),SIGN_IN_POLL_INTERVAL_MS);return;
     }
     this.shadowRoot.querySelector('.qr').replaceChildren();button.disabled=false;
