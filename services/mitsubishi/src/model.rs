@@ -295,6 +295,53 @@ fn optional_readings(output: &mut Snapshot, input: &Value) -> Result<(), &'stati
         0.0,
         100.0,
     )?;
+    read_integer_diagnostics(output, input)?;
+    for (source, key) in [
+        ("avgFeeding", "room_feed_active"),
+        ("avgFallback", "room_feed_fallback"),
+        ("hasLinkSensor", "link_sensor_present"),
+        ("linkActive", "link_active"),
+        ("linkStale", "link_stale"),
+        ("remoteBonded", "remote_bonded"),
+        ("remoteLive", "remote_live"),
+        ("remotePairing", "remote_pairing"),
+        ("remoteSyncing", "remote_syncing"),
+        ("hkReady", "homekit_ready"),
+        ("hkPaired", "homekit_paired"),
+        ("bleEnabled", "ble_enabled"),
+        ("bleDiscovering", "ble_discovering"),
+        ("bleReverted", "ble_reverted"),
+        ("betaChannel", "beta_channel"),
+        ("trunc", "snapshot_truncated"),
+    ] {
+        output.boolean(input, source, key)?;
+    }
+    for (source, key) in [
+        ("resetReason", "reset_reason"),
+        ("hkStatus", "homekit_status"),
+        ("remoteModel", "remote_model"),
+        ("remoteFw", "remote_firmware"),
+        ("remotePairResult", "remote_pairing_result"),
+    ] {
+        output.text(input, source, key)?;
+    }
+    if input["linkActive"] != true || input["linkStale"] != false {
+        output.remove("link_temperature");
+        output.remove("link_humidity");
+    }
+    if input["avgFeeding"] != true {
+        output.remove("effective_temperature");
+    }
+    if input["epoch"] == 0 {
+        output.remove("device_epoch");
+    }
+    if input["remoteLastSeen"] == -1 {
+        output.remove("remote_last_seen");
+    }
+    Ok(())
+}
+
+fn read_integer_diagnostics(output: &mut Snapshot, input: &Value) -> Result<(), &'static str> {
     for (source, key, unit, min, max) in [
         ("compressorHz", "compressor_frequency", Some("Hz"), 0, 255),
         ("errorCode", "error_code", None, 0, 255),
@@ -367,48 +414,6 @@ fn optional_readings(output: &mut Snapshot, input: &Value) -> Result<(), &'stati
         ("cn105Drops", "cn105_disconnects"),
     ] {
         output.integer(input, source, key, None, 0, i64::from(u32::MAX))?;
-    }
-    for (source, key) in [
-        ("avgFeeding", "room_feed_active"),
-        ("avgFallback", "room_feed_fallback"),
-        ("hasLinkSensor", "link_sensor_present"),
-        ("linkActive", "link_active"),
-        ("linkStale", "link_stale"),
-        ("remoteBonded", "remote_bonded"),
-        ("remoteLive", "remote_live"),
-        ("remotePairing", "remote_pairing"),
-        ("remoteSyncing", "remote_syncing"),
-        ("hkReady", "homekit_ready"),
-        ("hkPaired", "homekit_paired"),
-        ("bleEnabled", "ble_enabled"),
-        ("bleDiscovering", "ble_discovering"),
-        ("bleReverted", "ble_reverted"),
-        ("betaChannel", "beta_channel"),
-        ("trunc", "snapshot_truncated"),
-    ] {
-        output.boolean(input, source, key)?;
-    }
-    for (source, key) in [
-        ("resetReason", "reset_reason"),
-        ("hkStatus", "homekit_status"),
-        ("remoteModel", "remote_model"),
-        ("remoteFw", "remote_firmware"),
-        ("remotePairResult", "remote_pairing_result"),
-    ] {
-        output.text(input, source, key)?;
-    }
-    if input["linkActive"] != true || input["linkStale"] != false {
-        output.remove("link_temperature");
-        output.remove("link_humidity");
-    }
-    if input["avgFeeding"] != true {
-        output.remove("effective_temperature");
-    }
-    if input["epoch"] == 0 {
-        output.remove("device_epoch");
-    }
-    if input["remoteLastSeen"] == -1 {
-        output.remove("remote_last_seen");
     }
     Ok(())
 }
