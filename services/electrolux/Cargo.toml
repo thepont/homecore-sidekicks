@@ -5,11 +5,11 @@ edition = "2021"
 
 [dependencies]
 homecore-plugin-ui = { path = "../../crates/plugin-ui" }
-serde_json = "=1.0.145"
+serde_json = "=1.0.154"
 rbroadlink = "=0.4.2"
 packed_struct = "=0.10.1"
 rumqttc = { version = "=0.25.1", default-features = false }
-tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
 
 [dev-dependencies]
 homecore-test-support = { path = "../../crates/test-support" }

@@ -34,7 +34,7 @@ impl Hisense {
         Ok(Self { address, client })
     }
 
-    async fn query(&self, action: &str, element: &[u8]) -> Result<String, &'static str> {
+    async fn query(&self, action: &str, element: &str) -> Result<String, &'static str> {
         let body = format!("<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{SERVICE}\"><InstanceID>0</InstanceID><Channel>Master</Channel></u:{action}></s:Body></s:Envelope>");
         let response = self
             .client
@@ -59,14 +59,14 @@ impl Hisense {
 
     pub async fn read(&self) -> Result<Reading, &'static str> {
         let volume = self
-            .query("GetVolume", b"CurrentVolume")
+            .query("GetVolume", "CurrentVolume")
             .await?
             .parse::<u8>()
             .map_err(|_| "Invalid volume")?;
         if volume > MAX_VOLUME {
             return Err("Invalid volume");
         }
-        let muted = match self.query("GetMute", b"CurrentMute").await?.as_str() {
+        let muted = match self.query("GetMute", "CurrentMute").await?.as_str() {
             "0" => false,
             "1" => true,
             _ => return Err("Invalid mute state"),
@@ -75,7 +75,7 @@ impl Hisense {
     }
 }
 
-fn parse_soap_reading(bytes: &[u8], element: &[u8]) -> Result<String, &'static str> {
+fn parse_soap_reading(bytes: &[u8], element: &str) -> Result<String, &'static str> {
     let mut reader = Reader::from_reader(bytes);
     let mut within = false;
     let mut depth = 0usize;
@@ -102,12 +102,8 @@ fn parse_soap_reading(bytes: &[u8], element: &[u8]) -> Result<String, &'static s
                 if result.is_some() {
                     return Err("Ambiguous TV response");
                 }
-                result = Some(
-                    std::str::from_utf8(text.as_ref())
-                        .map_err(|_| "Invalid TV response")?
-                        .trim()
-                        .to_owned(),
-                );
+                let value: &str = text.as_ref();
+                result = Some(value.trim().to_owned());
             }
             Event::End(tag) => {
                 depth = depth.checked_sub(1).ok_or("Invalid TV response")?;
