@@ -509,18 +509,13 @@ pub async fn run_sensor_publisher_with_commands(
             contact_availability(&mqtt, &bridge_id, &[update], false).await?;
             continue;
         }
-        if !guards.contains_key(&update.0) {
-            if let Some(runtime) = &runtime {
-                guards.insert(
-                    update.0,
-                    AvailabilityGuard::start(
-                        runtime.availability_options.clone(),
-                        &prefix,
-                        update.0,
-                    )
+        if let (std::collections::hash_map::Entry::Vacant(entry), Some(runtime)) =
+            (guards.entry(update.0), &runtime)
+        {
+            entry.insert(
+                AvailabilityGuard::start(runtime.availability_options.clone(), &prefix, update.0)
                     .await?,
-                );
-            }
+            );
         }
         if update.1.get("on").is_some() {
             mqtt.subscribe(
