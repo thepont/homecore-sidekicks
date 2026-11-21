@@ -10,7 +10,40 @@ use std::{
 const MAX_CATALOG_BYTES: u64 = 64 * 1024;
 const INVALID: &str = "Invalid Xiaomi adapter registration";
 
+#[derive(Clone, Default)]
 pub(crate) struct AdapterCatalog(BTreeMap<String, Vec<String>>);
+
+pub(crate) struct AdapterRegistration {
+    pub(crate) plugin_id: String,
+    models: BTreeSet<String>,
+}
+
+impl AdapterRegistration {
+    pub(crate) fn parse(value: &Value) -> Result<Self, &'static str> {
+        let plugin_id = value["plugin_id"]
+            .as_str()
+            .filter(|id| valid_plugin_id(id))
+            .ok_or(INVALID)?;
+        let models = value["models"]
+            .as_array()
+            .filter(|models| (1..=128).contains(&models.len()))
+            .ok_or(INVALID)?;
+        let mut registered_models = BTreeSet::new();
+        for model in models {
+            let model = model
+                .as_str()
+                .filter(|model| valid_identifier(model))
+                .ok_or(INVALID)?;
+            if !registered_models.insert(model.to_owned()) {
+                return Err(INVALID);
+            }
+        }
+        Ok(Self {
+            plugin_id: plugin_id.to_owned(),
+            models: registered_models,
+        })
+    }
+}
 
 impl AdapterCatalog {
     pub(crate) fn load(path: &Path) -> Result<Option<Self>, &'static str> {
@@ -44,38 +77,38 @@ impl AdapterCatalog {
             .filter(|xs| xs.len() <= 32)
             .ok_or(INVALID)?;
         let mut plugin_ids = BTreeSet::new();
-        let mut by_model: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut catalog = Self::default();
         for registration in registrations {
-            let plugin_id = registration["plugin_id"]
-                .as_str()
-                .filter(|id| id.starts_with("plugin.") && valid_identifier(id))
-                .ok_or(INVALID)?;
-            if !plugin_ids.insert(plugin_id) {
+            let registration = AdapterRegistration::parse(registration)?;
+            if !plugin_ids.insert(registration.plugin_id.clone()) {
                 return Err(INVALID);
             }
-            let models = registration["models"]
-                .as_array()
-                .filter(|xs| (1..=128).contains(&xs.len()))
-                .ok_or(INVALID)?;
-            let mut seen_models = BTreeSet::new();
-            for model in models {
-                let model = model
-                    .as_str()
-                    .filter(|model| valid_identifier(model))
-                    .ok_or(INVALID)?;
-                if !seen_models.insert(model) {
-                    return Err(INVALID);
-                }
-                by_model
-                    .entry(model.to_owned())
-                    .or_default()
-                    .push(plugin_id.to_owned());
-            }
+            catalog.upsert(registration)?;
         }
-        for adapters in by_model.values_mut() {
+        Ok(catalog)
+    }
+
+    pub(crate) fn upsert(&mut self, registration: AdapterRegistration) -> Result<(), &'static str> {
+        let distinct_plugins: BTreeSet<_> = self.0.values().flatten().collect();
+        if distinct_plugins.len() == 32 && !distinct_plugins.contains(&registration.plugin_id) {
+            return Err("Too many Xiaomi adapter registrations");
+        }
+        self.0.retain(|_, adapters| {
+            adapters.retain(|id| id != &registration.plugin_id);
+            !adapters.is_empty()
+        });
+        for model in registration.models {
+            let adapters = self.0.entry(model).or_default();
+            adapters.push(registration.plugin_id.clone());
             adapters.sort_unstable();
         }
-        Ok(Self(by_model))
+        Ok(())
+    }
+
+    pub(crate) fn supports(&self, plugin_id: &str, model: &str) -> bool {
+        self.0
+            .get(model)
+            .is_some_and(|plugins| plugins.iter().any(|id| id == plugin_id))
     }
 
     pub(crate) fn registrations(&self) -> Value {
@@ -107,7 +140,11 @@ impl AdapterCatalog {
     }
 }
 
-fn valid_identifier(value: &str) -> bool {
+pub(crate) fn valid_plugin_id(id: &str) -> bool {
+    id.starts_with("plugin.") && valid_identifier(id)
+}
+
+pub(crate) fn valid_identifier(value: &str) -> bool {
     value.len() <= 64
         && value.split('.').all(|part| {
             !part.is_empty()

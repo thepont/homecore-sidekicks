@@ -1,6 +1,6 @@
 #[path = "../../teslemetry/tests/support/homecore.rs"]
 mod homecore;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     process::{Child, Command, Stdio},
     time::Duration,
@@ -71,5 +71,40 @@ async fn core_serves_the_unconfigured_setup_page_to_an_authenticated_user() {
     assert_eq!(
         response.bytes().await.unwrap().as_ref(),
         std::fs::read(ui.join("index.js")).unwrap()
+    );
+    let commands = "/plugins/plugin.teslemetry-powerwall/command";
+    for body in [
+        json!({"action":"register_adapter","plugin_id":"plugin.fixture-vacuum","models":["ijai.vacuum.v10"]}),
+        json!({"action":"request_access","plugin_id":"plugin.fixture-vacuum","model":"ijai.vacuum.v10"}),
+    ] {
+        let reply: Value = core
+            .post(commands)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+    }
+    let state: Value = core
+        .post(commands)
+        .json(&json!({"action":"sign_in_status"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        state["access_requests"],
+        json!([
+            {"plugin_id":"plugin.fixture-vacuum","model":"ijai.vacuum.v10","status":"pending"}
+        ])
     );
 }

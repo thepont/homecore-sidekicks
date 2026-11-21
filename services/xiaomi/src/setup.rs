@@ -1,7 +1,7 @@
 use crate::{
-    adapters::{AdapterCatalog, MatchedDevice},
+    adapters::MatchedDevice,
     login::Provider,
-    registry,
+    registry::{Operation, Registry, RegistryState},
     store::Store,
 };
 use std::{path::Path, sync::Arc};
@@ -19,7 +19,12 @@ pub struct Setup {
 #[derive(Clone)]
 enum AdapterSource {
     File,
-    Registry(Option<Arc<AdapterCatalog>>),
+    Registry(Arc<AdapterRegistry>),
+}
+
+struct AdapterRegistry {
+    repository: Registry,
+    state: Mutex<RegistryState>,
 }
 enum SetupState {
     Unconfigured,
@@ -64,21 +69,39 @@ impl Setup {
         }
     }
 
-    pub async fn with_sqlite(mut self, database: &Path) -> Result<Self, &'static str> {
-        let catalog = registry::load_sqlite(database.to_path_buf(), self.store.adapters()?).await?;
-        self.adapters = AdapterSource::Registry(catalog.map(Arc::new));
+    async fn with_registry(mut self, repository: Registry) -> Result<Self, &'static str> {
+        let state = repository
+            .run(Operation::Bootstrap(self.store.adapters()?))
+            .await?;
+        self.adapters = AdapterSource::Registry(Arc::new(AdapterRegistry {
+            repository,
+            state: Mutex::new(state),
+        }));
         Ok(self)
+    }
+
+    pub async fn with_sqlite(self, database: &Path) -> Result<Self, &'static str> {
+        self.with_registry(Registry::Sqlite(database.to_path_buf()))
+            .await
     }
 
     #[cfg(feature = "postgres")]
     pub async fn with_postgres(
-        mut self,
+        self,
         dsn_file: &Path,
         ca_file: Option<&Path>,
     ) -> Result<Self, &'static str> {
-        let catalog = registry::load_postgres(dsn_file, ca_file, self.store.adapters()?).await?;
-        self.adapters = AdapterSource::Registry(catalog.map(Arc::new));
-        Ok(self)
+        self.with_registry(Registry::postgres(dsn_file, ca_file)?)
+            .await
+    }
+
+    pub(crate) async fn update_registry(&self, action: Operation) -> Result<(), &'static str> {
+        let AdapterSource::Registry(registry) = &self.adapters else {
+            return Err("Xiaomi access requests require a registry");
+        };
+        let mut state = registry.state.lock().await;
+        *state = registry.repository.run(action).await?;
+        Ok(())
     }
     pub async fn status(&self) -> &'static str {
         self.state.lock().await.status()
@@ -96,8 +119,13 @@ impl Setup {
             result["devices"] =
                 serde_json::Value::Array(devices.iter().map(MatchedDevice::to_json).collect());
         }
-        if let AdapterSource::Registry(Some(catalog)) = &self.adapters {
-            result["registered_adapters"] = catalog.registrations();
+        drop(state);
+        if let AdapterSource::Registry(registry) = &self.adapters {
+            let registry = registry.state.lock().await;
+            if let Some(catalog) = &registry.catalog {
+                result["registered_adapters"] = catalog.registrations();
+            }
+            result["access_requests"] = registry.pending_requests();
         }
         result
     }
@@ -113,8 +141,8 @@ impl Setup {
             return Err("Sign-in already in progress");
         }
         let adapters = match &self.adapters {
-            AdapterSource::File => self.store.adapters()?.map(Arc::new),
-            AdapterSource::Registry(catalog) => catalog.clone(),
+            AdapterSource::File => self.store.adapters()?,
+            AdapterSource::Registry(registry) => registry.state.lock().await.catalog.clone(),
         };
         let challenge = self.provider.begin().await?;
         let qr = challenge.qr_png.clone();

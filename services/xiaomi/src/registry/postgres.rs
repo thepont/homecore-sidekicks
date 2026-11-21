@@ -1,4 +1,4 @@
-use super::{parse_document, AdapterCatalog, DATABASE_ERROR, SAVE, SCHEMA, SELECT};
+use super::{Operation, RegistryState, DATABASE_ERROR, SAVE, SCHEMA, SELECT};
 use rustls::{
     pki_types::{pem::PemObject, CertificateDer},
     ClientConfig, RootCertStore,
@@ -9,62 +9,66 @@ use std::{
 use tokio_postgres::{config::SslMode, Config};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
-pub(crate) async fn load_postgres(
-    dsn_path: &Path,
-    ca_path: Option<&Path>,
-    import: Option<AdapterCatalog>,
-) -> Result<Option<AdapterCatalog>, &'static str> {
-    let mut config: Config = read_file(dsn_path, 4096)?
-        .trim()
-        .parse()
-        .map_err(|_| DATABASE_ERROR)?;
-    config.ssl_mode(SslMode::Require);
-    let mut roots = RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Some(path) = ca_path {
-        let pem = read_file(path, 65536)?;
-        let certificates: Vec<_> = CertificateDer::pem_slice_iter(pem.as_bytes())
-            .collect::<Result<_, _>>()
+pub(crate) struct Postgres {
+    config: Config,
+    tls: MakeRustlsConnect,
+}
+
+impl Postgres {
+    pub(super) fn new(dsn_path: &Path, ca_path: Option<&Path>) -> Result<Self, &'static str> {
+        let mut config: Config = read_file(dsn_path, 4096)?
+            .trim()
+            .parse()
             .map_err(|_| DATABASE_ERROR)?;
-        if certificates.is_empty() {
-            return Err(DATABASE_ERROR);
+        config.ssl_mode(SslMode::Require);
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        if let Some(path) = ca_path {
+            let pem = read_file(path, 65536)?;
+            let certificates: Vec<_> = CertificateDer::pem_slice_iter(pem.as_bytes())
+                .collect::<Result<_, _>>()
+                .map_err(|_| DATABASE_ERROR)?;
+            if certificates.is_empty() {
+                return Err(DATABASE_ERROR);
+            }
+            for certificate in certificates {
+                roots.add(certificate).map_err(|_| DATABASE_ERROR)?;
+            }
         }
-        for certificate in certificates {
-            roots.add(certificate).map_err(|_| DATABASE_ERROR)?;
-        }
+        let tls =
+            ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .map_err(|_| DATABASE_ERROR)?
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+        Ok(Self {
+            config,
+            tls: MakeRustlsConnect::new(tls),
+        })
     }
-    let tls =
-        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .map_err(|_| DATABASE_ERROR)?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-    tokio::time::timeout(Duration::from_secs(6), async {
-        let (mut client, connection) = config
-            .connect(MakeRustlsConnect::new(tls))
-            .await
-            .map_err(|_| DATABASE_ERROR)?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let transaction = client.transaction().await.map_err(|_| DATABASE_ERROR)?;
-        // Serialize first-time schema creation by replicas of this service.
-        transaction
-            .batch_execute("SELECT pg_advisory_xact_lock(1481197647, 1)")
-            .await
-            .map_err(|_| DATABASE_ERROR)?;
-        transaction
-            .batch_execute(SCHEMA)
-            .await
-            .map_err(|_| DATABASE_ERROR)?;
-        let catalog = if let Some(catalog) = import {
-            let document = catalog.registrations().to_string();
-            transaction
-                .execute(SAVE, &[&document])
+
+    pub(super) async fn run(&self, action: Operation) -> Result<RegistryState, &'static str> {
+        tokio::time::timeout(Duration::from_secs(6), async {
+            let (mut client, connection) = self
+                .config
+                .connect(self.tls.clone())
                 .await
                 .map_err(|_| DATABASE_ERROR)?;
-            Some(catalog)
-        } else {
+            tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            let transaction = client.transaction().await.map_err(|_| DATABASE_ERROR)?;
+            // Serialize registry mutations and first-time schema creation.
+            transaction
+                .batch_execute("SELECT pg_advisory_xact_lock(1481197647, 1)")
+                .await
+                .map_err(|_| DATABASE_ERROR)?;
+            if matches!(action, Operation::Bootstrap(_)) {
+                transaction
+                    .batch_execute(SCHEMA)
+                    .await
+                    .map_err(|_| DATABASE_ERROR)?;
+            }
             let row = transaction
                 .query_opt(SELECT, &[])
                 .await
@@ -74,13 +78,19 @@ pub(crate) async fn load_postgres(
                 .map(|row| row.try_get::<_, &str>(0))
                 .transpose()
                 .map_err(|_| DATABASE_ERROR)?;
-            parse_document(document)?
-        };
-        transaction.commit().await.map_err(|_| DATABASE_ERROR)?;
-        Ok(catalog)
-    })
-    .await
-    .map_err(|_| DATABASE_ERROR)?
+            let (state, updated) = RegistryState::apply(document, action)?;
+            if let Some(document) = updated {
+                transaction
+                    .execute(SAVE, &[&document])
+                    .await
+                    .map_err(|_| DATABASE_ERROR)?;
+            }
+            transaction.commit().await.map_err(|_| DATABASE_ERROR)?;
+            Ok(state)
+        })
+        .await
+        .map_err(|_| DATABASE_ERROR)?
+    }
 }
 
 fn read_file(path: &Path, max_bytes: u64) -> Result<String, &'static str> {

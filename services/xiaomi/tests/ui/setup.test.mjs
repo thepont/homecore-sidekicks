@@ -52,6 +52,27 @@ test('a saved gateway is shown as awaiting verification',async()=>{
   } finally {await browser.close();}
 });
 
+test('the Xiaomi setup page shows which adapter is waiting for access',async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
+  try {
+    const page=await browser.newPage();
+    await page.setContent('<main></main>');
+    await page.addScriptTag({content:await readFile(new URL('index.js',ui),'utf8')});
+    await page.evaluate(()=>{
+      const el=document.createElement('hc-xiaomi-setup');
+      el.host={me:{can:()=>true},action:async()=>({ok:true,data:{
+        setup_status:'unconfigured',
+        access_requests:[{plugin_id:'plugin.xiaomi-vacuum',model:'ijai.vacuum.v10',status:'pending'}],
+      }})};
+      document.querySelector('main').append(el);
+    });
+    const requests=page.getByRole('list',{name:'Xiaomi access requests'});
+    await requests.getByText('plugin.xiaomi-vacuum',{exact:true}).waitFor({timeout:2500});
+    assert.equal(await requests.getByText('ijai.vacuum.v10',{exact:true}).count(),1);
+    assert.equal(await requests.getByText('Awaiting approval',{exact:true}).count(),1);
+  } finally {await browser.close();}
+});
+
 test('reopening setup restores the saved gateway state',async()=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_BIN});
   try {
