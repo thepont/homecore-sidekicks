@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - &checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Scan tracked files using the pre-commit hook
@@ -40,10 +40,10 @@ jobs:
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
       - name: Check Rust formatting
         run: cargo "+$RUST_TOOLCHAIN" fmt --manifest-path "$MANIFEST" --check
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: matrix.service == 'homekit'
         with: &node_options
-          node-version: '24'
+          node-version: '26.13.1'
           package-manager-cache: false
       - name: Install the HomeKit fixture
         if: matrix.service == 'homekit'
@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - *checkout
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: *node_options
       - name: Install browser test dependencies
         run: |

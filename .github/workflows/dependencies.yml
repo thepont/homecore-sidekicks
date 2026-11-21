@@ -26,13 +26,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - &checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install cargo-audit
         env:
-          CARGO_AUDIT_VERSION: '0.22.2'
-          CARGO_AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
+          CARGO_AUDIT_VERSION: '0.23.0'
+          CARGO_AUDIT_SHA256: b77993532b253fcbf550996d7716465ec3d734d4e74e7f87bfb65a19add0fb59
         run: |
           release="cargo-audit-x86_64-unknown-linux-gnu-v$CARGO_AUDIT_VERSION"
           archive="$RUNNER_TEMP/$release.tgz"
@@ -56,9 +56,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - *checkout
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26.13.1'
           package-manager-cache: false
       - name: Audit npm lockfiles
         run: |
