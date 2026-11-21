@@ -10,6 +10,17 @@ permissions:
   contents: read
 
 jobs:
+  secrets:
+    name: TruffleHog secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Scan tracked files using the pre-commit hook
+        run: sh .githooks/pre-commit
+
   rust:
     name: Rust / ${{ matrix.service }}
     runs-on: ubuntu-24.04
@@ -18,12 +29,16 @@ jobs:
       fail-fast: false
       matrix:
         service: [electrolux, hisense, homekit, mitsubishi, teslemetry, xiaomi]
+    env:
+      SERVICE: ${{ matrix.service }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
       - name: Set up Rust
-        run: rustup toolchain install 1.96.0 --profile minimal
+        run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
+      - name: Check Rust formatting
+        run: cargo +1.96.0 fmt --manifest-path "services/$SERVICE/Cargo.toml" --check
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: matrix.service == 'homekit'
         with:
@@ -32,18 +47,28 @@ jobs:
       - name: Install the HomeKit fixture
         if: matrix.service == 'homekit'
         run: npm ci --prefix services/homekit/tests/hap --ignore-scripts
-      - name: Run service tests
-        env:
-          SERVICE: ${{ matrix.service }}
+      - name: Run Clippy and service tests
         run: |
           args=()
           if [[ "$SERVICE" == xiaomi ]]; then
             args+=(--features extractor,postgres)
           fi
-          cargo +1.96.0 test --locked --manifest-path "services/$SERVICE/Cargo.toml" "${args[@]}"
+          manifest="services/$SERVICE/Cargo.toml"
+          cargo +1.96.0 clippy --locked --manifest-path "$manifest" "${args[@]}" --all-targets -- -D warnings
+          cargo +1.96.0 test --locked --manifest-path "$manifest" "${args[@]}"
       - name: Run Hisense MQTT and HomeCore contracts
         if: matrix.service == 'hisense'
         run: cargo +1.96.0 test --locked --manifest-path services/hisense/Cargo.toml --test core --test mqtt -- --ignored --test-threads=1
+
+      - name: Build release binaries
+        run: |
+          manifest="services/$SERVICE/Cargo.toml"
+          if [[ "$SERVICE" == xiaomi ]]; then
+            cargo +1.96.0 build --locked --release --manifest-path "$manifest" --features postgres --bin homecore-xiaomi
+            cargo +1.96.0 build --locked --release --manifest-path "$manifest" --no-default-features --features extractor --bin xiaomi-extractor
+          else
+            cargo +1.96.0 build --locked --release --manifest-path "$manifest" --bins
+          fi
 
   browser:
     name: Browser tests
