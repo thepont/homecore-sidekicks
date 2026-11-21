@@ -8,6 +8,7 @@ use std::{future::Future, net::SocketAddr, time::Duration};
 
 const MAX_VOLUME: u8 = 100;
 const MAX_RESPONSE: usize = 16 * 1024;
+const MAX_XML_DEPTH: usize = 64;
 const SERVICE: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +81,7 @@ fn enter_xml_element(depth: &mut usize, roots: &mut usize) -> Result<(), &'stati
         *roots += 1;
     }
     *depth += 1;
-    if *depth > 64 {
+    if *depth > MAX_XML_DEPTH {
         return Err("Invalid TV response");
     }
     Ok(())
