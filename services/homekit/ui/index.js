@@ -11,6 +11,10 @@ function discoveredAccessories(result) {
   return result?.ok && Array.isArray(result.data?.accessories) ? result.data.accessories : null;
 }
 
+function pairingRequiresRecovery(result) {
+  return result?.ok && result.data?.status === 'recovery_required';
+}
+
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
@@ -70,7 +74,7 @@ class HomeKitSetup extends HTMLElement {
     let result;try{result=await this.#host.action('pair_accessory',{id,pin:pin.value});}catch{}
     pin.value='';
     if(generation!==this.#generation || !this.isConnected)return;
-    if(result?.ok && result.data?.status==='recovery_required'){
+    if(pairingRequiresRecovery(result)){
       this.#recovery=true;status.textContent='Pairing could not be confirmed. The accessory may need recovery before another attempt.';
     } else {
       status.textContent=result?.ok&&result.data?.status==='ok'?'Accessory connected.':'Could not connect the accessory. Check its setup code and try again.';
