@@ -8,12 +8,13 @@ bridge has also accepted a second controller without removing the first one.
 The Xiaomi DMWG03LM hub has accepted a second, non-admin controller alongside
 Home Assistant, and both controller identities read the same contact and
 battery values. This hub rejected controller identifiers longer than 36 bytes;
-new controller identities use UUIDs. Kubernetes discovery and live deployment
-still need verification. The controller publishes contacts, temperature,
+new controller identities use UUIDs. The controller is deployed in Kubernetes
+and has reconnected to the hub after moving between the two eligible nodes. It
+publishes contacts, temperature,
 humidity, smoke alarm and fault states, batteries, and outlet state. Outlet
 commands are tested against a simulated accessory; the real outlet has not
-been switched. Do not transfer or remove the existing Home Assistant pairing
-until live deployment and recovery have been verified.
+been switched. The existing Home Assistant pairing was retained; at deployment,
+its saved hub address was stale and its Xiaomi devices were unavailable.
 
 The pairing test starts a HAP-NodeJS accessory bound to loopback, with an
 isolated temporary identity. Node.js 24 and the pinned fixture dependencies are
