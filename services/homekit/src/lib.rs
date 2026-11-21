@@ -1415,14 +1415,16 @@ pub async fn watch_saved(
     })
 }
 
+type OutletCommand = (
+    u64,
+    bool,
+    tokio::sync::oneshot::Sender<Result<(), &'static str>>,
+);
+
 pub struct ContactsWatch {
     current: Vec<(u64, Value)>,
     updates: tokio::sync::mpsc::Receiver<(u64, Value)>,
-    commands: tokio::sync::mpsc::Sender<(
-        u64,
-        bool,
-        tokio::sync::oneshot::Sender<Result<(), &'static str>>,
-    )>,
+    commands: tokio::sync::mpsc::Sender<OutletCommand>,
     task: tokio::task::JoinHandle<()>,
 }
 impl ContactsWatch {
@@ -1511,11 +1513,7 @@ async fn watch_contacts_with_interval(
     }
     let current = read_sensors(&mut handle).await?;
     let (send, updates) = tokio::sync::mpsc::channel(32);
-    let (commands, mut command_rx) = tokio::sync::mpsc::channel::<(
-        u64,
-        bool,
-        tokio::sync::oneshot::Sender<Result<(), &'static str>>,
-    )>(16);
+    let (commands, mut command_rx) = tokio::sync::mpsc::channel::<OutletCommand>(16);
     let mut state = current.clone();
     let task = tokio::spawn(async move {
         let _lock = lock;
