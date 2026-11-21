@@ -1,6 +1,12 @@
 const MAX_DISCOVERED_ACCESSORIES = 100;
 const MAX_ACCESSORY_NAME_LENGTH = 128;
 
+function validAccessory(item) {
+  return typeof item?.id === 'string' && /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)
+    && typeof item.name === 'string' && item.name.length <= MAX_ACCESSORY_NAME_LENGTH
+    && typeof item.paired === 'boolean';
+}
+
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
@@ -43,7 +49,7 @@ class HomeKitSetup extends HTMLElement {
     select.replaceChildren(new Option('Choose an accessory',''));
     const paired=[];
     for(const item of list.slice(0,MAX_DISCOVERED_ACCESSORIES)){
-      if(typeof item?.id!=='string'||!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)||typeof item.name!=='string'||item.name.length>MAX_ACCESSORY_NAME_LENGTH||typeof item.paired!=='boolean')continue;
+      if(!validAccessory(item))continue;
       if(item.paired){paired.push(`${item.name} is already paired.`);continue;}
       select.add(new Option(item.name,item.id));
     }
