@@ -8,6 +8,7 @@ use std::{future::Future, net::SocketAddr, time::Duration};
 
 const MAX_VOLUME: u8 = 100;
 const MAX_RESPONSE: usize = 16 * 1024;
+const MAX_XML_DEPTH: usize = 64;
 const SERVICE: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +76,17 @@ impl Hisense {
     }
 }
 
+fn enter_xml_element(depth: &mut usize, roots: &mut usize) -> Result<(), &'static str> {
+    if *depth == 0 {
+        *roots += 1;
+    }
+    *depth += 1;
+    if *depth > MAX_XML_DEPTH {
+        return Err("Invalid TV response");
+    }
+    Ok(())
+}
+
 fn parse_soap_reading(bytes: &[u8], element: &str) -> Result<String, &'static str> {
     let mut reader = Reader::from_reader(bytes);
     let mut within = false;
@@ -84,13 +96,7 @@ fn parse_soap_reading(bytes: &[u8], element: &str) -> Result<String, &'static st
     loop {
         match reader.read_event().map_err(|_| "Invalid TV response")? {
             Event::Start(tag) => {
-                if depth == 0 {
-                    roots += 1;
-                }
-                depth += 1;
-                if depth > 64 {
-                    return Err("Invalid TV response");
-                }
+                enter_xml_element(&mut depth, &mut roots)?;
                 if tag.local_name().as_ref() == element {
                     if within || result.is_some() {
                         return Err("Ambiguous TV response");

@@ -4,7 +4,7 @@
       "count": 3
     },
     "id-length": {
-      "count": 8
+      "count": 4
     },
     "no-magic-numbers": {
       "count": 40
@@ -12,7 +12,7 @@
   },
   "ui/ac-card/index.js": {
     "complexity": {
-      "count": 4
+      "count": 3
     },
     "no-magic-numbers": {
       "count": 18

@@ -347,6 +347,10 @@ class TeslemetryCard extends HTMLElement {
 
 customElements.define('hc-teslemetry-card', TeslemetryCard);
 
+function compareHistoryTimes(left, right) {
+  return Date.parse(left.at) - Date.parse(right.at);
+}
+
 // Tariff bands represent only recorded period changes; unknown earlier time stays unshaded.
 async function readHistoryOrEmpty(host, field) {
   try {
@@ -361,7 +365,7 @@ function renderTariffBands(svg, records, points) {
   const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
   if (end <= start) return;
   const periods = records.filter(record => typeof record?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(record.value) && Number.isFinite(Date.parse(record.at)))
-    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
+    .sort(compareHistoryTimes)
     .filter((period, i, all) => i === 0 || period.value !== all[i - 1].value);
   for (let i = 0; i < periods.length; i++) {
     const from = Math.max(start, Date.parse(periods[i].at));
@@ -412,7 +416,7 @@ function appendHistoryChart(target, points, periods, label, formatRange) {
 
 function sortedPowerHistory(records) {
   return records.filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.at)))
-    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+    .sort(compareHistoryTimes);
 }
 
 class TeslemetrySolar extends HTMLElement {
@@ -569,7 +573,7 @@ class TeslemetryBattery extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort(compareHistoryTimes);
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     appendHistoryChart(target, points, this.#periods, 'Battery charge history', (min, max) => `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`);
   }
@@ -597,7 +601,7 @@ class TeslemetryCombined extends HTMLElement {
     const all=await Promise.all([...combinedSeries.map(series=>readHistoryOrEmpty(host,series.field)),readTariffPeriods(host)]);
     if(generation!==this.#generation || !this.isConnected)return;
     const series=all.slice(0,4).map(sortedPowerHistory);
-    const points=series.flat().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    const points=series.flat().sort(compareHistoryTimes);
     const target=this.shadowRoot.querySelector('.graph');target.textContent='';
     if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
     const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(p=>p.value),min=Math.min(...values),max=Math.max(...values);

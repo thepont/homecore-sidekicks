@@ -728,33 +728,7 @@ class AcCard extends HTMLElement {
     if (value !== undefined && value !== control.value) void this.#send(control.key, value);
   }
 
-  #renderTargets(model, schema) {
-    const { available, targets, gap, room } = model;
-    const view = this.#view;
-    const controls = {};
-    const scale = { ...defaultScale };
-    for (const { row, buttons } of view.targets) {
-      const slot = row.dataset.target;
-      const target = targets[slot];
-      const visible = available && target?.value !== undefined;
-      const spec = schema?.[target?.key];
-      show(row, visible && (slot !== 'single' || spec?.writable === true));
-      const control = visible ? targetControl(target, spec, model) : undefined;
-      if (control) {
-        controls[slot] = control;
-        scale.min = Math.min(scale.min, spec.min);
-        scale.max = Math.max(scale.max, spec.max);
-      }
-      for (const button of buttons) {
-        const value = nextTarget(control, Number(button.dataset.step));
-        show(button, spec?.writable === true);
-        button.disabled = value === undefined || !!this.#pending;
-        if (!button.disabled) this.#commands.set(button, [target.key, value]);
-      }
-    }
-    this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
-      restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
-      scale, controls, lowSlot: targets.heat ? 'heat' : 'single' };
+  #cancelDragIfTargetChanged(controls) {
     if (this.#drag) {
       const active = controls[this.#drag.slot];
       const original = this.#drag.control;
@@ -762,6 +736,44 @@ class AcCard extends HTMLElement {
         this.#cancelDrag();
       }
     }
+  }
+
+  #renderTargetButtons(buttons, spec, target, control) {
+    for (const button of buttons) {
+      const value = nextTarget(control, Number(button.dataset.step));
+      show(button, spec?.writable === true);
+      button.disabled = value === undefined || !!this.#pending;
+      if (!button.disabled) this.#commands.set(button, [target.key, value]);
+    }
+  }
+
+  #renderTargetRow({ row, buttons }, model, schema, scale, controls) {
+    const slot = row.dataset.target;
+    const target = model.targets[slot];
+    const visible = model.available && target?.value !== undefined;
+    const spec = schema?.[target?.key];
+    show(row, visible && (slot !== 'single' || spec?.writable === true));
+    const control = visible ? targetControl(target, spec, model) : undefined;
+    if (control) {
+      controls[slot] = control;
+      scale.min = Math.min(scale.min, spec.min);
+      scale.max = Math.max(scale.max, spec.max);
+    }
+    this.#renderTargetButtons(buttons, spec, target, control);
+  }
+
+  #renderTargets(model, schema) {
+    const { available, targets, gap, room } = model;
+    const view = this.#view;
+    const controls = {};
+    const scale = { ...defaultScale };
+    for (const targetRow of view.targets) {
+      this.#renderTargetRow(targetRow, model, schema, scale, controls);
+    }
+    this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
+      restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
+      scale, controls, lowSlot: targets.heat ? 'heat' : 'single' };
+    this.#cancelDragIfTargetChanged(controls);
     const editable = Object.keys(controls).length > 0;
     view.dial.toggleAttribute('data-editable', editable && !this.#pending);
     view.svg.setAttribute('aria-hidden', String(!editable));
