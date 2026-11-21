@@ -307,7 +307,7 @@ dependencies = [
  "base64",
  "homecore-plugin-ui",
  "homecore-test-support",
- "packed_struct",
+ "packed_struct 0.12.0",
  "rbroadlink",
  "reqwest",
  "rumqttc",
@@ -642,7 +642,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36b29691432cc9eff8b282278473b63df73bea49bc3ec5e67f31a3ae9c3ec190"
 dependencies = [
  "bitvec",
- "packed_struct_codegen",
+ "packed_struct_codegen 0.10.1",
+ "serde",
+]
+
+[[package]]
+name = "packed_struct"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6350910bce3c5f2a2499a60423ddc35d2c6c60ee3a2e756f92b521d3a99023c"
+dependencies = [
+ "packed_struct_codegen 0.12.0",
  "serde",
 ]
 
@@ -655,6 +665,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "packed_struct_codegen"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b795fe0b7ff55c724fa9f0747fc101e937563f8d3ea0624254960bd5ea8895d3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -802,7 +823,7 @@ dependencies = [
  "chrono",
  "get_if_addrs",
  "hex-literal",
- "packed_struct",
+ "packed_struct 0.10.1",
  "phf",
  "rand",
 ]
