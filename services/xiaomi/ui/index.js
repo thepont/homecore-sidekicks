@@ -1,3 +1,5 @@
+const MAX_QR_BASE64_LENGTH = 262144;
+
 class XiaomiSetup extends HTMLElement {
   #host; #generation=0; #timer;
   constructor() { super(); this.attachShadow({mode:'open'}); }
@@ -27,7 +29,7 @@ class XiaomiSetup extends HTMLElement {
     if(result.data?.setup_status==='devices_found') this.#showDevices(result.data.devices);
   }
   #qrImage(qr) {
-    if(typeof qr!=='string' || qr.length>262144 || !qr.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(qr)) return null;
+    if(typeof qr!=='string' || qr.length>MAX_QR_BASE64_LENGTH || !qr.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(qr)) return null;
     const image=document.createElement('img');
     image.alt='Mi Home sign-in QR code';
     image.src=`data:image/png;base64,${qr}`;
