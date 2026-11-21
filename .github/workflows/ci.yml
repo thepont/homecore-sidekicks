@@ -15,7 +15,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - &checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
       - name: Scan tracked files using the pre-commit hook
@@ -34,16 +35,14 @@ jobs:
       MANIFEST: services/${{ matrix.service }}/Cargo.toml
       RUST_TOOLCHAIN: '1.96.0'
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          persist-credentials: false
+      - *checkout
       - name: Set up Rust
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
       - name: Check Rust formatting
         run: cargo "+$RUST_TOOLCHAIN" fmt --manifest-path "$MANIFEST" --check
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: matrix.service == 'homekit'
-        with:
+        with: &node_options
           node-version: '24'
           package-manager-cache: false
       - name: Install the HomeKit fixture
@@ -75,13 +74,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          persist-credentials: false
+      - *checkout
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: '24'
-          package-manager-cache: false
+        with: *node_options
       - name: Install browser test dependencies
         run: |
           npm ci --prefix services/teslemetry/tests/ui --ignore-scripts

@@ -3,7 +3,7 @@ name: Dependency security
 on:
   push:
     branches: [main]
-    paths:
+    paths: &dependency_paths
       - 'services/**/Cargo.toml'
       - 'services/**/Cargo.lock'
       - 'crates/**/Cargo.toml'
@@ -11,13 +11,7 @@ on:
       - 'services/**/package-lock.json'
       - '.github/workflows/dependencies.yml'
   pull_request:
-    paths:
-      - 'services/**/Cargo.toml'
-      - 'services/**/Cargo.lock'
-      - 'crates/**/Cargo.toml'
-      - 'services/**/package.json'
-      - 'services/**/package-lock.json'
-      - '.github/workflows/dependencies.yml'
+    paths: *dependency_paths
   schedule:
     - cron: '25 4 * * 1'
   workflow_dispatch:
@@ -31,7 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - &checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
       - name: Install cargo-audit
@@ -60,9 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          persist-credentials: false
+      - *checkout
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
