@@ -145,6 +145,18 @@ async fn contact_availability(
     Ok(())
 }
 
+fn lock_pairing_directory(state_dir: &std::path::Path) -> Result<std::fs::File, &'static str> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err("Invalid pairing directory");
+    }
+    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
+    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    Ok(lock)
+}
+
 struct PairingTemp(std::path::PathBuf);
 impl Drop for PairingTemp {
     fn drop(&mut self) {
@@ -262,12 +274,7 @@ pub async fn pair_and_read(
     {
         return Err("Invalid pairing details");
     }
-    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
-    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err("Invalid pairing directory");
-    }
-    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
-    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let _lock = lock_pairing_directory(state_dir)?;
     let recovery_marker = state_dir.join("pairing-recovery-required");
     match std::fs::symlink_metadata(&recovery_marker) {
         Ok(metadata)
@@ -410,12 +417,7 @@ pub async fn read_saved(id: &str, state_dir: &std::path::Path) -> Result<Value, 
 pub async fn stored_bridge_id(state_dir: &std::path::Path) -> Result<Option<String>, &'static str> {
     use hap_controller::{JsonFileStore, PairingStore};
     use std::os::unix::fs::PermissionsExt;
-    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
-    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err("Invalid pairing directory");
-    }
-    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
-    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let _lock = lock_pairing_directory(state_dir)?;
     let path = state_dir.join("pairing.json");
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -609,12 +611,7 @@ async fn connect_saved(
     {
         return Err("Invalid pairing identity");
     }
-    let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
-    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
-        return Err("Invalid pairing directory");
-    }
-    let lock = std::fs::File::open(state_dir).map_err(|_| "Invalid pairing directory")?;
-    lock.try_lock().map_err(|_| "Pairing already in progress")?;
+    let lock = lock_pairing_directory(state_dir)?;
     let path = state_dir.join("pairing.json");
     let metadata = std::fs::symlink_metadata(&path).map_err(|_| "Pairing store unavailable")?;
     if !metadata.is_file()
