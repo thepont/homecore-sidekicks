@@ -1,3 +1,6 @@
+const MAX_DISCOVERED_ACCESSORIES = 100;
+const MAX_ACCESSORY_NAME_LENGTH = 128;
+
 class HomeKitSetup extends HTMLElement {
   #host;
   #generation=0;
@@ -39,8 +42,8 @@ class HomeKitSetup extends HTMLElement {
     const select=this.shadowRoot.querySelector('#accessory');
     select.replaceChildren(new Option('Choose an accessory',''));
     const paired=[];
-    for(const item of list.slice(0,100)){
-      if(typeof item?.id!=='string'||!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)||typeof item.name!=='string'||item.name.length>128||typeof item.paired!=='boolean')continue;
+    for(const item of list.slice(0,MAX_DISCOVERED_ACCESSORIES)){
+      if(typeof item?.id!=='string'||!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.id)||typeof item.name!=='string'||item.name.length>MAX_ACCESSORY_NAME_LENGTH||typeof item.paired!=='boolean')continue;
       if(item.paired){paired.push(`${item.name} is already paired.`);continue;}
       select.add(new Option(item.name,item.id));
     }

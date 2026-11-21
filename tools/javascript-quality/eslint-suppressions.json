@@ -2,9 +2,6 @@
   "services/homekit/ui/index.js": {
     "complexity": {
       "count": 2
-    },
-    "no-magic-numbers": {
-      "count": 2
     }
   },
   "services/teslemetry/ui/index.js": {
