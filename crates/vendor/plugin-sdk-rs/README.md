@@ -1,0 +1,398 @@
+# plugin-sdk-rs — the Rust plugin SDK
+
+The Rust plugin SDK for [homeCore](https://github.com/homeCore-io/homeCore).
+Async MQTT client, device registration, state publishing, the management
+protocol, capability actions, notices, alerts, files sent to actions, and a
+plugin's own screens.
+
+The crate is named **`plugin-sdk-rs`**.
+
+The whole process of building a plugin — devices, actions, settings, alerts,
+its own screens and cards, testing and releasing — is in
+`docs/plugin-development.md`; this page is the SDK's reference.
+
+## Installing
+
+This SDK lives at `sdk/rust` in the homeCore repository, and every Rust plugin
+lives at `plugins/<name>` in that same repository. They are workspace members
+together, so a plugin depends on the SDK by path:
+
+```toml
+[dependencies]
+plugin-sdk-rs = { path = "../../sdk/rust" }
+tokio         = { version = "1", features = ["full"] }
+anyhow        = "1"
+serde_json    = "1"
+```
+
+That is the whole story for a plugin in this repo: no tag to pin, no version to
+chase, and an SDK edit is live in every plugin on the next `cargo build`. The
+repo-root `cargo fmt` / `clippy` / `test` already cover the SDK, core and all
+the plugins together, so a change here that breaks a plugin fails immediately
+rather than at that plugin's next release.
+
+This used to work very differently — plugins were separate repositories pinning
+a git tag, redirected to a local checkout by a `[patch]` table in a
+`plugins/Cargo.toml` meta-workspace. All of that is gone. If you find
+instructions mentioning `hc-plugin-sdk-rs`, a tag pin, or that patch table, they
+predate the monorepo.
+
+**The crate is not on crates.io.** For a plugin *outside* this repository, depend
+on it by git tag, so core's `hc-types` — the plugin ABI it re-exports — cannot
+change under you:
+
+```toml
+plugin-sdk-rs = { git = "https://github.com/homeCore-io/homeCore", tag = "v0.1.29" }
+```
+
+No `path` key: cargo finds `plugin-sdk-rs` by package name among the repo's
+workspace members. The tag is a **core** release tag (`v0.1.29`), because the
+SDK ships with core now rather than on its own tags.
+
+## Quick start
+
+```rust
+use plugin_sdk_rs::{PluginClient, PluginConfig};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = PluginClient::connect(PluginConfig {
+        broker_host: "127.0.0.1".into(),
+        broker_port: 1883,
+        plugin_id: "plugin.example".into(),
+        password: String::new(),
+    })
+    .await?;
+
+    // Take every handle you need BEFORE starting the loop — `run` and
+    // `run_managed` consume the client.
+    let publisher = client.device_publisher();
+
+    // Start the event loop first. See "Start the event loop before you
+    // register" below — this ordering is not stylistic.
+    let event_loop = tokio::spawn(async move {
+        client
+            .run(|device_id, payload| {
+                println!("Command for {device_id}: {payload}");
+            })
+            .await
+    });
+
+    publisher
+        .register_device_full("example_sensor", "Example Sensor", Some("sensor"), None, None)
+        .await?;
+    publisher.subscribe_commands("example_sensor").await?;
+    publisher
+        .publish_state("example_sensor", &serde_json::json!({ "temperature": 21.5 }))
+        .await?;
+
+    // Returns only when the loop stops.
+    event_loop.await?
+}
+```
+
+Real plugins call `run_managed` instead, so homeCore can supervise them — see
+below. Start from `plugins/hc-plugin-template` in this repository, which is a
+working plugin rather than a skeleton, then read `plugins/hc-wled` for the
+smallest real one and `plugins/hc-roku` for discovery, notices, and capability
+actions together.
+
+## Start the event loop before you register
+
+`run` / `run_managed` is what *drives* the MQTT connection. Until one of them is
+polling, nothing you publish leaves the process — it queues, and the queue holds
+64 messages.
+
+Registering one device costs four of them (register, subscribe, state,
+availability). So a plugin that registers its devices and *then* calls
+`run_managed` works fine with three devices and **hangs at startup with
+seventeen**, never reaching the line that would have drained the queue. There is
+no error and no log line; it simply stops.
+
+Measured against a real broker, a plugin registering 40 devices gets through 12
+of them in the register-first order and all 40 in this one:
+
+```rust
+let publisher = client.device_publisher();
+let notices   = client.notices();
+let mgmt      = client.enable_management(60, version, config_path, None).await?;
+
+tokio::spawn(async move { client.run_managed(on_command, mgmt).await });
+
+// ...now register, subscribe, and publish.
+```
+
+Nothing is lost by starting early: a command for a device you have not
+registered cannot arrive, because the subscription that would carry it does not
+exist until you make it.
+
+## Names and units
+
+A shared idea has one name and one unit, for everything a device reports or
+takes: `on`, `brightness_pct` (0–100), `color_temp` (kelvin), `transition_ms`,
+`open` (`true` = open), `occupied`, `battery_pct`, `humidity`, `illuminance`
+(lux), temperatures in **°C**, and the rest of
+`hc_types::device_vocabulary::TERMS`. Convert from the device's own scale
+inside the plugin, both ways — `plugins/hc-plugin-template` shows it with
+`pct_from_level` / `level_from_pct` and a test at each end of the scale.
+Commands arrive as an attribute write, `{"on": true}`, or a declared action,
+`{"action": "toggle"}` — never `{"command": …}`; `{"on": true}` restores the
+last level. The whole of it is "Names and units" in
+`docs/plugin-development.md`.
+
+## What it gives you
+
+- **`PluginClient`** — async MQTT connection with automatic reconnect and
+  topic re-subscription. `connect` takes a `PluginConfig`.
+- **`DevicePublisher`** — a cloneable handle, so spawned tasks can publish
+  without holding the client.
+- **Device registration** — `register_device_typed` for a known
+  `device_type`, `register_device_full` for name/area/capabilities.
+- **Device schema** — `register_device_schema` declares what a device reports
+  and accepts: attribute kinds, ranges, units, both names of every boolean,
+  which readings are housekeeping, and the actions it takes that are not
+  attribute writes. **Not optional in practice.** A client will not offer a
+  control the plugin has not promised, so a device without a schema is a row
+  of raw JSON that nobody can operate. See
+  [Declaring a device](https://homecore.io/docs/plugins/developing-plugins#declaring-a-device).
+- **State publishing** — full (retained) and partial (merge-patch), each with
+  a `_with_change` variant that attaches provenance, so the UI and the audit
+  log can say what caused a change.
+- **Management protocol** — heartbeat, remote config, dynamic log level, via
+  `enable_management` plus `run_managed`.
+- **Notices** — structured, self-clearing problem reports. See below.
+- **Capability actions** — declare plugin-specific commands ("Pair bridge",
+  "Rescan devices") that the web UI renders as buttons and MCP can call, with
+  no UI code at either end. `device_actions` for the simple ones,
+  `streaming` for the ones that report progress as they go.
+- **Cross-device state** — `subscribe_state` plus `run_managed_with_state`,
+  for a plugin that consumes *other* plugins' devices the way hc-thermostat
+  reads sensors it does not own; `subscribe_availability` plus
+  `ManagementHandle::with_availability_handler` to hear whether those devices
+  are online (`(device_id, online)` per retained availability message), and
+  `subscribe_schema` plus `with_schema_handler` to read their schemas (a
+  thermostat checking its sensor's unit).
+- **Log forwarding** — `MqttLogLayer` ships tracing logs to core, so they
+  appear in the live log stream alongside core's own.
+- **Conformance** — `conformance::check_all` holds the rules every homeCore
+  plugin follows: both names of every boolean, housekeeping declared as such,
+  no control the command path ignores, no action nobody can phrase, no action
+  inheriting core's 5 s timeout by accident. Call it from a test; nine plugins
+  had hand-written the same checks before it existed. See [Let the build check
+  it for you](https://homecore.io/docs/plugins/developing-plugins#let-the-build-check-it-for-you).
+
+## Notices
+
+A notice is how a plugin says something is wrong in a way the UI can render:
+missing credentials, an unreachable hub, nothing discovered yet. They appear
+on the plugin's card in the web UI, with the remedy when there is one.
+
+```rust
+use plugin_sdk_rs::types::PluginNotice;
+
+let notices = client.notices();
+
+notices.raise(
+    PluginNotice::error("bridge_unreachable", "The bridge stopped answering")
+        .with_remedy("Check that the bridge is powered on and reachable"),
+);
+
+// ...and when it answers again:
+notices.clear("bridge_unreachable");
+```
+
+**A notice is state, not a log line.** It stays up while the condition holds,
+and clearing it is your job — so re-evaluate after each discovery sweep, each
+reconnect, each config change, rather than deciding once at startup. A plugin
+that raises `no_devices_configured` at boot and never looks again is still
+showing it after the user's devices arrive.
+
+Levels are `info`, `warning`, and `error`. `with_remedy` adds the sentence
+that tells the operator what to do about it.
+
+## Alerts
+
+Notices are about the plugin; **alerts** are about its devices, and live in
+the house's alert list (homeCore 0.1.85). Declare the kinds you can raise on
+the manifest, then say which are true of a device now — the whole list each
+time; an empty one clears them:
+
+```rust
+use plugin_sdk_rs::types::{AlertAction, AlertActionTarget, AlertSeverity, PluginAlert, PluginAlertKind};
+
+let mgmt = mgmt.with_alert_kinds([PluginAlertKind {
+    topic: "firmware_update".into(),
+    label: "Firmware update available".into(),
+    description: None,
+    severity: AlertSeverity::Info,
+    default_on: false, // news, not a problem: off until someone turns it on
+}]);
+
+publisher.set_alerts("wled_1", &[
+    PluginAlert::new("firmware_update", "Firmware 17.0.0 is out")
+        .key("17.0.0") // "skip this one" skips this version, not the kind
+        .action(AlertAction {
+            label: "Update…".into(),
+            id: "install_firmware".into(), // one of the device's actions
+            target: AlertActionTarget::Device,
+            params: serde_json::json!({ "version": "17.0.0" }),
+            confirm: true,
+        }),
+]).await?;
+```
+
+homeCore decides whether each is shown and where it is sent, never shows a
+plugin's alert as critical, and lets automations start on, check and act on
+them. `set_plugin_alerts` does the same for alerts about the plugin itself.
+Alerts are retained and said again on every reconnect.
+
+## Your own screens
+
+A plugin can carry web components — a page for itself, a panel for its devices
+— and serve them itself. Build them into a folder with one ES module and a
+`manifest.json` saying where each goes, ship the folder beside the program as
+`ui/`, and:
+
+```rust
+if let Some(dir) = plugin_sdk_rs::ui::find_dir(env!("CARGO_MANIFEST_DIR")) {
+    mgmt = mgmt.with_ui_dir(dir, env!("CARGO_PKG_VERSION"));
+}
+```
+
+The SDK declares them on the manifest (`ui`, with a hash of the files as their
+`build`) and answers homeCore's requests for the files; homeCore passes them to
+the web app and keeps none. Each element is handed the app's `host` — the
+plugin's devices, commands, actions, settings and the app's look; its types are
+`core/sdk/ui` (`@homecore/plugin-ui`). `plugins/hc-ecowitt/ui` is a complete one.
+
+### Pictures it keeps
+
+Pictures a plugin fetches while it runs — a channel's icon from a Roku — can't
+be in the built UI. Keep them in a folder and serve it:
+
+```rust
+mgmt = mgmt.with_files_dir(config_dir.join(".roku-files"));
+```
+
+homeCore passes them to the app at `GET /plugins/{id}/files/{path}` (pictures
+only), asking the SDK for them in pieces (`plugin_file`); a screen makes the
+address with `host.fileUrl("icons/837-2.23.png")`. **A file's name is its
+identity**: the browser keeps each for good, so write a new name when the
+contents change (hc-roku names an icon by channel and version). homeCore 0.1.92
+and later.
+
+## Actions answered later
+
+`with_custom_handler` answers on the task the request arrived on, and must not
+block it. An action that talks to a device answers asynchronously instead:
+
+```rust
+mgmt = mgmt.with_async_handler(move |cmd| {
+    (cmd["action"] == "status").then(|| {
+        let b = bridge.clone();
+        Box::pin(async move { b.status().await }) as AsyncActionFuture
+    })
+});
+```
+
+`Some(future)` takes the action (its value is the reply; the SDK adds
+`request_id`), `None` passes it on to the custom handler. The SDK's own actions
+(`ping`, `get_config`, …) never reach it. hc-roku's are all answered this way.
+
+## Who called
+
+homeCore puts the verified `caller` on every action it passes to a plugin:
+`uid`, `username`, `role`, `scopes` and `kind`. An immediate action reads it
+from the command its handler is given with `Caller::from_cmd(cmd)`; a
+streaming action reads `ctx.caller()`, and the SDK leaves it out of the
+action's params. An action declared `requires_role: RequiresRole::SignedIn`
+(or `device_actions::Role::SignedIn` on a device action) may be called by
+anyone signed in, read-only accounts included, so its handler must limit what
+it does to `caller.scopes` (`caller.has_scope("devices:read")`).
+
+A streaming action can send `data` for its own screen with
+`ctx.progress_with_data(..)` and `ctx.awaiting_user_with_data(..)` (and
+`warning`, which already took it). Every event's `ts` is later than the one
+before it, to the microsecond, so a reader that drops repeated times loses
+nothing.
+
+## Your own REST access
+
+A plugin that needs homeCore's REST API lists the scopes it wants in its
+manifest (`Capabilities { api_scopes: vec!["devices:read".into()], .. }`).
+After every start homeCore mints a key holding those scopes (or fewer),
+revokes the previous one, and sends it with the `api_access` management
+action. The SDK answers that action itself and keeps the grant as an
+`ApiAccess` (`url`, `key`, `scopes`; its `Debug` output hides the key):
+
+```rust
+let mgmt = client.enable_management(60, version, config_path, None).await?
+    .with_capabilities(caps)
+    .with_api_access_handler(|a| tracing::info!(url = %a.url, "REST access"));
+let access = mgmt.clone(); // every clone sees the same grant
+tokio::spawn(async move {
+    if let Some(a) = access.wait_for_api_access(Duration::from_secs(30)).await {
+        // GET {a.url}/devices with `Authorization: Bearer {a.key}`
+    }
+});
+client.run_managed(on_command, mgmt).await?;
+```
+
+`api_access()` returns the latest grant or `None`, `wait_for_api_access`
+waits for one (await it on its own task once `run_managed` is running), and
+`api_access_updates()` gives a `watch::Receiver` for a task that rebuilds its
+client on every new key. The hook runs on the management task: keep it quick.
+
+A plugin written before 0.6.5 that answers `api_access` from
+`with_custom_handler` or `with_async_handler` keeps working. The SDK keeps the
+grant and calls the hook first, then offers the command to those handlers,
+and their reply is what core gets. When neither answers, the SDK replies `ok`,
+or `api_access needs a url and a key` when either is missing.
+
+## Files sent to an action
+
+`POST /plugins/{id}/upload/{action}` sends a file to one of your manifest
+actions (up to 32 MiB). The SDK receives it in pieces and runs the action as
+usual with a `file_path` param — a local file, removed once the action has
+replied (copy it first if the action keeps working after replying). A page of
+yours sends one with `host.upload(action, file, params)`.
+
+## Where the house is
+
+homeCore publishes its `[location]` coordinates on the retained
+`homecore/system/location` topic, beside the time zone. The SDK keeps the
+latest: `plugin_sdk_rs::house_location()` returns it once it has arrived, and
+`wait_house_location(timeout)` waits for it (call it after `run_managed` has
+started). A homeCore older than this SDK never sends it, so keep a fallback,
+such as coordinates in your settings.
+
+## Secrets in log fields
+
+`MqttLogLayer` publishes log events to a topic anything can subscribe to,
+so secret values must not leak into them. The layer redacts any field
+whose name (case-insensitive) contains `password`, `secret`, `token`,
+`key`, `psk`, `passcode`, `credential`, or `auth`. Redacted fields are
+still emitted with the same name; only the value becomes `<redacted>`.
+
+**Convention:** pass secrets as named tracing fields, never interpolate
+them into the message string. Only field *names* are filtered — message
+text is published as-is.
+
+```rust
+// Good — value is redacted automatically:
+tracing::info!(api_key = %config.api_key, "Connecting to bridge");
+
+// Bad — message is published verbatim:
+tracing::info!("Connecting with key {}", config.api_key);
+```
+
+## Versioning
+
+The SDK re-exports types from core's `hc-types`, which is the plugin ABI: a
+required new field there breaks every plugin's build, so additions are
+`#[serde(default)]`.
+
+Inside this repository that is enforced for you — the SDK, `hc-types` and every
+plugin build and test together at the repo root, so an ABI break is a red CI run
+rather than a plugin that fails to compile weeks later. Outside it, pin the core
+tag as shown under [Installing](#installing).
