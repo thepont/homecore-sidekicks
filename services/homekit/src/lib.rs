@@ -54,6 +54,87 @@ async fn publish_messages(
     Ok(())
 }
 
+enum SensorReading<'a> {
+    Contact(&'a Value),
+    Outlet(&'a Value),
+    Smoke(&'a Value),
+    Climate(&'a Value),
+    Unavailable(&'a str),
+}
+
+fn parse_sensor(state: &Value) -> Result<SensorReading<'_>, &'static str> {
+    let object = state.as_object().ok_or("Invalid sensor state")?;
+    if object.contains_key("_offline") {
+        let kind = object
+            .get("_type")
+            .and_then(Value::as_str)
+            .ok_or("Invalid sensor state")?;
+        if object.len() != 2
+            || object.get("_offline").and_then(Value::as_bool) != Some(true)
+            || !matches!(
+                kind,
+                "contact_sensor" | "temperature_sensor" | "smoke_sensor" | "switch"
+            )
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Unavailable(kind))
+    } else if object.contains_key("open") {
+        if object.get("open").and_then(Value::as_bool).is_none()
+            || object.keys().any(|k| k != "open" && k != "battery_pct")
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Contact(state))
+    } else if object.contains_key("on") {
+        if object.get("on").and_then(Value::as_bool).is_none()
+            || object.get("in_use").is_some_and(|v| v.as_bool().is_none())
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "on" | "in_use"))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Outlet(state))
+    } else if object.contains_key("smoke") {
+        if object.get("smoke").and_then(Value::as_bool).is_none()
+            || object.get("fault").is_some_and(|v| v.as_bool().is_none())
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "smoke" | "fault" | "battery_pct"))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Smoke(state))
+    } else {
+        if (!object.contains_key("temperature") && !object.contains_key("humidity"))
+            || object
+                .keys()
+                .any(|k| !matches!(k.as_str(), "temperature" | "humidity" | "battery_pct"))
+            || object.get("temperature").is_some_and(|v| {
+                v.as_f64()
+                    .is_none_or(|n| !n.is_finite() || !(-100.0..=100.0).contains(&n))
+            })
+            || object.get("humidity").is_some_and(|v| {
+                v.as_f64()
+                    .is_none_or(|n| !n.is_finite() || !(0.0..=100.0).contains(&n))
+            })
+            || object
+                .get("battery_pct")
+                .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
+        {
+            return Err("Invalid sensor state");
+        }
+        Ok(SensorReading::Climate(state))
+    }
+}
+
 /// Publish supported sensors to homeCore.
 pub async fn publish_sensors(
     mqtt: &rumqttc::AsyncClient,
@@ -85,78 +166,15 @@ pub async fn publish_sensors(
     let mut outlets = Vec::new();
     let mut unavailable = Vec::new();
     for (aid, state) in readings {
-        let object = state.as_object().ok_or("Invalid sensor state")?;
         if *aid == 0 || !seen.insert(*aid) {
             return Err("Invalid sensor state");
         }
-        if object.contains_key("_offline") {
-            let kind = object
-                .get("_type")
-                .and_then(Value::as_str)
-                .ok_or("Invalid sensor state")?;
-            if object.len() != 2
-                || object.get("_offline").and_then(Value::as_bool) != Some(true)
-                || !matches!(
-                    kind,
-                    "contact_sensor" | "temperature_sensor" | "smoke_sensor" | "switch"
-                )
-            {
-                return Err("Invalid sensor state");
-            }
-            unavailable.push((*aid, kind));
-        } else if object.contains_key("open") {
-            if object.get("open").and_then(Value::as_bool).is_none()
-                || object.keys().any(|k| k != "open" && k != "battery_pct")
-                || object
-                    .get("battery_pct")
-                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
-            {
-                return Err("Invalid sensor state");
-            }
-            contacts.push((*aid, state.clone()));
-        } else if object.contains_key("on") {
-            if object.get("on").and_then(Value::as_bool).is_none()
-                || object.get("in_use").is_some_and(|v| v.as_bool().is_none())
-                || object
-                    .keys()
-                    .any(|k| !matches!(k.as_str(), "on" | "in_use"))
-            {
-                return Err("Invalid sensor state");
-            }
-            outlets.push((*aid, state));
-        } else if object.contains_key("smoke") {
-            if object.get("smoke").and_then(Value::as_bool).is_none()
-                || object.get("fault").is_some_and(|v| v.as_bool().is_none())
-                || object
-                    .get("battery_pct")
-                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
-                || object
-                    .keys()
-                    .any(|k| !matches!(k.as_str(), "smoke" | "fault" | "battery_pct"))
-            {
-                return Err("Invalid sensor state");
-            }
-            smoke.push((*aid, state));
-        } else {
-            if (!object.contains_key("temperature") && !object.contains_key("humidity"))
-                || object
-                    .keys()
-                    .any(|k| !matches!(k.as_str(), "temperature" | "humidity" | "battery_pct"))
-                || object.get("temperature").is_some_and(|v| {
-                    v.as_f64()
-                        .is_none_or(|n| !n.is_finite() || !(-100.0..=100.0).contains(&n))
-                })
-                || object.get("humidity").is_some_and(|v| {
-                    v.as_f64()
-                        .is_none_or(|n| !n.is_finite() || !(0.0..=100.0).contains(&n))
-                })
-                || object
-                    .get("battery_pct")
-                    .is_some_and(|v| v.as_u64().is_none_or(|n| n > 100))
-            {
-                return Err("Invalid sensor state");
-            }
-            climate.push((*aid, state));
+        match parse_sensor(state)? {
+            SensorReading::Contact(value) => contacts.push((*aid, value.clone())),
+            SensorReading::Outlet(value) => outlets.push((*aid, value)),
+            SensorReading::Smoke(value) => smoke.push((*aid, value)),
+            SensorReading::Climate(value) => climate.push((*aid, value)),
+            SensorReading::Unavailable(kind) => unavailable.push((*aid, kind)),
         }
     }
     publish_contacts(mqtt, plugin, bridge_id, &contacts).await?;
