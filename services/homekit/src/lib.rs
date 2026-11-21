@@ -1,23 +1,30 @@
 use serde_json::{json, Map, Value};
 pub mod setup;
 
+struct BridgeId<'a>(&'a str);
+
+impl<'a> BridgeId<'a> {
+    fn parse(value: &'a str) -> Option<Self> {
+        (value.len() == 17
+            && value.bytes().enumerate().all(|(i, b)| {
+                if i % 3 == 2 {
+                    b == b':'
+                } else {
+                    b.is_ascii_hexdigit()
+                }
+            }))
+        .then_some(Self(value))
+    }
+
+    fn compact(&self) -> String {
+        self.0.replace(':', "").to_ascii_lowercase()
+    }
+}
+
 /// Validate a homeCore outlet command and identify its target.
 pub fn outlet_command(bridge_id: &str, topic: &str, value: &Value) -> Option<(u64, bool)> {
-    if bridge_id.len() != 17
-        || !bridge_id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
-    {
-        return None;
-    }
-    let prefix = format!(
-        "homecore/devices/homekit_{}_",
-        bridge_id.replace(':', "").to_ascii_lowercase()
-    );
+    let bridge_id = BridgeId::parse(bridge_id)?;
+    let prefix = format!("homecore/devices/homekit_{}_", bridge_id.compact());
     let text = topic.strip_prefix(&prefix)?.strip_suffix("/cmd")?;
     let aid = text.parse::<u64>().ok()?;
     if aid == 0 || aid.to_string() != text {
@@ -147,14 +154,7 @@ pub async fn publish_sensors(
         || !plugin
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        || bridge_id.len() != 17
-        || !bridge_id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
+        || BridgeId::parse(bridge_id).is_none()
         || readings.len() > 1024
     {
         return Err("Invalid sensor publication");
@@ -337,14 +337,7 @@ pub async fn publish_contacts(
         || !plugin
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        || bridge_id.len() != 17
-        || !bridge_id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
+        || BridgeId::parse(bridge_id).is_none()
         || readings.len() > 1024
     {
         return Err("Invalid contact publication");
@@ -757,14 +750,7 @@ pub async fn pair_and_read(
     };
     if !allowed_address
         || address.port() == 0
-        || id.len() != 17
-        || !id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
+        || BridgeId::parse(id).is_none()
         || pin.len() != 10
         || !pin.bytes().enumerate().all(|(i, b)| {
             if i == 3 || i == 6 {
@@ -950,15 +936,7 @@ pub async fn stored_bridge_id(state_dir: &std::path::Path) -> Result<Option<Stri
         [] => Ok(None),
         [one] => {
             let id = &one.pairing.pairing_id;
-            if id.len() != 17
-                || !id.bytes().enumerate().all(|(i, b)| {
-                    if i % 3 == 2 {
-                        b == b':'
-                    } else {
-                        b.is_ascii_hexdigit()
-                    }
-                })
-            {
+            if BridgeId::parse(id).is_none() {
                 return Err("Invalid pairing identity");
             }
             Ok(Some(id.clone()))
@@ -1236,15 +1214,7 @@ async fn connect_saved(
 ) -> Result<(std::fs::File, hap_controller::AccessoryHandle), &'static str> {
     use hap_controller::{HapController, JsonFileStore, PairingStore};
     use std::os::unix::fs::PermissionsExt;
-    if id.len() != 17
-        || !id.bytes().enumerate().all(|(i, b)| {
-            if i % 3 == 2 {
-                b == b':'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
-    {
+    if BridgeId::parse(id).is_none() {
         return Err("Invalid pairing identity");
     }
     let metadata = std::fs::symlink_metadata(state_dir).map_err(|_| "Invalid pairing directory")?;
