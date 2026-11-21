@@ -1,5 +1,6 @@
 /target/
 **/target/
+/tools/javascript-quality/node_modules/
 .local/
 .env
 .env.*

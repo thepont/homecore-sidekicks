@@ -1,0 +1,6 @@
+{
+  "name": "sidekicks-javascript-quality",
+  "private": true,
+  "version": "1.0.0",
+  "devDependencies": { "eslint": "10.15.0" }
+}
