@@ -577,7 +577,7 @@ class TeslemetryBattery extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && p.value >= 0 && p.value <= 100 && Number.isFinite(Date.parse(p.at))).sort(compareHistoryTimes);
+    const points = (this.#history ?? []).filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && point.value >= 0 && point.value <= 100 && Number.isFinite(Date.parse(point.at))).sort(compareHistoryTimes);
     if (points.length < 2) { target.textContent = historyUnavailableMessage(this.#history); return; }
     appendHistoryChart(target, points, this.#periods, 'Battery charge history', (min, max) => `${Number(min.toFixed(1))}–${Number(max.toFixed(1))}%`);
   }
