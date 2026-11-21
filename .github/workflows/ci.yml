@@ -61,11 +61,11 @@ jobs:
         run: |
           npm ci --prefix services/teslemetry/tests/ui --ignore-scripts
           npm ci --prefix services/xiaomi/tests/ui --ignore-scripts
-      - name: Install Chromium
-        working-directory: services/teslemetry/tests/ui
-        run: npx --no-install playwright install --with-deps chromium
-      - name: Run browser tests
+      - name: Run browser tests in Chrome
         run: |
+          CHROMIUM_BIN="$(command -v google-chrome-stable || command -v google-chrome)"
+          export CHROMIUM_BIN
+          "$CHROMIUM_BIN" --version
           npm test --prefix services/teslemetry/tests/ui
           npm test --prefix services/xiaomi/tests/ui
           NODE_PATH="$PWD/services/teslemetry/tests/ui/node_modules" node --test ui/ac-card/tests/card.test.mjs

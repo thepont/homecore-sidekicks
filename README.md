@@ -37,13 +37,12 @@ cargo test --locked --manifest-path services/teslemetry/Cargo.toml --test homeco
 
 The service guides list their other local test commands and opt-in hardware
 tests. The HomeCore contract tests start an isolated, pinned HomeCore image.
-For the Teslemetry card browser tests, use the test package from a checkout.
+For the Teslemetry card browser tests, install Chrome and use the test package from a checkout.
 
 ```sh
 cd services/teslemetry/tests/ui
 npm ci
-npx playwright install chromium
-npm test
+CHROMIUM_BIN="$(command -v google-chrome-stable || command -v google-chrome)" npm test
 ```
 
 The commit hook scans the staged tree with a pinned TruffleHog image on an
