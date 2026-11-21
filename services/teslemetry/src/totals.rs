@@ -300,6 +300,18 @@ impl TotalsState {
     }
 }
 
+fn append_event_data(data: &mut String, value: &str) -> bool {
+    if data.len() + value.len() > 65_536 {
+        data.clear();
+        return false;
+    }
+    if !data.is_empty() {
+        data.push('\n');
+    }
+    data.push_str(value.strip_prefix(' ').unwrap_or(value));
+    true
+}
+
 pub async fn listen(
     base: String,
     site: u64,
@@ -363,15 +375,10 @@ pub async fn listen(
                         } else if let Some(value) = line.strip_prefix("event:") {
                             event = value.trim().to_owned();
                         } else if let Some(value) = line.strip_prefix("data:") {
-                            if data.len() + value.len() > 65_536 {
-                                data.clear();
+                            if !append_event_data(&mut data, value) {
                                 event.clear();
                                 break;
                             }
-                            if !data.is_empty() {
-                                data.push('\n');
-                            }
-                            data.push_str(value.strip_prefix(' ').unwrap_or(value));
                         }
                     }
                 }
