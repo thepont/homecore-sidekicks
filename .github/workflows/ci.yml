@@ -36,6 +36,12 @@ jobs:
       RUST_TOOLCHAIN: '1.100.0'
     steps:
       - *checkout
+      - name: Check out comparison revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || github.sha }}
+          path: .quality-base
+          persist-credentials: false
       - name: Set up Rust
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
       - name: Check Rust formatting
@@ -56,6 +62,23 @@ jobs:
           fi
           cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path "$MANIFEST" "${args[@]}" --all-targets -- -D warnings
           cargo "+$RUST_TOOLCHAIN" test --locked --manifest-path "$MANIFEST" "${args[@]}"
+      - name: Check Rust readability against the comparison revision
+        run: |
+          args=()
+          if [[ "$SERVICE" == xiaomi ]]; then
+            args+=(--features extractor,postgres)
+          fi
+          lint_args=(-W clippy::too_many_lines -W clippy::excessive_nesting
+            -W clippy::min_ident_chars -W clippy::needless_range_loop
+            -W clippy::unused_enumerate_index)
+          if [[ -f ".quality-base/$MANIFEST" ]]; then
+            (cd ".quality-base/services/$SERVICE" && cargo "+$RUST_TOOLCHAIN" clippy --locked "${args[@]}" --message-format=json --lib --bins -- "${lint_args[@]}") > "$RUNNER_TEMP/clippy-base.jsonl"
+          else
+            printf '%s\n' '{"reason":"build-finished","success":true}' > "$RUNNER_TEMP/clippy-base.jsonl"
+          fi
+          (cd "services/$SERVICE" && cargo "+$RUST_TOOLCHAIN" clippy --locked "${args[@]}" --message-format=json --lib --bins -- "${lint_args[@]}") > "$RUNNER_TEMP/clippy-current.jsonl"
+          cargo "+$RUST_TOOLCHAIN" run --locked --quiet --manifest-path tools/quality-gate/Cargo.toml -- \
+            clippy "$RUNNER_TEMP/clippy-base.jsonl" "$RUNNER_TEMP/clippy-current.jsonl"
       - name: Run Hisense MQTT and HomeCore contracts
         if: matrix.service == 'hisense'
         run: cargo "+$RUST_TOOLCHAIN" test --locked --manifest-path "$MANIFEST" --test core --test mqtt -- --ignored --test-threads=1
@@ -89,3 +112,87 @@ jobs:
           npm test --prefix services/teslemetry/tests/ui
           npm test --prefix services/xiaomi/tests/ui
           NODE_PATH="$PWD/services/teslemetry/tests/ui/node_modules" node --test ui/ac-card/tests/card.test.mjs
+
+  quality:
+    name: Code quality and complexity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUST_TOOLCHAIN: '1.100.0'
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      CCCC_VERSION: '1.9.2'
+      CCCC_SHA256: eb964d5fa9daa8cb557499722865cd89cbd77764485899ddce4e0a5a2cb667a5
+    steps:
+      - *checkout
+      - name: Check out comparison revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || github.sha }}
+          path: .quality-base
+          persist-credentials: false
+      - name: Check out Bluecheese
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: thepont/bluecheese
+          ref: db303b8978b21c6f70f581de0685087025c45103
+          path: .quality-bluecheese
+          persist-credentials: false
+      - name: Set up Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: *node_options
+      - name: Install pinned complexity analyzer
+        run: |
+          archive="$RUNNER_TEMP/cccc.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' \
+            --output "$archive" "https://github.com/moznion/cccc/releases/download/v$CCCC_VERSION/cccc-v$CCCC_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          printf '%s  %s\n' "$CCCC_SHA256" "$archive" | sha256sum --check
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" cccc
+          printf '%s\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Install JavaScript lint dependencies
+        run: npm ci --prefix tools/javascript-quality --ignore-scripts
+      - name: Test quality checks
+        env:
+          CCCC_BIN: ${{ runner.temp }}/cccc
+        run: |
+          cargo "+$RUST_TOOLCHAIN" fmt --manifest-path tools/quality-gate/Cargo.toml --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path tools/quality-gate/Cargo.toml --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" test --locked --manifest-path tools/quality-gate/Cargo.toml
+          cargo "+$RUST_TOOLCHAIN" test --locked --manifest-path tools/quality-gate/Cargo.toml -- --ignored
+      - name: Check JavaScript quality
+        run: |
+          node tools/javascript-quality/node_modules/eslint/bin/eslint.js \
+            --config tools/javascript-quality/eslint.config.mjs \
+            --suppressions-location tools/javascript-quality/eslint-suppressions.json \
+            'services/*/ui/**/*.js' 'ui/**/*.js' --ignore-pattern '**/tests/**'
+      - name: Check complexity against the comparison revision
+        run: |
+          mkdir -p "$RUNNER_TEMP/quality-reports"
+          args=(--lang rust,es --exclude '**/vendor/**' --exclude '**/tests/**' --exclude '**/target/**')
+          (cd .quality-base && cccc "${args[@]}" services crates ui) > "$RUNNER_TEMP/quality-reports/complexity-base.json"
+          cccc "${args[@]}" services crates ui > "$RUNNER_TEMP/quality-reports/complexity-current.json"
+          cargo "+$RUST_TOOLCHAIN" run --locked --quiet --manifest-path tools/quality-gate/Cargo.toml -- \
+            complexity "$RUNNER_TEMP/quality-reports/complexity-base.json" "$RUNNER_TEMP/quality-reports/complexity-current.json"
+      - name: Build Bluecheese
+        run: cargo "+$RUST_TOOLCHAIN" build --locked --manifest-path .quality-bluecheese/Cargo.toml --target-dir "$RUNNER_TEMP/bluecheese-build"
+      - name: Report long methods and duplicate code
+        run: |
+          for smell in dup-code long-method; do
+            "$RUNNER_TEMP/bluecheese-build/debug/bluecheese" -f . -s "$smell" --source-only \
+              -x 'crates/vendor/**' -x 'services/*/vendor/**' -x '**/tests/**' -x 'tools/**' \
+              > "$RUNNER_TEMP/quality-reports/$smell.json" 2> "$RUNNER_TEMP/quality-reports/$smell.log"
+            cat "$RUNNER_TEMP/quality-reports/$smell.log"
+            if grep -q 'partial analysis:' "$RUNNER_TEMP/quality-reports/$smell.log"; then
+              exit 1
+            fi
+            jq -e 'type == "array"' "$RUNNER_TEMP/quality-reports/$smell.json" >/dev/null
+            printf '%s: %s finding groups (details in the quality artifact)\n' "$smell" \
+              "$(jq length "$RUNNER_TEMP/quality-reports/$smell.json")"
+          done
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: code-quality-reports
+          path: ${{ runner.temp }}/quality-reports/
+          if-no-files-found: warn
