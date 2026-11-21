@@ -1496,11 +1496,23 @@ async fn watch_contacts_with_interval(
                         Ok(Ok(refreshed)) => refreshed,
                         _ => break,
                     };
+                    let mut changed = false;
                     for (aid, _) in &state {
-                        if !refreshed.iter().any(|(new, _)| new == aid) && send.try_send((*aid, Value::Null)).is_err() { return; }
+                        if !refreshed.iter().any(|(new, _)| new == aid) {
+                            changed = true;
+                            if send.try_send((*aid, Value::Null)).is_err() { return; }
+                        }
                     }
                     for (aid, value) in &refreshed {
-                        if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) && send.try_send((*aid, value.clone())).is_err() { return; }
+                        if state.iter().find(|(old, _)| old == aid).is_none_or(|(_, old)| old != value) {
+                            changed = true;
+                            if send.try_send((*aid, value.clone())).is_err() { return; }
+                        }
+                    }
+                    if !changed {
+                        if let Some((aid, value)) = refreshed.iter().find(|(_, value)| value.get("_offline").and_then(Value::as_bool) != Some(true)) {
+                            if send.try_send((*aid, value.clone())).is_err() { return; }
+                        }
                     }
                     state = refreshed;
                     continue;

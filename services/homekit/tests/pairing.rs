@@ -511,6 +511,22 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .expect("smoke detector must initially be online");
+    let climate_id = sensors
+        .iter()
+        .find(|(_, state)| state.get("temperature").is_some())
+        .unwrap()
+        .0;
+    let climate_topic = format!("homecore/devices/homekit_021122334455_{climate_id}/state");
+    tokio::time::timeout(Duration::from_secs(6), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == climate_topic {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("unchanged sensor readings must be refreshed");
     let outlet_topic = format!("homecore/devices/homekit_021122334455_{outlet_id}");
     probe
         .client
