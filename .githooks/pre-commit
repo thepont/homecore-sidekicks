@@ -10,7 +10,7 @@ git checkout-index --all --prefix="$staged/"
 if ! docker run --rm --network none --read-only --cap-drop ALL \
     --user "$(id -u):$(id -g)" \
     --mount "type=bind,src=$staged,dst=/scan,readonly" \
-    ghcr.io/trufflesecurity/trufflehog@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a \
+    ghcr.io/trufflesecurity/trufflehog@sha256:8fd07ea46a3f59583c4d50f006d8cf150530141b28969c3c34cc455cb9165a6b \
     filesystem --no-update --no-verification --no-ignore-tag --fail --fail-on-scan-errors /scan \
     >/dev/null 2>&1; then
     printf '%s\n' 'TruffleHog found a possible secret or could not complete the staged scan; commit blocked.' >&2
