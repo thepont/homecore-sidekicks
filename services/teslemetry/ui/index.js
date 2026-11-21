@@ -1,5 +1,6 @@
 // homeCore plugin UI host interface v1. The browser owns rendering and live data.
 const WATTS_PER_KILOWATT = 1000;
+const WATT_HOURS_PER_KILOWATT_HOUR = 1000;
 const powerwallStyle = `
   :host { display:block; min-width:0; container-type:inline-size; color:var(--ink,#20242b); font-family:var(--font,system-ui,sans-serif); }
   * { box-sizing:border-box; }
@@ -451,7 +452,7 @@ function estimateEnergyCost(energyWh, rate, currency) {
   if (typeof energyWh !== 'number' || !Number.isFinite(energyWh) || energyWh < 0 ||
       typeof rate !== 'number' || !Number.isFinite(rate) ||
       typeof currency !== 'string' || !/^[A-Za-z]{3}$/.test(currency)) return undefined;
-  const amount = energyWh / 1000 * rate;
+  const amount = energyWh / WATT_HOURS_PER_KILOWATT_HOUR * rate;
   if (!Number.isFinite(amount)) return undefined;
   return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
 }
