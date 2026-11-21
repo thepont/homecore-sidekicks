@@ -48,56 +48,7 @@ impl Hisense {
                 homecore_bounded_http::BodyReadError::Transfer => "TV response failed",
                 homecore_bounded_http::BodyReadError::TooLarge => "TV response too large",
             })?;
-        let mut reader = Reader::from_reader(bytes.as_slice());
-        let mut within = false;
-        let mut depth = 0usize;
-        let mut roots = 0usize;
-        let mut result = None;
-        loop {
-            match reader.read_event().map_err(|_| "Invalid TV response")? {
-                Event::Start(tag) => {
-                    if depth == 0 {
-                        roots += 1;
-                    }
-                    depth += 1;
-                    if depth > 64 {
-                        return Err("Invalid TV response");
-                    }
-                    if tag.local_name().as_ref() == element {
-                        if within || result.is_some() {
-                            return Err("Ambiguous TV response");
-                        }
-                        within = true;
-                    }
-                }
-                Event::Text(text) if within => {
-                    if result.is_some() {
-                        return Err("Ambiguous TV response");
-                    }
-                    result = Some(
-                        std::str::from_utf8(text.as_ref())
-                            .map_err(|_| "Invalid TV response")?
-                            .trim()
-                            .to_owned(),
-                    );
-                }
-                Event::End(tag) => {
-                    depth = depth.checked_sub(1).ok_or("Invalid TV response")?;
-                    if tag.local_name().as_ref() == element {
-                        within = false;
-                    }
-                }
-                Event::DocType(_) => return Err("Invalid TV response"),
-                Event::Eof => {
-                    if depth != 0 || roots != 1 {
-                        return Err("Invalid TV response");
-                    }
-                    break;
-                }
-                _ => {}
-            }
-        }
-        result.ok_or("Missing TV reading")
+        parse_soap_reading(&bytes, element)
     }
 
     pub async fn read(&self) -> Result<Reading, &'static str> {
@@ -116,6 +67,59 @@ impl Hisense {
         };
         Ok(Reading { volume, muted })
     }
+}
+
+fn parse_soap_reading(bytes: &[u8], element: &[u8]) -> Result<String, &'static str> {
+    let mut reader = Reader::from_reader(bytes);
+    let mut within = false;
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    let mut result = None;
+    loop {
+        match reader.read_event().map_err(|_| "Invalid TV response")? {
+            Event::Start(tag) => {
+                if depth == 0 {
+                    roots += 1;
+                }
+                depth += 1;
+                if depth > 64 {
+                    return Err("Invalid TV response");
+                }
+                if tag.local_name().as_ref() == element {
+                    if within || result.is_some() {
+                        return Err("Ambiguous TV response");
+                    }
+                    within = true;
+                }
+            }
+            Event::Text(text) if within => {
+                if result.is_some() {
+                    return Err("Ambiguous TV response");
+                }
+                result = Some(
+                    std::str::from_utf8(text.as_ref())
+                        .map_err(|_| "Invalid TV response")?
+                        .trim()
+                        .to_owned(),
+                );
+            }
+            Event::End(tag) => {
+                depth = depth.checked_sub(1).ok_or("Invalid TV response")?;
+                if tag.local_name().as_ref() == element {
+                    within = false;
+                }
+            }
+            Event::DocType(_) => return Err("Invalid TV response"),
+            Event::Eof => {
+                if depth != 0 || roots != 1 {
+                    return Err("Invalid TV response");
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+    result.ok_or("Missing TV reading")
 }
 
 pub struct Broker {
