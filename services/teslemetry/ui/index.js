@@ -461,6 +461,10 @@ function estimateEnergyCost(energyWh, rate, currency) {
   return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
 }
 
+function energyTotalsDate(attributes) {
+  return typeof attributes?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(attributes.energy_totals_date) && !Number.isNaN(Date.parse(attributes.energy_totals_date)) && new Date(attributes.energy_totals_date).toISOString().startsWith(attributes.energy_totals_date) ? attributes.energy_totals_date : undefined;
+}
+
 class TeslemetryGrid extends HTMLElement {
   #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
@@ -500,7 +504,7 @@ class TeslemetryGrid extends HTMLElement {
       else void this.#showHistory();
     });
     if (!this.#details) return;
-    const date = typeof attributes?.energy_totals_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(attributes.energy_totals_date) && !Number.isNaN(Date.parse(attributes.energy_totals_date)) && new Date(attributes.energy_totals_date).toISOString().startsWith(attributes.energy_totals_date) ? attributes.energy_totals_date : undefined;
+    const date = energyTotalsDate(attributes);
     const cost = attributes?.tariff_available === true && date ? estimateEnergyCost(attributes.grid_energy_imported_wh, attributes.tariff_buy_price_per_kwh, attributes.tariff_currency) : undefined;
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
