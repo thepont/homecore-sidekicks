@@ -429,6 +429,11 @@ pub async fn run_contact_publisher_with_interval(
 }
 
 /// Publish sensor state and process validated homeCore commands.
+pub struct PublisherRuntime {
+    pub availability_options: rumqttc::MqttOptions,
+    pub tracker: plugin_sdk_rs::DevicePublisher,
+}
+
 pub async fn run_sensor_publisher_with_commands(
     mqtt: rumqttc::AsyncClient,
     plugin: String,
@@ -436,7 +441,7 @@ pub async fn run_sensor_publisher_with_commands(
     state_dir: std::path::PathBuf,
     refresh: std::time::Duration,
     commands: &mut tokio::sync::mpsc::Receiver<(String, Value)>,
-    availability_options: Option<rumqttc::MqttOptions>,
+    runtime: Option<PublisherRuntime>,
 ) -> Result<(), &'static str> {
     if refresh < std::time::Duration::from_secs(1) || refresh > std::time::Duration::from_secs(3600)
     {
@@ -448,14 +453,16 @@ pub async fn run_sensor_publisher_with_commands(
         bridge_id.replace(':', "").to_ascii_lowercase()
     );
     let mut guards = std::collections::HashMap::new();
-    if let Some(options) = &availability_options {
+    let mut tracked = std::collections::HashSet::new();
+    if let Some(runtime) = &runtime {
         for (aid, state) in watch.current() {
             if state.get("_offline").and_then(Value::as_bool) == Some(true) {
                 continue;
             }
             guards.insert(
                 *aid,
-                AvailabilityGuard::start(options.clone(), &prefix, *aid).await?,
+                AvailabilityGuard::start(runtime.availability_options.clone(), &prefix, *aid)
+                    .await?,
             );
         }
     }
@@ -467,6 +474,9 @@ pub async fn run_sensor_publisher_with_commands(
         }
     }
     publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+    if let Some(runtime) = &runtime {
+        track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+    }
     for item in watch.current() {
         contact_availability(
             &mqtt,
@@ -493,14 +503,22 @@ pub async fn run_sensor_publisher_with_commands(
         if update.1.get("_offline").and_then(Value::as_bool) == Some(true) {
             guards.remove(&update.0);
             publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+            if let Some(runtime) = &runtime {
+                track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+            }
             contact_availability(&mqtt, &bridge_id, &[update], false).await?;
             continue;
         }
         if !guards.contains_key(&update.0) {
-            if let Some(options) = &availability_options {
+            if let Some(runtime) = &runtime {
                 guards.insert(
                     update.0,
-                    AvailabilityGuard::start(options.clone(), &prefix, update.0).await?,
+                    AvailabilityGuard::start(
+                        runtime.availability_options.clone(),
+                        &prefix,
+                        update.0,
+                    )
+                    .await?,
                 );
             }
         }
@@ -513,10 +531,53 @@ pub async fn run_sensor_publisher_with_commands(
             .map_err(|_| "Cannot subscribe to outlet commands")?;
         }
         publish_sensors(&mqtt, &plugin, &bridge_id, watch.current()).await?;
+        if let Some(runtime) = &runtime {
+            track_devices(&runtime.tracker, &bridge_id, watch.current(), &mut tracked).await?;
+        }
         contact_availability(&mqtt, &bridge_id, &[update], true).await?;
     }
     contact_availability(&mqtt, &bridge_id, watch.current(), false).await?;
     Err("HomeKit contact stream stopped")
+}
+
+async fn track_devices(
+    tracker: &plugin_sdk_rs::DevicePublisher,
+    bridge_id: &str,
+    readings: &[(u64, Value)],
+    tracked: &mut std::collections::HashSet<u64>,
+) -> Result<(), &'static str> {
+    let bridge = bridge_id.replace(':', "").to_ascii_lowercase();
+    for (aid, state) in readings {
+        if tracked.contains(aid) {
+            continue;
+        }
+        let (kind, label) = if let Some(kind) = state.get("_type").and_then(Value::as_str) {
+            (kind, "device")
+        } else if state.get("open").is_some() {
+            ("contact_sensor", "contact")
+        } else if state.get("on").is_some() {
+            ("switch", "outlet")
+        } else if state.get("smoke").is_some() {
+            ("smoke_sensor", "smoke detector")
+        } else if state.get("temperature").is_some() || state.get("humidity").is_some() {
+            ("temperature_sensor", "climate")
+        } else {
+            return Err("Invalid sensor state");
+        };
+        let id = format!("homekit_{bridge}_{aid}");
+        tracker
+            .register_device_full(
+                &id,
+                &format!("HomeKit {label} {aid}"),
+                Some(kind),
+                None,
+                None,
+            )
+            .await
+            .map_err(|_| "Cannot track device")?;
+        tracked.insert(*aid);
+    }
+    Ok(())
 }
 
 struct AvailabilityGuard(tokio::task::JoinHandle<()>);

@@ -53,13 +53,25 @@ async fn run() -> Result<(), &'static str> {
     if !(1..=3600).contains(&refresh) {
         return Err("Invalid refresh interval");
     }
-    let management = homecore_homekit::setup::run(
-        host.clone(),
-        port,
-        username.clone(),
-        password.to_owned(),
-        state_dir.clone(),
-        ui,
+    let heartbeat = env::var("HOMEKIT_HEARTBEAT_SECS")
+        .unwrap_or_else(|_| "30".into())
+        .parse::<u64>()
+        .map_err(|_| "Invalid heartbeat interval")?;
+    if !(1..=3600).contains(&heartbeat) {
+        return Err("Invalid heartbeat interval");
+    }
+    let (tracker_tx, tracker_rx) = tokio::sync::oneshot::channel();
+    let management = homecore_homekit::setup::run_with_tracking(
+        homecore_homekit::setup::ManagementConfig {
+            host: host.clone(),
+            port,
+            id: username.clone(),
+            password: password.to_owned(),
+            state_dir: state_dir.clone(),
+            ui,
+        },
+        heartbeat,
+        tracker_tx,
     );
     let mut options = MqttOptions::new(format!("{plugin}-publisher"), host, port);
     options.set_credentials(username, password);
@@ -90,6 +102,7 @@ async fn run() -> Result<(), &'static str> {
         }
     });
     let publisher = async move {
+        let tracker = tracker_rx.await.map_err(|_| "Device tracker unavailable")?;
         loop {
             while !*connection.borrow_and_update() {
                 if connection.changed().await.is_err() {
@@ -109,7 +122,7 @@ async fn run() -> Result<(), &'static str> {
                 continue;
             };
             tokio::select! {
-            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx, Some(availability_options.clone())) => {
+            _ = homecore_homekit::run_sensor_publisher_with_commands(mqtt.clone(), plugin.clone(), bridge_id, state_dir.clone(), Duration::from_secs(refresh), &mut command_rx, Some(homecore_homekit::PublisherRuntime { availability_options: availability_options.clone(), tracker: tracker.clone() })) => {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
                 _ = connection.changed() => {}

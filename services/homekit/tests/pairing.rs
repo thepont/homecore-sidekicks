@@ -478,6 +478,7 @@ async fn reads_each_contact_from_a_bridge_independently() {
             .env("MQTT_PASSWORD_FILE", password_file)
             .env("HOMEKIT_PLUGIN_ID", "plugin.homekit")
             .env("HOMEKIT_REFRESH_SECS", "1")
+            .env("HOMEKIT_HEARTBEAT_SECS", "1")
             .env("HOMEKIT_STATE_DIR", &state_root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -511,6 +512,20 @@ async fn reads_each_contact_from_a_bridge_independently() {
     })
     .await
     .expect("smoke detector must initially be online");
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let msg = probe.messages.recv().await.unwrap();
+            if msg.topic == "homecore/plugins/fixture-user/heartbeat"
+                && serde_json::from_slice::<serde_json::Value>(&msg.payload).unwrap()
+                    ["device_count"]
+                    == 6
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("management heartbeat must count all six discovered devices");
     let climate_id = sensors
         .iter()
         .find(|(_, state)| state.get("temperature").is_some())
