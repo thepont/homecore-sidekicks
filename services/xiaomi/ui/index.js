@@ -15,19 +15,30 @@ class XiaomiSetup extends HTMLElement {
     let result;try{result=await this.#host.action('sign_in_status');}catch{return;}
     if(generation!==this.#generation || !this.isConnected || !result?.ok)return;
     this.#showAccess(result.data);
-    const qr=result.data?.qr_png;
-    if(result.data?.setup_status==='waiting' && typeof qr==='string' && qr.length<=262144 && qr.startsWith('iVBORw0KGgo') && /^[A-Za-z0-9+/]+={0,2}$/.test(qr)) {
-      const image=document.createElement('img');image.alt='Mi Home sign-in QR code';image.src=`data:image/png;base64,${qr}`;
-      this.shadowRoot.querySelector('.qr').replaceChildren(image);
-      this.shadowRoot.querySelector('button').disabled=true;
-      this.shadowRoot.querySelector('.status').textContent='Scan this code with Mi Home.';
-      this.#timer=setTimeout(()=>void this.#check(generation),1500);return;
+    const qr=result.data?.setup_status==='waiting' ? this.#qrImage(result.data.qr_png) : null;
+    if(qr) {
+      this.#showQr(qr,generation);
+      return;
     }
     if(result.data?.setup_status==='gateway_saved') {
       this.shadowRoot.querySelector('button').textContent='Sign in again';
       this.shadowRoot.querySelector('.status').textContent='Gateway saved. Connection needs verification.';
     }
     if(result.data?.setup_status==='devices_found') this.#showDevices(result.data.devices);
+  }
+  #qrImage(qr) {
+    if(typeof qr!=='string' || qr.length>262144 || !qr.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(qr)) return null;
+    const image=document.createElement('img');
+    image.alt='Mi Home sign-in QR code';
+    image.src=`data:image/png;base64,${qr}`;
+    return image;
+  }
+  #showQr(image,generation) {
+    this.shadowRoot.querySelector('.qr').replaceChildren(image);
+    const button=this.shadowRoot.querySelector('button');
+    if(!button.disabled) button.disabled=true;
+    this.shadowRoot.querySelector('.status').textContent='Scan this code with Mi Home.';
+    this.#timer=setTimeout(()=>void this.#check(generation),1500);
   }
   #showAccess(data) {
     const devices=Array.isArray(data?.known_devices) ? data.known_devices.filter(device=>
@@ -151,15 +162,12 @@ class XiaomiSetup extends HTMLElement {
     button.disabled=true;status.textContent='Preparing sign-in…';
     let result;try{result=await this.#host.action('begin_sign_in',{region:this.shadowRoot.querySelector('#region').value});}catch{result=undefined;}
     if(generation!==this.#generation || !this.isConnected)return;
-    const data=result?.ok ? result.data?.qr_png : undefined;
-    if(typeof data!=='string' || data.length>262144 || !data.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    const qr=result?.ok ? this.#qrImage(result.data?.qr_png) : null;
+    if(!qr) {
       status.textContent='Could not start sign-in. Try again.';button.disabled=false;return;
     }
     this.shadowRoot.querySelector('.devices').hidden=true;
-    const image=document.createElement('img');image.alt='Mi Home sign-in QR code';image.src=`data:image/png;base64,${data}`;
-    this.shadowRoot.querySelector('.qr').replaceChildren(image);
-    status.textContent='Scan this code with Mi Home.';
-    this.#timer=setTimeout(()=>void this.#check(generation),1500);
+    this.#showQr(qr,generation);
   }
   async #check(generation) {
     let result;try{result=await this.#host.action('sign_in_status');}catch{result=undefined;}
