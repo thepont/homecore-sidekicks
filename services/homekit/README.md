@@ -23,7 +23,15 @@ required:
 npm ci --prefix tests/hap --ignore-scripts
 HAP_NODE_BIN=node cargo test --locked --test pairing
 cargo test --locked --test contact
+cargo fmt --package homecore-homekit -- --check
+cargo clippy --locked --all-targets -- -D warnings
 ```
+
+Enable the repository hook with `git config core.hooksPath .githooks` from the
+repository root. When HomeKit Rust files, its manifest, lockfile or vendored
+transport change, the hook checks formatting and Clippy against the staged
+snapshot. Install the Rust `rustfmt` and `clippy` components first. The hook
+also runs the repository's staged secret scan.
 
 The local `hap-transport` patch and its upstream source are documented in
 [vendor/hap-transport/PATCH.md](vendor/hap-transport/PATCH.md). Pairing uses a
