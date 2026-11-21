@@ -747,24 +747,28 @@ class AcCard extends HTMLElement {
     }
   }
 
+  #renderTargetRow({ row, buttons }, model, schema, scale, controls) {
+    const slot = row.dataset.target;
+    const target = model.targets[slot];
+    const visible = model.available && target?.value !== undefined;
+    const spec = schema?.[target?.key];
+    show(row, visible && (slot !== 'single' || spec?.writable === true));
+    const control = visible ? targetControl(target, spec, model) : undefined;
+    if (control) {
+      controls[slot] = control;
+      scale.min = Math.min(scale.min, spec.min);
+      scale.max = Math.max(scale.max, spec.max);
+    }
+    this.#renderTargetButtons(buttons, spec, target, control);
+  }
+
   #renderTargets(model, schema) {
     const { available, targets, gap, room } = model;
     const view = this.#view;
     const controls = {};
     const scale = { ...defaultScale };
-    for (const { row, buttons } of view.targets) {
-      const slot = row.dataset.target;
-      const target = targets[slot];
-      const visible = available && target?.value !== undefined;
-      const spec = schema?.[target?.key];
-      show(row, visible && (slot !== 'single' || spec?.writable === true));
-      const control = visible ? targetControl(target, spec, model) : undefined;
-      if (control) {
-        controls[slot] = control;
-        scale.min = Math.min(scale.min, spec.min);
-        scale.max = Math.max(scale.max, spec.max);
-      }
-      this.#renderTargetButtons(buttons, spec, target, control);
+    for (const targetRow of view.targets) {
+      this.#renderTargetRow(targetRow, model, schema, scale, controls);
     }
     this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
       restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
