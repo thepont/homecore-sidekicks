@@ -608,14 +608,14 @@ class TeslemetryCombined extends HTMLElement {
     const points=series.flat().sort(compareHistoryTimes);
     const target=this.shadowRoot.querySelector('.graph');target.textContent='';
     if(points.length<2 || !series.some(rows=>rows.length>=2)){target.textContent='Not enough history yet';return;}
-    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(p=>p.value),min=Math.min(...values),max=Math.max(...values);
+    const start=Date.parse(points[0].at),end=Date.parse(points.at(-1).at),values=points.map(point=>point.value),min=Math.min(...values),max=Math.max(...values);
     if(end===start){target.textContent='Not enough history yet';return;}
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 300 110');svg.setAttribute('role','img');svg.setAttribute('aria-label','Combined power history');
     renderTariffBands(svg,all[4],points);
-    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(p=>`${(Date.parse(p.at)-start)*300/(end-start)},${95-(p.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
+    series.forEach((rows,i)=>{if(rows.length<2)return;const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('stroke',combinedSeries[i].color);line.setAttribute('points',rows.map(point=>`${(Date.parse(point.at)-start)*300/(end-start)},${95-(point.value-min)/(max-min||1)*80}`).join(' '));svg.append(line);});
     target.append(svg);
     const range=document.createElement('div');range.className='note';range.textContent=`${Number((min / WATTS_PER_KILOWATT).toFixed(2))}–${Number((max / WATTS_PER_KILOWATT).toFixed(2))} kW`;
-    const dates=document.createElement('div');dates.className='note';const show=v=>new Date(v).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
+    const dates=document.createElement('div');dates.className='note';const show=value=>new Date(value).toLocaleString('en-AU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});dates.textContent=`${show(points[0].at)} – ${show(points.at(-1).at)}`;
     target.append(range,dates);
   }
 }

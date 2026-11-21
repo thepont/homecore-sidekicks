@@ -3,9 +3,6 @@
     "complexity": {
       "count": 2
     },
-    "id-length": {
-      "count": 3
-    },
     "no-magic-numbers": {
       "count": 40
     }
