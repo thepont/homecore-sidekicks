@@ -94,6 +94,10 @@ function tariffPeriodLabel(price, period) {
     ? period.replaceAll('_', ' ').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '';
 }
 
+function validTariffPrice(raw, active) {
+  return active && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
+
 class TeslemetryCard extends HTMLElement {
   #host;
   #deviceId;
@@ -270,7 +274,7 @@ class TeslemetryCard extends HTMLElement {
     const missing = [];
     for (const tariff of this.#view.tariffs) {
       const raw = attributes?.[`tariff_${tariff.side}_price_per_kwh`];
-      const price = active && typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+      const price = validTariffPrice(raw, active);
       // Rates are already currency units/kWh. Preserve source precision, including zero and negatives.
       tariff.rate.textContent = price === undefined ? '—' : `${price} ${currency ?? ''}/kWh`;
       const period = attributes?.[`tariff_${tariff.side}_period`];
