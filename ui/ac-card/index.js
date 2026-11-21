@@ -299,23 +299,23 @@ function readTemperatureTargets(attributes, mode) {
 }
 
 function climateOf(device) {
-  const a = record(device?.attributes);
-  const mode = lookup(modes, a.hvac_mode) ? a.hvac_mode : undefined;
-  const room = temperature(a.temperature);
-  const { targets, targetsByKey } = readTemperatureTargets(a, mode);
-  let activity = mode === 'off' ? 'Off' : lookup(activities, a.hvac_action);
+  const attributes = record(device?.attributes);
+  const mode = lookup(modes, attributes.hvac_mode) ? attributes.hvac_mode : undefined;
+  const room = temperature(attributes.temperature);
+  const { targets, targetsByKey } = readTemperatureTargets(attributes, mode);
+  let activity = mode === 'off' ? 'Off' : lookup(activities, attributes.hvac_action);
   if (mode === 'heat' || mode === 'auto') {
-    activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, a.sub_mode) ?? activity;
+    activity = lookup({ defrost: 'Defrosting', preheat: 'Preheating', standby: 'Standby' }, attributes.sub_mode) ?? activity;
   }
   if (room !== undefined) activity ??= lookup(modes, mode);
   return { available: device?.available === true, mode, activity, room,
-    gap: number(a.min_setpoint_gap) >= 0 && a.min_setpoint_gap <= 30 ? a.min_setpoint_gap : 0,
+    gap: number(attributes.min_setpoint_gap) >= 0 && attributes.min_setpoint_gap <= 30 ? attributes.min_setpoint_gap : 0,
     targets, targetsByKey, reported: { hvac_mode: mode,
-      ...Object.fromEntries(airflow.map(({ key }) => [key, choice(a[key])])) },
-    unsupportedAirflow: new Set(airflow.filter(({ capability }) => capability && a[capability] === false)
+      ...Object.fromEntries(airflow.map(({ key }) => [key, choice(attributes[key])])) },
+    unsupportedAirflow: new Set(airflow.filter(({ capability }) => capability && attributes[capability] === false)
       .map(field => field.key)),
     diagnostics: Object.fromEntries(diagnostics.map(({ key }) => [key,
-      key === 'outside_temperature' ? temperature(a[key]) : number(a[key])])) };
+      key === 'outside_temperature' ? temperature(attributes[key]) : number(attributes[key])])) };
 }
 
 function targetControl(target, spec, model) {
