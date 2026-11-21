@@ -1,5 +1,4 @@
-#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
-mod mqtt_broker;
+use homecore_test_support::mqtt_broker;
 use homecore_xiaomi::{login::Provider, setup::Setup, store::Store};
 use rumqttc::QoS;
 use serde_json::{json, Value};

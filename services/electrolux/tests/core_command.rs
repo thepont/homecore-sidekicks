@@ -1,5 +1,4 @@
-#[path = "support/homecore.rs"]
-mod homecore;
+use homecore_test_support::homecore;
 use rbroadlink::{network::CommandMessage, traits::CommandTrait};
 use serde_json::{json, Value};
 use std::{
@@ -29,7 +28,7 @@ impl Drop for Owned {
 #[tokio::test]
 #[ignore = "requires Docker and pinned homeCore image"]
 async fn homecore_api_power_command_changes_reported_device_state() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.electrolux.living_room").await;
     let server = UdpSocket::bind("127.0.0.1:0").unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(12)))
@@ -139,7 +138,7 @@ async fn homecore_api_power_command_changes_reported_device_state() {
 #[tokio::test]
 #[ignore = "requires Docker and pinned homeCore image"]
 async fn homecore_discovers_and_fetches_the_electrolux_ac_card() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.electrolux.living_room").await;
     let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/ac-card");
     let _adapter = Owned(
         Command::new(env!("CARGO_BIN_EXE_electrolux-bridge"))

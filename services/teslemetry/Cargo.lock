@@ -296,7 +296,20 @@ dependencies = [
  "chrono-tz",
  "futures-util",
  "homecore-plugin-ui",
+ "homecore-test-support",
  "libc",
+ "reqwest",
+ "ring",
+ "rumqttc",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "homecore-test-support"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
  "reqwest",
  "ring",
  "rumqttc",

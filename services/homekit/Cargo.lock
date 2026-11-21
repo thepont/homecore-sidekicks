@@ -750,6 +750,7 @@ dependencies = [
  "hap-crypto",
  "hap-pairing",
  "hap-transport",
+ "homecore-test-support",
  "plugin-sdk-rs",
  "reqwest",
  "ring",
@@ -760,6 +761,18 @@ dependencies = [
  "tokio-stream",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "homecore-test-support"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "reqwest",
+ "ring",
+ "rumqttc",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

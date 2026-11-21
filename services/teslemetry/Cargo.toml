@@ -21,5 +21,6 @@ libc = "=0.2.191"
 chrono-tz = "=0.10.4"
 
 [dev-dependencies]
+homecore-test-support = { path = "../../crates/test-support" }
 axum = "=0.8.8"
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }

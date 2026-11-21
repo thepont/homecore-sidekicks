@@ -1,6 +1,4 @@
-#[allow(dead_code)]
-#[path = "../../electrolux/tests/support/homecore.rs"]
-mod homecore;
+use homecore_test_support::homecore;
 use axum::{http::HeaderMap, routing::post, Router};
 use homecore_hisense::{run, Broker, Hisense};
 use std::time::Duration;
@@ -9,7 +7,7 @@ use tokio::net::TcpListener;
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
 async fn homecore_exposes_the_tv_as_a_read_only_media_player() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.electrolux.living_room").await;
     async fn response(headers: HeaderMap) -> &'static str {
         if headers
             .get("soapaction")

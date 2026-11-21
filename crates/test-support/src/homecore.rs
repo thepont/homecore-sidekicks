@@ -7,7 +7,6 @@ use tokio::task::JoinHandle;
 
 const IMAGE: &str = "ghcr.io/homecore-io/hc-core@sha256:cb336921beffbb0751737cb21f8586bd3418ee10dd2c2126e8a2cd060884664f";
 
-#[allow(dead_code)]
 pub struct RegistryPackage<'a> {
     pub archive: &'a std::path::Path,
     pub id: &'a str,
@@ -40,15 +39,10 @@ impl Drop for Core {
 }
 
 impl Core {
-    pub async fn start() -> Self {
-        Self::start_for_plugin("plugin.teslemetry-powerwall").await
-    }
-
     pub async fn start_for_plugin(plugin: &str) -> Self {
         Self::start_fixture(Some(plugin), None).await
     }
 
-    #[allow(dead_code)]
     pub async fn start_with_registry(package: RegistryPackage<'_>) -> Self {
         Self::start_fixture(None, Some(package)).await
     }
@@ -170,10 +164,15 @@ level = "error"
         self.anonymous_get(path).bearer_auth(&self.token)
     }
 
-    #[allow(dead_code)]
     pub fn post(&self, path: &str) -> RequestBuilder {
         self.http
             .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+    }
+
+    pub fn patch(&self, path: &str) -> RequestBuilder {
+        self.http
+            .patch(format!("{}{path}", self.base))
             .bearer_auth(&self.token)
     }
 

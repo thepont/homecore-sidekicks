@@ -1,6 +1,4 @@
-#[allow(dead_code)]
-#[path = "support/mqtt_broker.rs"]
-mod mqtt_broker;
+use homecore_test_support::mqtt_broker;
 use std::{
     env, fs,
     path::PathBuf,

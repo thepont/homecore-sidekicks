@@ -1,6 +1,4 @@
-#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
-#[allow(dead_code)]
-mod mqtt_broker;
+use homecore_test_support::mqtt_broker;
 use serde_json::{json, Value};
 use std::time::Duration;
 

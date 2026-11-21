@@ -1,5 +1,4 @@
-#[path = "../../teslemetry/tests/support/homecore.rs"]
-mod homecore;
+use homecore_test_support::homecore;
 use serde_json::{json, Value};
 use std::{
     process::{Child, Command, Stdio},
@@ -16,7 +15,7 @@ impl Drop for Service {
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
 async fn core_serves_the_unconfigured_setup_page_to_an_authenticated_user() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.teslemetry-powerwall").await;
     let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     let _service = Service(
         Command::new(env!("CARGO_BIN_EXE_homecore-xiaomi"))

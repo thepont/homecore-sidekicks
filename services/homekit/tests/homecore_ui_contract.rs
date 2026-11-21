@@ -1,6 +1,4 @@
-#[path = "../../teslemetry/tests/support/homecore.rs"]
-#[allow(dead_code)]
-mod homecore;
+use homecore_test_support::homecore;
 use serde_json::Value;
 use std::{
     process::{Child, Command, Stdio},
@@ -151,7 +149,7 @@ async fn installs_the_signed_homekit_package_and_serves_its_setup_page() {
 #[tokio::test]
 #[ignore = "requires Docker and the pinned homeCore image"]
 async fn authenticated_homecore_offers_the_unconfigured_setup_screen() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.teslemetry-powerwall").await;
     let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui");
     let state = core.root.join("homekit");
     std::fs::create_dir(&state).unwrap();

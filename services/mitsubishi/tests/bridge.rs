@@ -1,6 +1,4 @@
-#[allow(dead_code)]
-#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
-mod mqtt_broker;
+use homecore_test_support::{homecore, mqtt_broker};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{SinkExt, StreamExt};
@@ -968,13 +966,11 @@ async fn paired_sensors_are_independent_devices_and_withdraw_stale_readings() {
     .await;
 }
 
-#[path = "support/homecore.rs"]
-mod homecore;
 
 #[tokio::test]
 #[ignore = "requires Docker and pinned homeCore image"]
 async fn paired_sensor_is_registered_with_real_homecore() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.mitsubishi.room_a").await;
     let mut data = snapshot(22.0, 23.0, "heat");
     data["bleEnabled"] = json!(true);
     data["bleSensors"] =

@@ -8,9 +8,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
-#[path = "../../teslemetry/tests/support/mqtt_broker.rs"]
-#[allow(dead_code)]
-mod mqtt_broker;
+use homecore_test_support::mqtt_broker;
 
 struct Fixture {
     child: Child,

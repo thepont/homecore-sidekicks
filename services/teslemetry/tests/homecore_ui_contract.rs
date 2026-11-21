@@ -1,5 +1,4 @@
-#[path = "support/homecore.rs"]
-mod homecore;
+use homecore_test_support::homecore;
 mod support;
 
 use axum::{routing::get, Json, Router};
@@ -37,7 +36,7 @@ async fn homecore_fetches_the_owned_card_through_its_authenticated_ui_endpoint()
 }
 
 async fn verify() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.teslemetry-powerwall").await;
     let count = Arc::new(AtomicUsize::new(0));
     let requests = count.clone();
     let polled = Arc::new(tokio::sync::Notify::new());

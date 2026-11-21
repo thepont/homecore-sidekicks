@@ -1,5 +1,4 @@
-#[path = "support/homecore.rs"]
-mod homecore;
+use homecore_test_support::homecore;
 
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 use serde_json::{json, Value};
@@ -26,7 +25,7 @@ async fn device(core: &homecore::Core, expected_type: &str) -> Value {
 #[tokio::test]
 #[ignore = "requires Docker and pinned homeCore image"]
 async fn reregistration_updates_type_without_losing_identity_or_area() {
-    let core = homecore::Core::start().await;
+    let core = homecore::Core::start_for_plugin("plugin.mitsubishi.room_a").await;
     let mut options = MqttOptions::new("registration-contract", "127.0.0.1", core.mqtt_port);
     options.set_credentials(
         "plugin.mitsubishi.room_a",
