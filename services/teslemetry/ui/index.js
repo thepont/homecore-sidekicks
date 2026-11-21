@@ -342,9 +342,9 @@ async function readTariffPeriods(host) {
 function renderTariffBands(svg, records, points) {
   const start = Date.parse(points[0].at), end = Date.parse(points.at(-1).at);
   if (end <= start) return;
-  const periods = records.filter(p => typeof p?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(p.value) && Number.isFinite(Date.parse(p.at)))
-    .sort((a,b) => Date.parse(a.at) - Date.parse(b.at))
-    .filter((p, i, all) => i === 0 || p.value !== all[i - 1].value);
+  const periods = records.filter(record => typeof record?.value === 'string' && /^[a-zA-Z0-9_ -]{1,32}$/.test(record.value) && Number.isFinite(Date.parse(record.at)))
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
+    .filter((period, i, all) => i === 0 || period.value !== all[i - 1].value);
   for (let i = 0; i < periods.length; i++) {
     const from = Math.max(start, Date.parse(periods[i].at));
     const until = Math.min(end, i + 1 < periods.length ? Date.parse(periods[i + 1].at) : end);
