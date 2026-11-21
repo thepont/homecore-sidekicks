@@ -71,6 +71,31 @@ fn minute(value: &Value, prefix: &str) -> Option<u32> {
     (total <= 1440 && (prefix == "to" || total < 1440)).then_some(total)
 }
 
+fn season_windows(value: &Value) -> Option<Vec<Window>> {
+    let groups = value.get("tou_periods")?.as_object()?;
+    if groups.len() > 128 {
+        return None;
+    }
+    let mut windows = Vec::new();
+    for (period_name, group) in groups {
+        let periods = group.get("periods")?.as_array()?;
+        if periods.len() > 128 || windows.len() + periods.len() > 512 {
+            return None;
+        }
+        for period in periods {
+            period.as_object()?;
+            windows.push(Window {
+                name: text(&Value::String(period_name.clone()))?,
+                from_day: number(period, "fromDayOfWeek", 0, 6)?,
+                to_day: number(period, "toDayOfWeek", 0, 6)?,
+                from_minute: minute(period, "from")?,
+                to_minute: minute(period, "to")?,
+            });
+        }
+    }
+    Some(windows)
+}
+
 fn seasons(value: &Value) -> Option<Vec<Season>> {
     let values = value.as_object()?;
     if values.len() > 16 {
@@ -81,27 +106,7 @@ fn seasons(value: &Value) -> Option<Vec<Season>> {
         if value.as_object()?.is_empty() {
             continue;
         }
-        let groups = value.get("tou_periods")?.as_object()?;
-        if groups.len() > 128 {
-            return None;
-        }
-        let mut windows = Vec::new();
-        for (period_name, group) in groups {
-            let periods = group.get("periods")?.as_array()?;
-            if periods.len() > 128 || windows.len() + periods.len() > 512 {
-                return None;
-            }
-            for period in periods {
-                period.as_object()?;
-                windows.push(Window {
-                    name: text(&Value::String(period_name.clone()))?,
-                    from_day: number(period, "fromDayOfWeek", 0, 6)?,
-                    to_day: number(period, "toDayOfWeek", 0, 6)?,
-                    from_minute: minute(period, "from")?,
-                    to_minute: minute(period, "to")?,
-                });
-            }
-        }
+        let windows = season_windows(value)?;
         seasons.push(Season {
             name: text(&Value::String(name.clone()))?,
             from: month_day(value, "from")?,

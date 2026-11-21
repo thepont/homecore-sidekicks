@@ -1,0 +1,109 @@
+//! Electrolux JSON commands inside the Broadlink encrypted transport.
+use serde_json::Value;
+
+fn checksum(data: &[u8]) -> u16 {
+    data.iter()
+        .fold(0xc0adu16, |sum, byte| sum.wrapping_add(u16::from(*byte)))
+}
+
+fn finish_frame(mut frame: Vec<u8>) -> Vec<u8> {
+    let sum = checksum(&frame[8..]);
+    frame[6..8].copy_from_slice(&sum.to_le_bytes());
+    frame
+}
+
+pub fn status_request() -> Vec<u8> {
+    let mut frame = vec![0x0e, 0, 0xa5, 0xa5, 0x5a, 0x5a, 0, 0, 1, 0x0b, 2, 0, 0, 0];
+    frame.extend_from_slice(b"{}");
+    finish_frame(frame)
+}
+
+pub fn parse_status_response(frame: &[u8]) -> Result<Value, &'static str> {
+    if frame.len() < 14 || frame.len() > 8192 {
+        return Err("Invalid Electrolux response");
+    }
+    let expected = u16::from_le_bytes([frame[6], frame[7]]);
+    if checksum(&frame[8..]) != expected {
+        return Err("Invalid Electrolux checksum");
+    }
+    let length = u16::from_le_bytes([frame[10], frame[11]]) as usize;
+    let payload = frame
+        .get(14..14 + length)
+        .ok_or("Invalid Electrolux response")?;
+    serde_json::from_slice(payload).map_err(|_| "Invalid Electrolux response")
+}
+
+fn control_frame(command: u8, data: &[u8]) -> Vec<u8> {
+    let mut frame = vec![
+        command,
+        0,
+        0xa5,
+        0xa5,
+        0x5a,
+        0x5a,
+        0,
+        0,
+        2,
+        0x0b,
+        data.len() as u8,
+        0,
+        0,
+        0,
+    ];
+    frame.extend_from_slice(data);
+    finish_frame(frame)
+}
+
+pub fn power_request(on: bool) -> Result<Vec<u8>, &'static str> {
+    let data: &[u8] = if on {
+        br#"{"ac_pwr":1}"#
+    } else {
+        br#"{"ac_pwr":0}"#
+    };
+    Ok(control_frame(0x18, data))
+}
+
+pub fn temperature_request(temperature: u8) -> Result<Vec<u8>, &'static str> {
+    if temperature > 40 {
+        return Err("Invalid temperature");
+    }
+    let data = format!("{{\"temp\":{temperature}}}");
+    Ok(control_frame(0x17, data.as_bytes()))
+}
+
+pub fn mode_request(mode: &str) -> Result<Vec<u8>, &'static str> {
+    let code = match mode {
+        "cool" => 0,
+        "heat" => 1,
+        "dry" => 2,
+        "fan_only" => 3,
+        "auto" => 4,
+        "heat_cool" => 6,
+        _ => return Err("Invalid mode"),
+    };
+    let data = format!("{{\"ac_mode\":{code}}}");
+    Ok(control_frame(0x19, data.as_bytes()))
+}
+
+pub fn fan_request(fan: &str) -> Result<Vec<u8>, &'static str> {
+    let code = match fan {
+        "auto" => 0,
+        "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        "turbo" => 4,
+        "quiet" => 5,
+        _ => return Err("Invalid fan"),
+    };
+    let data = format!("{{\"ac_mark\":{code}}}");
+    Ok(control_frame(0x19, data.as_bytes()))
+}
+
+pub fn swing_request(enabled: bool) -> Result<Vec<u8>, &'static str> {
+    let data: &[u8] = if enabled {
+        br#"{"ac_vdir":1}"#
+    } else {
+        br#"{"ac_vdir":0}"#
+    };
+    Ok(control_frame(0x19, data))
+}

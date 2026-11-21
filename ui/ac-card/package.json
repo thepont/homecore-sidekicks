@@ -1,0 +1,9 @@
+{
+  "name": "@homecore/ac-card",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared homeCore air conditioner card and panel bundle",
+  "files": ["index.js", "manifest.json", "README.md"],
+  "exports": "./index.js"
+}

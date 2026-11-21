@@ -1,10 +1,10 @@
-# Mitsubishi CN105 telemetry for homeCore
+# Mitsubishi CN105 for homeCore
 
-`mitsubishi-bridge` 0.1.0 reads one or more controllers running
+`mitsubishi-bridge` 0.2.0 connects to one or more controllers running
 [`mitsubishi-cn105-homekit`](https://github.com/akifbayram/mitsubishi-cn105-homekit)
-and publishes their available telemetry to homeCore. Each AC appears as a separate read-only
-sensor device. It reads the controller directly, so Home Assistant is not
-required. Existing HomeKit pairings can remain in place.
+and connects them to HomeCore. Each AC has its own controls, telemetry
+and diagnostics. The bridge connects directly to the controllers and
+works alongside existing HomeKit pairings.
 
 The supported source is **mitsubishi-cn105-homekit v0.2.8**, including Serin's
 builds of that firmware. Serin's ESPHome and Matter builds use different
@@ -15,7 +15,7 @@ Govee temperature, humidity and battery levels. They did not supply electricity
 consumption; outside temperature and error code were `null` on those units.
 The final bridge was also checked against an isolated homeCore instance: all
 four devices registered, with 83–92 available attributes per unit in that
-snapshot, and every attribute was read-only.
+snapshot.
 
 ## Configure and run
 
@@ -79,9 +79,9 @@ reach a pod's loopback broker through the host's `127.0.0.1`.
 
 [Dockerfile.mitsubishi](../../deploy/Dockerfile.mitsubishi) uses the same scratch
 runtime approach as the existing Teslemetry image. It takes the **repository
-root** as its build context and copies only the release executable and a staged
-tree of its shared libraries. It does not compile Rust inside Docker or require
-a Node runtime.
+root** as its build context and copies the release executable, a staged
+tree of its shared libraries, and the [shared AC card](../../ui/ac-card/README.md).
+It does not compile Rust inside Docker or require a Node runtime.
 
 On the Linux build host, build the release binary, then stage its runtime
 libraries. These Bash commands operate only on ignored build output:
@@ -100,7 +100,8 @@ ldd services/mitsubishi/target/release/mitsubishi-bridge \
 tar -cf - deploy/Dockerfile.mitsubishi \
   services/mitsubishi/target/release/mitsubishi-bridge \
   services/mitsubishi/target/container-runtime \
-  | docker build -f deploy/Dockerfile.mitsubishi -t homecore-mitsubishi:0.1.0 -
+  ui/ac-card/manifest.json ui/ac-card/index.js \
+  | docker build -f deploy/Dockerfile.mitsubishi -t homecore-mitsubishi:0.2.0 -
 ```
 
 Build on Linux for the target CPU architecture. The ELF loader and libraries
@@ -123,13 +124,12 @@ docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
   -e MQTT_HOST=127.0.0.1 -e MQTT_PORT=1883 \
   -e MQTT_USERNAME=your-dedicated-broker-username \
   -e MQTT_PASSWORD_FILE=/run/mitsubishi/mqtt-password \
-  homecore-mitsubishi:0.1.0
+  homecore-mitsubishi:0.2.0
 ```
 
 The controller connection uses unencrypted local WebSockets. Restrict it to a
-trusted LAN; the firmware's WebSocket is also a control interface. The bridge
-only receives telemetry and answers protocol ping frames. It sends no
-application commands, changes no AC settings and performs no firmware updates.
+trusted LAN. The bridge sends climate commands through the firmware's
+WebSocket control handler.
 
 ## How it works
 
@@ -151,7 +151,7 @@ For every configured unit, the bridge keeps one WebSocket connection and one
 MQTT connection. The firmware automatically sends `deviceInfo` and `state`
 messages after connection, then pushes state regularly. The adapter validates
 each message at this boundary and projects explicitly allowed fields into the
-homeCore sensor schema.
+homeCore thermostat schema.
 
 A latest-value channel connects the source reader to the publisher. It holds
 the newest observation rather than queuing a history of every firmware update.
@@ -189,15 +189,44 @@ with the same IDs against the same broker: their MQTT client identities collide.
 
 | Topic suffix | Prefix | Content |
 | --- | --- | --- |
-| `register` | `homecore/plugins/plugin.mitsubishi.living_room/` | Device name, IDs and sensor type; retained. |
-| `capabilities` | Same plugin prefix | Empty action list; retained. |
+| `register` | `homecore/plugins/plugin.mitsubishi.living_room/` | Device name, IDs and thermostat type; retained. |
+| `capabilities` | Same plugin prefix | Empty action list and the AC card descriptor when assets are available; retained. |
+| `manage/cmd`, `manage/response` | Same plugin prefix | HomeCore requests and replies for the shared card bundle. |
 | `heartbeat` | Same plugin prefix | Adapter version and uptime, every 30 seconds. |
-| `schema` | `homecore/devices/mitsubishi_living_room/` | Available attribute types and units; all `writable:false`; retained. |
+| `schema` | `homecore/devices/mitsubishi_living_room/` | Attribute types, units and writable capabilities; retained. |
+| `cmd` | Same device prefix | One writable attribute update from HomeCore. |
 | `state` | Same device prefix | Latest permitted telemetry; retained. |
 | `availability` | Same device prefix | `online` or `offline`; retained. |
 
-The bridge registers a sensor rather than a thermostat because it implements
-no setpoint, mode or power commands. It does not subscribe to control topics.
+The bridge uses each unit’s existing HomeCore device identity. The shared
+card supplies controls on standard and large cards on Home and room pages.
+Tap **Open controls** on the room temperature reading to use the larger dial
+in the HomeCore device sheet.
+
+The container serves the two asset files from `/ui`. In a local checkout set
+`HC_PLUGIN_UI_DIR="$PWD/ui/ac-card"` when starting the bridge. Missing or
+invalid assets leave the device available with HomeCore’s default card.
+
+## Controls
+
+The card shows the modes configured on the controller. Select one to turn the
+unit on, or choose **Off**. HomeCore users with device command permission can
+also adjust the temperature targets and supported airflow settings.
+
+| Writable attribute | Accepted values |
+| --- | --- |
+| `hvac_mode` | `off` or a supported mode from `heat`, `cool`, `auto`, `dry`, `fan_only`. |
+| `setpoint` | In Heat or Cool, 16–30 °C in whole degrees for legacy and enhanced CN105 units. |
+| `heat_setpoint`, `cool_setpoint` | In Auto, 16–30.5 °C in half-degree steps, with at least 2 °C between targets. |
+| `fan_mode`, `vertical_vane`, `horizontal_vane` | The options in the unit’s schema, while the unit is on. |
+
+The bridge checks the latest available controller state before sending each
+command. It waits for the same unit to echo the requested setting before
+accepting another while the write is pending. Retained MQTT replays, offline
+units and invalid requests are ignored. The card reflects the controller’s
+reported state. This firmware can briefly echo a requested value before the
+indoor unit applies it. Any later correction from the controller also reaches
+the card.
 
 ## Readings and diagnostics
 
@@ -209,10 +238,11 @@ is Fahrenheit.
 | Firmware field | homeCore attribute | Unit or meaning |
 | --- | --- | --- |
 | `connected`, `power`, `operating` | `cn105_connected`, `power`, `operating` | Connection and actual boolean states. |
-| `room`, `target` | `temperature`, `setpoint` | °C. The target is a reading, not a writable control. |
+| `room`, `target` | `temperature`, `setpoint` | °C. The target is writable in Heat or Cool. |
 | `mode`, `fan` | `operation_mode`, `fan_mode` | Source mode and fan setting. |
 | Power, mode and activity combined | `hvac_mode`, `hvac_action` | Derived display states; an off AC is `off` even if its remembered source mode is `cool`. Transitional states do not claim active heating/cooling. |
 | `vane`, `wideVane` | `vertical_vane`, `horizontal_vane` | Source vane settings. |
+| `vaneConfig` | `has_vertical_vane`, `has_horizontal_vane` | Optional read-only capability flags. |
 | `subMode`, `stage`, `autoSubMode` | `sub_mode`, `stage`, `auto_sub_mode` | Operating detail. |
 | `outsideTemp`, `heatThresh`, `coolThresh` | `outside_temperature`, `heating_setpoint`, `cooling_setpoint` | °C; optional. |
 | `compressorHz`, `runtime`, `errorCode` | `compressor_frequency`, `runtime`, `fault`, `error_code` | Hz, operating hours, explicit fault state and raw fault code. These are not electrical watts or energy. |
@@ -280,6 +310,7 @@ from compressor frequency or runtime without another measurement source.
 ```sh
 cargo test --locked --manifest-path services/mitsubishi/Cargo.toml
 cargo test --locked --manifest-path services/mitsubishi/Cargo.toml --test bridge -- --ignored --test-threads=1
+cargo test --locked --manifest-path services/mitsubishi/Cargo.toml --test registration_core -- --ignored --test-threads=1
 cargo clippy --locked --manifest-path services/mitsubishi/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path services/mitsubishi/Cargo.toml --check
 ```
@@ -289,6 +320,10 @@ container bound to loopback and fake WebSocket controllers. They require a
 working Docker daemon and the pinned fixture image. Live controller checks
 must use a separate temporary broker and a deadline, with no application
 commands sent to the controller.
+
+The registration test also runs the pinned homeCore image in an isolated
+network and checks that changing an existing sensor to a thermostat preserves
+its device identity and room.
 
 ## Source contract
 

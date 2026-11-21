@@ -3,7 +3,8 @@
 The adapter reads mitsubishi-cn105-homekit's `state` and `deviceInfo`
 WebSocket frames. This catalogue follows [v0.2.8, commit
 56676c8](https://github.com/akifbayram/mitsubishi-cn105-homekit/blob/56676c8fad6053be23d80e3b02d9089ae559a2a3/main/web_ws.cpp).
-Every published attribute is read-only. Unsupported, absent and null readings
+Only the climate settings listed in the [control guide](../README.md#controls)
+can be written. Unsupported, absent and null readings
 are omitted; a new snapshot replaces the previous snapshot.
 
 | Group | Attributes | Units or meaning |
@@ -44,6 +45,22 @@ percent, percent, dBm and milliseconds. Inactive, stale or globally disabled
 sensors retain their status and age but omit temperature, humidity, battery
 and signal readings. Battery -1 means unknown and is omitted. Legacy flat
 BLE readings duplicate the sensor list and are not published separately.
+
+Each reported BLE slot is also registered as a separate read-only homeCore
+`temperature_sensor`, named after its AC and its one-based sensor slot. It
+reports temperature, humidity, battery, signal and type when provided. The
+AC keeps its own reported room temperature, which can differ from a paired
+sensor or reflect the controller's configured room source. A sensor becomes
+unavailable when its slot is absent, disabled, stale, or its controller is
+offline; old measurements are withdrawn. Each sensor uses its own MQTT last
+will, so an adapter disconnect marks it offline too.
+
+The identity is based on the controller and slot, because the adapter does not
+publish sensor addresses. Replacing a sensor in a slot therefore keeps that
+slot's homeCore identity and history; moving a sensor to another slot gives it
+a different identity. Pairing, room source and averaging settings are not
+changed by the bridge. A reported Link sensor is also registered separately;
+its readings are withdrawn when it is no longer present, active and fresh.
 
 `room_offset_0` through `room_offset_5` convert calibration offsets to °C.
 Index 0 is the internal thermistor, 1 is Link, and 2–5 correspond to BLE

@@ -1,0 +1,15 @@
+{
+  "host_api": 1,
+  "entry": "index.js",
+  "slots": [
+    {
+      "slot": "device.card",
+      "element": "hc-ac-card",
+      "forms": ["standard", "large"]
+    },
+    {
+      "slot": "device.panel",
+      "element": "hc-ac-panel"
+    }
+  ]
+}

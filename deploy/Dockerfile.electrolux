@@ -1,0 +1,6 @@
+FROM scratch
+COPY services/electrolux/target/container-runtime/ /
+COPY services/electrolux/target/release/electrolux-bridge /electrolux-bridge
+COPY ui/ac-card/manifest.json ui/ac-card/index.js /ui/
+USER 65532:65532
+ENTRYPOINT ["/electrolux-bridge"]
