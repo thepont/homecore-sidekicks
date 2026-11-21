@@ -738,6 +738,15 @@ class AcCard extends HTMLElement {
     }
   }
 
+  #renderTargetButtons(buttons, spec, target, control) {
+    for (const button of buttons) {
+      const value = nextTarget(control, Number(button.dataset.step));
+      show(button, spec?.writable === true);
+      button.disabled = value === undefined || !!this.#pending;
+      if (!button.disabled) this.#commands.set(button, [target.key, value]);
+    }
+  }
+
   #renderTargets(model, schema) {
     const { available, targets, gap, room } = model;
     const view = this.#view;
@@ -755,12 +764,7 @@ class AcCard extends HTMLElement {
         scale.min = Math.min(scale.min, spec.min);
         scale.max = Math.max(scale.max, spec.max);
       }
-      for (const button of buttons) {
-        const value = nextTarget(control, Number(button.dataset.step));
-        show(button, spec?.writable === true);
-        button.disabled = value === undefined || !!this.#pending;
-        if (!button.disabled) this.#commands.set(button, [target.key, value]);
-      }
+      this.#renderTargetButtons(buttons, spec, target, control);
     }
     this.#dialState = { room: available ? room : undefined, targets: available ? targets : {},
       restingTarget: available && model.mode === 'off' ? model.targetsByKey.setpoint : undefined,
