@@ -242,6 +242,7 @@ const template = panel => {
 // Keep the inputs typed before running any display or command rules.
 const MIN_VALID_TEMPERATURE = -100;
 const MAX_VALID_TEMPERATURE = 150;
+const TICK_EPSILON = 1e-6;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const number = value => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 const temperature = value => number(value) >= MIN_VALID_TEMPERATURE && value <= MAX_VALID_TEMPERATURE ? value : undefined;
@@ -330,8 +331,8 @@ function targetControl(target, spec, model) {
     else min = Math.max(min, model.targets.heat.value + model.gap);
   }
   const offset = { origin: spec.min, step: spec.step };
-  const first = atTick(offset, Math.ceil((min - spec.min) / spec.step - 1e-6));
-  const last = atTick(offset, Math.floor((max - spec.min) / spec.step + 1e-6));
+  const first = atTick(offset, Math.ceil((min - spec.min) / spec.step - TICK_EPSILON));
+  const last = atTick(offset, Math.floor((max - spec.min) / spec.step + TICK_EPSILON));
   if (!Number.isFinite(first) || !Number.isFinite(last) || first > last) return undefined;
   return { ...target, ...offset, min: first, max: last };
 }
@@ -344,7 +345,7 @@ function nextTarget(control, direction) {
   if (!control) return undefined;
   const offset = (control.value - control.origin) / control.step;
   const nearest = Math.round(offset);
-  const tick = Math.abs(offset - nearest) < 1e-6 ? nearest + direction :
+  const tick = Math.abs(offset - nearest) < TICK_EPSILON ? nearest + direction :
     direction > 0 ? Math.ceil(offset) : Math.floor(offset);
   const value = atTick(control, tick);
   return value >= control.min && value <= control.max && value !== control.value ? value : undefined;
