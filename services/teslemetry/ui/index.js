@@ -392,6 +392,11 @@ function appendHistoryChart(target, points, periods, label, formatRange) {
   target.append(range, dates);
 }
 
+function sortedPowerHistory(records) {
+  return records.filter(point => typeof point?.value === 'number' && Number.isFinite(point.value) && Number.isFinite(Date.parse(point.at)))
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+}
+
 class TeslemetrySolar extends HTMLElement {
   #host; #stop; #details = false; #history; #periods = []; #generation = 0;
   constructor() { super(); this.attachShadow({ mode: 'open' }); }
@@ -433,7 +438,7 @@ class TeslemetrySolar extends HTMLElement {
     });
     if (!this.#details) return;
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    const points = sortedPowerHistory(this.#history ?? []);
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     appendHistoryChart(target, points, this.#periods, 'Solar power history', formatPowerRange);
   }
@@ -494,7 +499,7 @@ class TeslemetryGrid extends HTMLElement {
     this.shadowRoot.querySelector('.cost').textContent = cost ? `Estimated import cost: ${cost}` : 'Import cost unavailable';
     this.shadowRoot.querySelector('.cost-note').textContent = cost ? `Daily import for ${date} at the current rate; excludes fees.` : '';
     const target = this.shadowRoot.querySelector('.history');
-    const points = (this.#history ?? []).filter(p => typeof p?.value === 'number' && Number.isFinite(p.value) && Number.isFinite(Date.parse(p.at))).sort((a,b) => Date.parse(a.at) - Date.parse(b.at));
+    const points = sortedPowerHistory(this.#history ?? []);
     if (points.length < 2) { target.textContent = this.#history === undefined ? 'Loading history…' : this.#history === null ? 'History unavailable' : 'Not enough history yet'; return; }
     appendHistoryChart(target, points, this.#periods, 'Grid power history', formatPowerRange);
   }
