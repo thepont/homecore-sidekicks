@@ -2,6 +2,9 @@
 
 use reqwest::Response;
 
+#[cfg(feature = "tls")]
+pub mod tls;
+
 #[derive(Debug)]
 pub enum BodyReadError {
     Transfer,

@@ -4,6 +4,10 @@ use crate::{
     transport::{bearer, read_service_key, MAX_MODELS, MAX_SESSION},
 };
 use reqwest::{Client, Response, Url};
+use rustls::{
+    pki_types::{pem::PemObject, CertificateDer},
+    RootCertStore,
+};
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use zeroize::{Zeroize, Zeroizing};
@@ -43,16 +47,17 @@ impl ExtractorClient {
         let mut key = read_service_key(key_file)?;
         let auth = bearer(&key);
         key.zeroize();
-        let mut client = Client::builder()
+        let mut roots = RootCertStore::empty();
+        if let Some(path) = ca_file {
+            for certificate in read_ca(path)? {
+                roots.add(certificate).map_err(|_| ERROR)?;
+            }
+        }
+        let client = Client::builder()
+            .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(Some(roots)))
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .timeout(MAX_SESSION + Duration::from_secs(30));
-        if let Some(path) = ca_file {
-            let certificates = read_ca(path)?;
-            for certificate in certificates {
-                client = client.add_root_certificate(certificate);
-            }
-        }
         Ok(Self {
             url: url.join("/v1/discover").map_err(|_| ERROR)?,
             client: client.build().map_err(|_| ERROR)?,
@@ -172,7 +177,7 @@ impl Drop for Frames {
     }
 }
 
-fn read_ca(path: &Path) -> Result<Vec<reqwest::Certificate>, &'static str> {
+fn read_ca(path: &Path) -> Result<Vec<CertificateDer<'static>>, &'static str> {
     use std::{io::Read, os::unix::fs::OpenOptionsExt};
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -187,7 +192,9 @@ fn read_ca(path: &Path) -> Result<Vec<reqwest::Certificate>, &'static str> {
     if pem.len() > 65536 {
         return Err(ERROR);
     }
-    let certs = reqwest::Certificate::from_pem_bundle(&pem).map_err(|_| ERROR)?;
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(&pem)
+        .collect::<Result<_, _>>()
+        .map_err(|_| ERROR)?;
     if certs.is_empty() {
         return Err(ERROR);
     }

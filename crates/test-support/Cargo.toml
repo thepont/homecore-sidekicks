@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+tls = ["dep:homecore-bounded-http"]
+
 [dependencies]
+homecore-bounded-http = { path = "../bounded-http", optional = true, features = ["tls"] }
 base64 = "=0.23.1"
-reqwest = { version = "=0.12.28", default-features = false, features = ["json"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json"] }
 ring = "=0.17.14"
 rumqttc = { version = "=0.25.1", default-features = false }
 serde_json = "1.0.145"

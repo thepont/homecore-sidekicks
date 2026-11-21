@@ -312,7 +312,7 @@ pub async fn listen(
     {
         return;
     }
-    let client = match reqwest::Client::builder()
+    let client = match crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(120))

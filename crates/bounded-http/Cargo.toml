@@ -4,5 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+tls = ["dep:rustls", "dep:webpki-roots", "reqwest/rustls-no-provider"]
+
 [dependencies]
-reqwest = { version = "=0.12.28", default-features = false }
+reqwest = { version = "=0.13.5", default-features = false }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+webpki-roots = { version = "=1.0.12", optional = true }

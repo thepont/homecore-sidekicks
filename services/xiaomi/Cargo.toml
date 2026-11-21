@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["setup"]
 setup = ["dep:plugin-sdk-rs", "dep:rumqttc", "dep:rusqlite"]
-postgres = ["setup", "dep:rustls", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:webpki-roots"]
+postgres = ["setup", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:webpki-roots"]
 extractor = ["dep:axum", "dep:futures-util", "dep:subtle"]
 
 [[bin]]
@@ -25,16 +25,16 @@ lto = "thin"
 codegen-units = 1
 
 [dependencies]
-homecore-bounded-http = { path = "../../crates/bounded-http" }
+homecore-bounded-http = { path = "../../crates/bounded-http", features = ["tls"] }
 base64 = "=0.23.1"
 ring = "=0.17.14"
 libc = "=0.2.191"
-reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls", "cookies"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "query", "cookies"] }
 serde_json = "=1.0.154"
 tokio = { version = "=1.54.1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
 rumqttc = { version = "=0.25.1", default-features = false, optional = true }
 rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled"], optional = true }
-rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 tokio-postgres = { version = "=0.7.18", optional = true }
 tokio-postgres-rustls = { version = "=0.14.0", default-features = false, features = ["ring"], optional = true }
 webpki-roots = { version = "=1.0.12", optional = true }
@@ -46,5 +46,5 @@ futures-util = { version = "=0.3.34", default-features = false, optional = true 
 subtle = { version = "=2.6.1", default-features = false, optional = true }
 
 [dev-dependencies]
-homecore-test-support = { path = "../../crates/test-support" }
+homecore-test-support = { path = "../../crates/test-support", features = ["tls"] }
 axum = "=0.8.9"

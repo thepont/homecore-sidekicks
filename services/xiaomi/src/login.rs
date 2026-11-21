@@ -55,6 +55,7 @@ impl Provider {
             return Err("Invalid provider");
         }
         let client = Client::builder()
+            .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None))
             .cookie_store(true)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(10))

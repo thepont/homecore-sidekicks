@@ -31,6 +31,7 @@ fn load_power_is_fetched_from_the_configured_energy_site() {
         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
     });
     let client = reqwest::blocking::Client::builder()
+        .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None))
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
@@ -68,6 +69,7 @@ fn oversized_upstream_response_is_rejected() {
         .ok();
     });
     let client = reqwest::blocking::Client::builder()
+        .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None))
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
@@ -115,6 +117,7 @@ fn powerwall_is_read_from_the_energy_site() {
         .unwrap();
     });
     let client = reqwest::blocking::Client::builder()
+        .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None))
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();

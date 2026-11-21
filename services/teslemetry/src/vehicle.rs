@@ -187,7 +187,7 @@ pub async fn supervise(base: String, token: String, broker: Broker) {
     {
         return;
     }
-    let Ok(client) = reqwest::Client::builder()
+    let Ok(client) = crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))
         .build()
@@ -387,7 +387,7 @@ async fn follow(base: String, token: String, broker: Broker, vin: String, name: 
     {
         return;
     }
-    let Ok(client) = reqwest::Client::builder()
+    let Ok(client) = crate::http::client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(120))

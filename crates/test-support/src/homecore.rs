@@ -52,16 +52,16 @@ impl Core {
         let root = std::env::temp_dir().join(&name);
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let http = Client::builder().timeout(Duration::from_secs(7));
+        #[cfg(feature = "tls")]
+        let http = http.tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None));
         let mut core = Self {
             name,
             root,
             mqtt_port: 0,
             base: String::new(),
             token: String::new(),
-            http: Client::builder()
-                .timeout(Duration::from_secs(7))
-                .build()
-                .unwrap(),
+            http: http.build().unwrap(),
             relays: Vec::new(),
         };
         let home = core.root.join("core");

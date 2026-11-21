@@ -55,6 +55,7 @@ async fn the_worker_streams_a_qr_before_the_xiaomi_sign_in_finishes() {
         .unwrap();
     });
     let client = reqwest::Client::builder()
+        .tls_backend_preconfigured(homecore_bounded_http::tls::client_config(None))
         .timeout(Duration::from_secs(3))
         .build()
         .unwrap();
